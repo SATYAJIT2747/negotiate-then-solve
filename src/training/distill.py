@@ -36,6 +36,9 @@ split. Policy examples use the corpus train/val splits.
     uv run python -m training.distill reply --voice template --kinds propose,clarify,escalate         --per-message 1 --fraction 0.55 --name reply-tools         # only the newer tools, beside reply.jsonl
     uv run python -m training.distill reply --voice template --kinds counter --blocks 1         --per-message 1 --fraction 0.15 --name reply-blocks        # counters for a whole morning or afternoon
     uv run python -m training.distill explain                     # teacher: agent model
+    uv run python -m training.distill messages --messages messages-readable   # facts with their plain text
+    uv run python -m training.distill explain --readable --messages messages-readable   # explain-readable.jsonl
+    uv run python -m training.distill export --readable           # train on explain-readable.jsonl
     uv run python -m training.distill policy                      # teacher: agent model
     uv run python -m training.distill denials                     # more policy denials, no API
     uv run python -m training.distill check --files x/reply.jsonl # validate rows made elsewhere (same filters)
@@ -60,11 +63,13 @@ from pathlib import Path
 
 from agents.explainer import (
     GROUNDED_PROMPT,
+    READABLE_PROMPT,
     ClaimChecker,
     Explainer,
     ExplanationOut,
     Fact,
     leaks,
+    unreadable,
 )
 from agents.ledger import ConcessionLedger
 from agents.negotiation import (
@@ -362,11 +367,14 @@ def reply_samples(rows: list[dict], *, voice_client=None, per_message: int = 3, 
 
 
 def check_explanation(facts: list[Fact], got: ExplanationOut, checker: ClaimChecker,
-                      private: Iterable[str] = ()) -> tuple[ExplanationOut | None, str]:
-    """The teacher's claims as a training target, or why they are not one."""
+                      private: Iterable[str] = (), *, readable: bool = False) -> tuple[ExplanationOut | None, str]:
+    """The teacher's claims as a training target, or why they are not one. ``readable`` also rejects
+    explanations that are hard to read (``unreadable``)."""
     by_id = {f.id: f for f in facts}
     if not 2 <= len(got.claims) <= 6:
         return None, "claim count"
+    if readable and (why := unreadable(c.text for c in got.claims)):
+        return None, f"unreadable: {why.split(' ')[0]}"
     clean = []
     for c in got.claims:
         ids = [i.strip().strip("[]") for i in c.facts]
@@ -383,7 +391,10 @@ def check_explanation(facts: list[Fact], got: ExplanationOut, checker: ClaimChec
     return ExplanationOut.model_validate({"claims": clean}), "ok"
 
 
-def explain_samples(rows: list[dict], teacher, *, workers: int = 4) -> tuple[list[dict], Counter]:
+def explain_samples(rows: list[dict], teacher, *, workers: int = 4,
+                    readable: bool = False) -> tuple[list[dict], Counter]:
+    """``readable``: the teacher is given the readable facts and READABLE_PROMPT, and hard-to-read answers
+    are dropped. The rows need messages whose facts carry their plain text (``messages`` stage)."""
     instances = _instances(rows)
     reasons: Counter = Counter()
     lock = threading.Lock()
@@ -391,16 +402,20 @@ def explain_samples(rows: list[dict], teacher, *, workers: int = 4) -> tuple[lis
     def run(r: dict) -> dict | None:
         inst = instances[(r["seed"], r["scenario"])]
         msg = Message.model_validate(r["message"])
-        facts = [Fact(f["id"], f["text"]) for f in msg.facts]
-        prompt = Explainer(inst).grounded_prompt(facts, msg.to)
-        got = teacher.generate(GROUNDED_PROMPT, prompt, ExplanationOut)
-        target, why = check_explanation(facts, got, ClaimChecker(inst), r["private"])
+        facts = [Fact(f["id"], f["text"], f.get("plain")) for f in msg.facts]
+        if readable and any(f.plain is None for f in facts):
+            raise ValueError(f"{r['id']}: facts without plain text; rerun the messages stage")
+        explainer = Explainer(inst, readable=readable)
+        prompt = explainer.grounded_prompt(facts, msg.to)
+        got = teacher.generate(explainer.prompt, prompt, ExplanationOut)
+        target, why = check_explanation(explainer.shown(facts), got, ClaimChecker(inst), r["private"],
+                                        readable=readable)
         with lock:
             reasons[why] += 1
         if target is None:
             return None
         return {"id": r["id"], "task": "explain", "split": r["split"],
-                "messages": _chat(GROUNDED_PROMPT, prompt, target.model_dump_json())}
+                "messages": _chat(explainer.prompt, prompt, target.model_dump_json())}
 
     return [x for x in _run_all(run, rows, workers) if x], reasons
 
@@ -598,7 +613,9 @@ def check_rows(task: str, rows: list[dict], corpus: dict[str, CorpusExample] | N
     checker = ClaimChecker(_name_list(r["messages"][1]["content"] for r in rows)) if task == "explain" else None
     for r in rows:
         m = _current_prompt(task, r["messages"])
-        if [x["role"] for x in m] != ["system", "user", "assistant"] or m[0]["content"] != system:
+        readable = task == "explain" and m[0]["content"] == READABLE_PROMPT
+        if [x["role"] for x in m] != ["system", "user", "assistant"] or m[0]["content"] not in (
+                system, READABLE_PROMPT if task == "explain" else system):
             why["format"] += 1
             continue
         if m[1]["content"] in seen:
@@ -612,7 +629,7 @@ def check_rows(task: str, rows: list[dict], corpus: dict[str, CorpusExample] | N
         reason, split = "ok", r.get("split", "train")
         if task == "explain":
             facts = [Fact(*g.groups()) for line in m[1]["content"].split("\n") if (g := _FACT.match(line))]
-            target, reason = check_explanation(facts, answer, checker)
+            target, reason = check_explanation(facts, answer, checker, readable=readable)
             if target is not None:
                 m = [*m[:2], {"role": "assistant", "content": target.model_dump_json()}]
         elif task == "reply":
@@ -664,11 +681,12 @@ def _corpus_index(paths: list[Path], instance: Instance) -> dict[str, CorpusExam
 
 
 def export(out_dir: Path, *, compiler_dir: Path, max_per_task: int, seed: int = 0,
-           held: dict[str, set[str]] | None = None) -> dict:
+           held: dict[str, set[str]] | None = None, explain: str = "explain") -> dict:
     """Merge the tasks into one train/val set; each task is capped at
     ``max_per_task`` training examples so none dominates. With ``held`` (the
     corpus's val and test texts), a row whose message repeats a request of a
-    later split is dropped."""
+    later split is dropped. ``explain`` names the explanation file
+    (``explain-readable`` for the readable model)."""
     rng = random.Random(seed)
     by_task: dict[str, list[dict]] = {}
     for split in ("train", "val"):
@@ -676,7 +694,7 @@ def export(out_dir: Path, *, compiler_dir: Path, max_per_task: int, seed: int = 
         if path.exists():
             by_task.setdefault("compile", []).extend(
                 {**r, "task": "compile", "split": split} for r in _read(path))
-    for task, files in (("reply", ["reply", "reply-tools", "reply-blocks"]), ("explain", ["explain"]),
+    for task, files in (("reply", ["reply", "reply-tools", "reply-blocks"]), ("explain", [explain]),
                         ("policy", ["policy", "denials"])):
         for name in files:
             if (DIR / f"{name}.jsonl").exists():
@@ -724,6 +742,11 @@ def main() -> None:
     ap.add_argument("--blocks", type=float, default=0.0,
                     help="reply: share of counters that ask for a whole morning or afternoon")
     ap.add_argument("--name", default="reply", help="reply: writes data/distill/<name>.jsonl")
+    ap.add_argument("--messages", default="messages",
+                    help="messages: writes, reply/explain: read data/distill/<messages>.jsonl")
+    ap.add_argument("--readable", action="store_true",
+                    help="explain: readable facts and prompt, hard-to-read answers dropped; "
+                         "writes explain-readable.jsonl. export: train on explain-readable.jsonl")
     ap.add_argument("--fraction", type=float, default=1.0,
                     help="reply: share of the messages used (a fixed random sample, both splits)")
     ap.add_argument("--teacher-model", default=None, help="explain/policy: default the agent model")
@@ -744,8 +767,8 @@ def main() -> None:
     args = ap.parse_args()
 
     if args.stage == "messages":
-        n = _write(DIR / "messages.jsonl", collect_messages(_seeds(args.seeds)))
-        print(f"wrote {n} messages to {DIR / 'messages.jsonl'}")
+        n = _write(DIR / f"{args.messages}.jsonl", collect_messages(_seeds(args.seeds)))
+        print(f"wrote {n} messages to {DIR / f'{args.messages}.jsonl'}")
     elif args.stage == "reply":
         from language.llm import GeminiClient, default_model
 
@@ -753,7 +776,7 @@ def main() -> None:
         kinds = [k for k in args.kinds.split(",") if k]
         if unknown := set(kinds) - set(KINDS):
             ap.error(f"unknown kinds {sorted(unknown)}; choose from {KINDS}")
-        messages = _read(DIR / "messages.jsonl")[: args.limit]
+        messages = _read(DIR / f"{args.messages}.jsonl")[: args.limit]
         if args.fraction < 1:
             messages = random.Random(0).sample(messages, round(len(messages) * args.fraction))
         rows = reply_samples(messages, voice_client=client,
@@ -762,9 +785,10 @@ def main() -> None:
               f"labels {dict(Counter(json.loads(r['messages'][2]['content'])['decision'] for r in rows))}, "
               f"{sum(r['id'].endswith('-retry') for r in rows)} after a rejected call")
     elif args.stage == "explain":
-        rows, reasons = explain_samples(_read(DIR / "messages.jsonl")[: args.limit], _teacher(args.teacher_model),
-                                        workers=args.workers)
-        print(f"wrote {_write(DIR / 'explain.jsonl', rows)} explanations; teacher outputs: {dict(reasons)}")
+        rows, reasons = explain_samples(_read(DIR / f"{args.messages}.jsonl")[: args.limit],
+                                        _teacher(args.teacher_model), workers=args.workers, readable=args.readable)
+        name = "explain-readable" if args.readable else "explain"
+        print(f"wrote {_write(DIR / f'{name}.jsonl', rows)} explanations; teacher outputs: {dict(reasons)}")
     elif args.stage == "policy":
         instance = Instance.model_validate_json(args.instance.read_text(encoding="utf-8"))
         rows, reasons = policy_samples([load_jsonl(p, instance) for p in args.corpus], instance, args.handbook,
@@ -786,11 +810,12 @@ def main() -> None:
             rows, why = check_rows(task, given, corpus)
             print(f"{path}: kept {len(rows)}/{len(given)} "
                   f"({dict(Counter(r['split'] for r in rows))}); {dict(why)}")
-            _write(DIR / f"{task}.jsonl", rows)
+            _write(DIR / f"{task}{'-readable' if path.stem.endswith('-readable') else ''}.jsonl", rows)
     else:
         instance = Instance.model_validate_json(args.instance.read_text(encoding="utf-8"))
         report = export(args.out, compiler_dir=args.compiler_dir, max_per_task=args.max_per_task,
-                        held=held_out(load_jsonl(p, instance) for p in args.corpus))
+                        held=held_out(load_jsonl(p, instance) for p in args.corpus),
+                        explain="explain-readable" if args.readable else "explain")
         print(json.dumps(report, indent=1))
         print(f"upload {args.out}/ as a Kaggle dataset and train with notebooks/train_compiler_kaggle.ipynb")
 

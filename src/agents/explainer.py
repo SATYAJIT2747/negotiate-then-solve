@@ -183,17 +183,24 @@ def _as_asked(c: Constraint, sid: str, p: Placement) -> bool:
             (not c.when.days or p.day in c.when.days) and (c.when.slots is None or p.slot in c.when.slots))
 
 
-def plain_option(instance: Instance, o: OptionView, asked: Iterable[Constraint], you: str | None) -> str:
-    """"Friday at 2 pm in Lab 3, as you asked; 2 other classes move"."""
-    asked = list(asked)
+def plain_option(instance: Instance, o: OptionView, asked: Iterable[Constraint], you: str | None,
+                 dropped: Iterable[Constraint] = ()) -> str:
+    """"Friday at 2 pm in Lab 3, as you asked (2 other classes move)"; an option that gives up a room
+    requirement says so: "Wednesday at 3 pm in Lab 3, without routers"."""
+    asked, dropped = list(asked), list(dropped)
     parts = []
     for sid, p in sorted(o.placements.items()):
         s = instance.session_by_id.get(sid)
         where = placement_text(instance, p)
         if len(o.placements) > 1 and s is not None:
             where = f"{'your' if s.faculty == you else 'the'} {instance.course_title(s.course)} {s.kind.value} on {where}"
+        room = instance.room_by_id.get(p.room)
+        lost = sorted({e for c in dropped if c.type == ConstraintType.REQUIRE_ROOM and c.scope.session == sid
+                       and c.room for e in c.room.equipment if room is None or e not in room.equipment})
+        if lost:
+            where += f", without {_equipment(lost)}"
         if any(_as_asked(c, sid, p) for c in asked):
-            where += ", as you asked"
+            where += ", as you asked" if not lost else ", at the time you asked"
         parts.append(where)
     text = "; ".join(parts) or "the timetable stays as it is"
     if o.moved is not None:
@@ -238,7 +245,8 @@ def conflict_facts(
         where = "; ".join(f"{session_name(instance, s)} on {placement_text(instance, p)}"
                           for s, p in sorted(o.placements.items()))
         facts.append(Fact(f"OPT-{o.key}", f"Option {o.key}: {where}. The solver confirms this works.",
-                          plain_option(instance, o, (c for c in involved if c.owner == recipient), recipient)))
+                          plain_option(instance, o, (c for c in involved if c.owner == recipient), recipient,
+                                       (constraints[i] for i in o.drop if i in constraints))))
     owners = {c.owner for c in involved if c.owner in instance.faculty_by_id}
     for owner in sorted(owners):
         n = (ledger_counts or {}).get(owner, 0)
@@ -363,6 +371,41 @@ for anyone's unavailability. Address the recipient as "you"."""
 FREE_PROMPT = """You explain a timetabling conflict to one person and offer them options.
 Write a short, friendly message (3-6 sentences)."""
 
+# For a model trained on the readable facts (``readable_facts``). The deployed model keeps GROUNDED_PROMPT
+# until one trained on this prompt replaces it: a model must see the prompt it was trained on.
+READABLE_PROMPT = """You write a short message to one person about a clash in their timetable and the
+options they have. Write 3-6 claims, each one plain sentence of at most 25 words that cites the IDs of
+the facts it rests on. Use only those facts, and copy days, times, rooms and names as they give them.
+First say what cannot work as asked and why, in one or two claims. Then give each option in a claim of
+its own that starts with "Option A:" (B, C, ...), saying where the class would go and what else moves.
+Write as a colleague would: address the person as "you", and write no IDs, codes, brackets or tier
+numbers. Never mention reasons for anyone's unavailability."""
+
+MAX_CLAIM_WORDS = 30
+_CODE = re.compile(r"\[[A-Z0-9-]+\]|\(Tier \d|\bTier \d\b|\b(?=[A-Z0-9-]*\d)[A-Z][A-Z0-9]*-[A-Z0-9-]+\b")
+
+
+def readable_facts(facts: Iterable[Fact]) -> list[Fact]:
+    """The facts as the reader would put them (``Fact.reader``); facts another fact's sentence already
+    says are left out. A readable model is given these, and its claims are checked against them."""
+    return [Fact(f.id, f.reader) for f in facts if f.reader]
+
+
+def unreadable(texts: Iterable[str]) -> str | None:
+    """Why a message is hard to read (IDs, tier codes, copied fact markers, long or repeated sentences),
+    or None."""
+    seen: set[str] = set()
+    for t in texts:
+        if m := _CODE.search(t):
+            return f"code {m[0]!r}"
+        if len(t.split()) > MAX_CLAIM_WORDS:
+            return "long sentence"
+        key = re.sub(r"\W+", " ", t.lower()).strip()
+        if key in seen:
+            return "repeated sentence"
+        seen.add(key)
+    return None
+
 
 # a full stop after a title or "e.g." does not end a sentence ("Hi Dr. Kumar, ...")
 _SENTENCE_END = re.compile(r"(?<!\bDr\.)(?<!\bMr\.)(?<!\bMs\.)(?<!\bMrs\.)(?<!\bProf\.)(?<!\be\.g\.)(?<!\bi\.e\.)"
@@ -374,7 +417,9 @@ def sentences(text: str) -> list[str]:
 
 
 class Explainer:
-    def __init__(self, instance: Instance, *, mode: str = "template", client=None) -> None:
+    def __init__(self, instance: Instance, *, mode: str = "template", client=None, readable: bool = False) -> None:
+        """``readable``: grounded explanations from the readable facts with READABLE_PROMPT (for a model
+        trained on them); otherwise from the facts' model text with GROUNDED_PROMPT."""
         if mode not in ("template", "grounded", "free"):
             raise ValueError(mode)
         if mode != "template" and client is None:
@@ -382,6 +427,8 @@ class Explainer:
         self.instance = instance
         self.mode = mode
         self.client = client
+        self.readable = readable
+        self.prompt = READABLE_PROMPT if readable else GROUNDED_PROMPT
         self.checker = ClaimChecker(instance)
 
     def template(self, facts: list[Fact], recipient: str | None = None) -> Explanation:
@@ -442,13 +489,17 @@ class Explainer:
         fac = self.instance.faculty_by_id.get(recipient or "")
         return fac.name if fac else (recipient or "the stakeholder")
 
+    def shown(self, facts: list[Fact]) -> list[Fact]:
+        """The facts the model is given and checked against."""
+        return readable_facts(facts) if self.readable else list(facts)
+
     def grounded_prompt(self, facts: list[Fact], recipient: str | None) -> str:
-        listing = "\n".join(f"[{f.id}] {f.text}" for f in facts)
+        listing = "\n".join(f"[{f.id}] {f.text}" for f in self.shown(facts))
         return f"Recipient: {self._recipient(recipient)}\n\n# Facts\n{listing}"
 
     def _grounded(self, facts: list[Fact], recipient: str | None) -> Explanation:
-        by_id = {f.id: f for f in facts}
-        got = self.client.generate(GROUNDED_PROMPT, self.grounded_prompt(facts, recipient), ExplanationOut)
+        by_id = {f.id: f for f in self.shown(facts)}
+        got = self.client.generate(self.prompt, self.grounded_prompt(facts, recipient), ExplanationOut)
         out = Explanation(mode="grounded")
         for c in got.claims:
             c.facts = [i.strip().strip("[]") for i in c.facts]  # small models copy the listing's brackets
@@ -463,6 +514,12 @@ class Explainer:
             fallback.rejected = out.rejected
             fallback.mode = "grounded-fallback"
             return fallback
+        if self.readable:  # the explanation, then the options a line each
+            kept = [(t, ids) for t, ids, ok in out.claims if ok]
+            why = " ".join(t for t, ids in kept if not any(i.startswith("OPT-") for i in ids))
+            options = "\n".join(t for t, ids in kept if any(i.startswith("OPT-") for i in ids))
+            out.lead = why
+            out.body = "\n\n".join(x for x in (why, options) if x)
         return out
 
     def _free(self, facts: list[Fact], recipient: str | None, raw_requests: Iterable[str]) -> Explanation:

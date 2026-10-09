@@ -868,7 +868,7 @@ class Negotiator:
         lines += [f"{o.key}) {options[f'OPT-{o.key}']}" for o in offers]
         lines.append("Reply with a letter, or tell us which days and times would work for you.")
         return Message(round=rnd, to=target, mus=list(mus), offers=offers, text="\n".join(lines),
-                       facts=[{"id": f.id, "text": f.text} for f in facts],
+                       facts=[{"id": f.id, "text": f.text, "plain": f.plain} for f in facts],
                        claims=[{"text": t, "facts": ids, "supported": ok} for t, ids, ok in exp.claims],
                        explanation_mode=exp.mode, faithfulness=exp.faithfulness, leaks=exp.leaks,
                        rejected_claims=exp.rejected, invented_times=invented, omitted_options=omitted)
