@@ -237,12 +237,15 @@ class ParseResult:
     constraints: list[Constraint] = field(default_factory=list)
     errors: list[str] = field(default_factory=list)
     refusal: str | None = None
+    withdraw: bool = False  # the message takes back an earlier request (``ParseOutput`` has no such action)
 
     @property
     def action(self) -> ExpectedAction:
         """The next step for the orchestrator. Policy (deny) is decided later."""
         if self.refusal:
             return ExpectedAction.REFUSE
+        if self.withdraw:
+            return ExpectedAction.WITHDRAW
         if self.output is None or self.errors:
             return ExpectedAction.CLARIFY
         return ExpectedAction(self.output.action)

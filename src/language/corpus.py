@@ -87,6 +87,7 @@ class ExpectedAction(str, Enum):
     INVESTIGATE = "investigate"
     ANSWER = "answer"
     OUT_OF_SCOPE = "out_of_scope"
+    WITHDRAW = "withdraw"  # takes back an earlier request (intent parsers only; no corpus label)
 
 
 class Variant(str, Enum):

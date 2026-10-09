@@ -30,7 +30,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass, field
 from typing import Annotated, Literal
 
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from core.instance import Instance
 from core.schemas import (
@@ -138,8 +138,18 @@ class ClassRef(BaseModel):
 # ---------------------------------------------------------------------------
 
 
+def _kind_first(schema: dict) -> None:
+    """``kind`` picks the intent, so a grammar built from the schema must write it, and write it first."""
+    schema["required"] = ["kind", *[r for r in schema.get("required", []) if r != "kind"]]
+
+
 class _Base(BaseModel):
-    justification: JustificationLit = Field("none", description="'stated' when a reason is given; never copy it")
+    """Every intent: ``kind`` first, ``justification`` last (the order constrained decoding writes them in)."""
+
+    model_config = ConfigDict(json_schema_extra=_kind_first)
+
+
+JUSTIFICATION = Field("none", description="'stated' when a reason is given; never copy the reason")
 
 
 class Unavailable(_Base):
@@ -149,6 +159,7 @@ class Unavailable(_Base):
     who: Who | None = Field(None, description="null means the sender")
     time: TimeSpec = Field(default_factory=TimeSpec)
     period: Period = Field(default_factory=Period)
+    justification: JustificationLit = JUSTIFICATION
 
 
 class Avoid(_Base):
@@ -159,6 +170,7 @@ class Avoid(_Base):
     time: TimeSpec = Field(default_factory=TimeSpec)
     period: Period = Field(default_factory=Period)
     hard: bool = False
+    justification: JustificationLit = JUSTIFICATION
 
 
 class Only(_Base):
@@ -169,16 +181,19 @@ class Only(_Base):
     time: TimeSpec = Field(default_factory=TimeSpec)
     period: Period = Field(default_factory=Period)
     hard: bool = False
+    justification: JustificationLit = JUSTIFICATION
 
 
 class Move(_Base):
-    """Put one class at these times ("move my Thursday ML lecture before lunch")."""
+    """Put one class at these times ("move my Thursday ML lecture before lunch"). Any weekly meeting of the
+    class will do; with the timetable, the one already on the day asked for."""
 
     kind: Literal["move"] = "move"
     which: ClassRef
     to: TimeSpec = Field(default_factory=TimeSpec)
     period: Period = Field(default_factory=Period)
     hard: bool = True
+    justification: JustificationLit = JUSTIFICATION
 
 
 class Swap(_Base):
@@ -188,6 +203,7 @@ class Swap(_Base):
     mine: ClassRef
     theirs: ClassRef = Field(description="owner is the colleague's faculty ID")
     period: Period = Field(default_factory=Period)
+    justification: JustificationLit = JUSTIFICATION
 
 
 class ExtraClass(_Base):
@@ -197,6 +213,7 @@ class ExtraClass(_Base):
     which: ClassRef
     period: Period = Field(default_factory=Period)
     time: TimeSpec = Field(default_factory=TimeSpec)
+    justification: JustificationLit = JUSTIFICATION
 
 
 class Cancel(_Base):
@@ -205,6 +222,7 @@ class Cancel(_Base):
     kind: Literal["cancel"] = "cancel"
     which: ClassRef
     period: Period = Field(default_factory=Period)
+    justification: JustificationLit = JUSTIFICATION
 
 
 class RoomClosed(_Base):
@@ -212,6 +230,7 @@ class RoomClosed(_Base):
     room: str
     time: TimeSpec = Field(default_factory=TimeSpec)
     period: Period = Field(default_factory=Period)
+    justification: JustificationLit = JUSTIFICATION
 
 
 class NeedsRoom(_Base):
@@ -221,6 +240,7 @@ class NeedsRoom(_Base):
     which: ClassRef
     equipment: list[str] = Field(default_factory=list)
     room: str | None = None
+    justification: JustificationLit = JUSTIFICATION
 
 
 class LoadLimit(_Base):
@@ -229,6 +249,7 @@ class LoadLimit(_Base):
     kind: Literal["load_limit"] = "load_limit"
     who: Who | None = None
     max_consecutive: int = Field(ge=1)
+    justification: JustificationLit = JUSTIFICATION
 
 
 Intent = Annotated[Unavailable | Avoid | Only | Move | Swap | ExtraClass | Cancel | RoomClosed | NeedsRoom | LoadLimit,
@@ -400,25 +421,43 @@ def one_class(instance: Instance, ref: ClassRef, sender: str,
     raise Unresolved(f"Which class do you mean: {'; '.join(names[:4])}?", "session")
 
 
-def template(instance: Instance, ref: ClassRef, sender: str,
-             timetable: Mapping[str, Placement] | None = None) -> str:
-    """The class an extra one copies: any weekly meeting of it will do, so only different classes are ambiguous."""
-    found = classes(instance, ref, sender, timetable)
+def _one_kind(instance: Instance, found: list[str], question: str) -> list[str]:
+    """``found`` when every session in it is a weekly meeting of one class (course, kind and groups)."""
     first: dict[tuple, str] = {}
     for sid in found:
         s = instance.session_by_id[sid]
         first.setdefault((s.course, s.kind, tuple(s.groups)), sid)
     if len(first) > 1:
         names = list(dict.fromkeys(_describe(instance, sid, None) for sid in first.values()))
-        raise Unresolved(f"Which class is the extra one for: {'; '.join(names[:4])}?", "session")
-    return found[0]
+        raise Unresolved(f"{question}: {'; '.join(names[:4])}?", "session")
+    return found
 
 
-def extra_weeks(instance: Instance, period: Period, current_week: int | None = None) -> list[int]:
+def template(instance: Instance, ref: ClassRef, sender: str,
+             timetable: Mapping[str, Placement] | None = None) -> str:
+    """The class an extra one copies: any weekly meeting of it will do, so only different classes are ambiguous.
+    An extra class is a lecture unless the message says otherwise."""
+    found = classes(instance, ref, sender, timetable)
+    if ref.kind is None and ref.session is None:
+        found = [sid for sid in found if instance.session_by_id[sid].kind.value == "lecture"] or found
+    return _one_kind(instance, found, "Which class is the extra one for")[0]
+
+
+def meeting(instance: Instance, ref: ClassRef, sender: str, timetable: Mapping[str, Placement] | None,
+            to_days: list[str] | None) -> str:
+    """The meeting a move is for. "Move my ML lecture to Friday at 2 pm" names a class that meets several
+    times a week, and any one of them will do: the one already on a day asked for (so the class does not
+    meet twice that day), else the first. Different classes are ambiguous."""
+    found = _one_kind(instance, classes(instance, ref, sender, timetable), "Which class do you mean")
+    on_day = [sid for sid in found if to_days and (p := (timetable or {}).get(sid)) and p.day in to_days]
+    return (on_day or found)[0]
+
+
+def named_weeks(instance: Instance, period: Period, current_week: int | None, what: str) -> list[int]:
+    """The weeks of a one-off request (an extra or a cancelled class), which must name them."""
     found = weeks(instance, period, current_week)
     if found is None:
-        raise Unresolved(f"Which week should the extra class be in? Teaching weeks are 1 to "
-                         f"{instance.calendar.weeks}.", "weeks")
+        raise Unresolved(f"Which week {what}? Teaching weeks are 1 to {instance.calendar.weeks}.", "weeks")
     return found
 
 
@@ -483,9 +522,9 @@ def _drafts(instance: Instance, intent, sender: str, timetable, current_week) ->
                                     days=days(instance, intent.time), slots=slots(instance, intent.time),
                                     weeks=weeks(instance, intent.period, current_week), justification=j)]
         case Move():
-            sid = one_class(instance, intent.which, sender, timetable)
             if not intent.to.has_times and intent.to.days is None:
                 raise Unresolved("When would you like the class to be?", "slots")
+            sid = meeting(instance, intent.which, sender, timetable, days(instance, intent.to))
             return [DraftConstraint(type="prefer", hard=intent.hard, scope_kind="session", scope_id=sid,
                                     days=days(instance, intent.to), slots=slots(instance, intent.to),
                                     weeks=weeks(instance, intent.period, current_week), justification=j)]
@@ -523,18 +562,20 @@ def compile_intents(instance: Instance, request: Request, out: IntentOutput, *,
         for intent in out.intents if out.action == "compile" else []:
             match intent:
                 case Swap():
-                    mine = one_class(instance, intent.mine, sender, timetable)
                     if intent.theirs.owner is None and intent.theirs.session is None:
                         raise Unresolved("Who would you like to swap with?", "faculty")
+                    mine = one_class(instance, intent.mine, sender, timetable)
                     theirs = one_class(instance, intent.theirs, sender, timetable)
                     compiled.swaps.append(SwapRef(mine, theirs, weeks(instance, intent.period, current_week)))
                 case ExtraClass():
                     compiled.extras.append(ExtraRef(template(instance, intent.which, sender, timetable),
-                                                    extra_weeks(instance, intent.period, current_week),
+                                                    named_weeks(instance, intent.period, current_week,
+                                                                "should the extra class be in"),
                                                     days(instance, intent.time), slots(instance, intent.time)))
                 case Cancel():
                     compiled.cancels.append(CancelRef(one_class(instance, intent.which, sender, timetable),
-                                                      weeks(instance, intent.period, current_week)))
+                                                      named_weeks(instance, intent.period, current_week,
+                                                                  "should the class be cancelled")))
                 case LoadLimit():
                     limits.append(intent)
                 case _:
@@ -544,6 +585,11 @@ def compile_intents(instance: Instance, request: Request, out: IntentOutput, *,
         drafts, limits = [], []
         compiled.swaps, compiled.extras, compiled.cancels = [], [], []
 
+    if out.action == "withdraw":
+        compiled.result = ParseResult(request=request, output=None, withdraw=True)
+        if request.role == Role.STUDENT:
+            compiled.result.refusal = "students can report issues but cannot change the timetable"
+        return compiled
     # swaps and extra classes have their own flows, which ask their own questions: the old format routes them there
     own_flow = any(i.kind in ("swap", "extra_class") for i in out.intents)
     legacy = lower(out, drafts) if compiled.question is None or own_flow else ParseOutput(

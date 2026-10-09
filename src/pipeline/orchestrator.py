@@ -28,6 +28,7 @@ from agents.extra import RULE as EXTRA_RULE
 from agents.extra import (
     TEACHERS,
     ExtraReader,
+    ExtraReading,
     block_constraints,
     extra_session,
     free_placements,
@@ -40,6 +41,8 @@ from agents.policy import PolicyAgent, PolicyDecision, Verdict
 from agents.swap import (
     RuleSwapReader,
     SwapPlan,
+    SwapReading,
+    check_swap,
     consent_message,
     looks_like_swap,
     swap_constraints,
@@ -62,6 +65,10 @@ from core.semantics import PLACEMENT_TYPES, room_compatible, sessions_in_scope, 
 from core.solver import TimetableSolver
 from core.validator import validate_constraint, verify_timetable
 from language.corpus import FULL_DAY, ExpectedAction, RequestType, hour
+from language.intents import Cancel as CancelIntent
+from language.intents import Compiled
+from language.intents import ExtraClass as ExtraIntent
+from language.intents import Swap as SwapIntent
 from language.parsing import ParseResult
 from language.rule_parser import RuleParser
 
@@ -93,6 +100,12 @@ class Case:
     decision: dict | None = None  # how a person with the authority settled its escalation
     handled: dict | None = None  # the coordinator's answer to a message forwarded to them
     extra: dict | None = None  # an extra class: which class and week, and where it is held once found
+    compiled: Compiled | None = None  # the resolved intents, when the parser reads intents
+
+    def intents(self, kind: type) -> list:
+        """The parsed intents of type ``kind`` (none for a parser without intents)."""
+        out = self.compiled.output if self.compiled is not None else None
+        return [i for i in out.intents if isinstance(i, kind)] if out is not None and out.action == "compile" else []
 
     @property
     def id(self) -> str:
@@ -148,9 +161,15 @@ class Orchestrator:
         negotiator_factory: Callable[[], Negotiator] | None = None,
         swap_reader=None,
         offer_choices: Callable[[], bool] | None = None,
+        current_week: Callable[[], int | None] | None = None,
     ) -> None:
         """``offer_choices``: whether, right now, a sender whose request fits in more than one way is
-        asked which time they prefer (``_let_sender_choose``); never when omitted."""
+        asked which time they prefer (``_let_sender_choose``); never when omitted. ``current_week``: the
+        teaching week now, so a parser reading intents can resolve "next week"; unknown when omitted.
+
+        A parser with ``compile(request, timetable, current_week)`` reads intents (``language.intents``):
+        swaps, extra classes, cancellations and withdrawals are routed by what it read. ``compile`` may
+        return None (a stand-in without intents answers): the request is then parsed as before."""
         self.instance = instance
         self.store = store
         self.parser = parser
@@ -166,6 +185,7 @@ class Orchestrator:
         self.swap_reader = swap_reader or RuleSwapReader(instance)
         self.extra_reader = ExtraReader(instance)
         self.offer_choices = offer_choices
+        self.current_week = current_week
         self.cases: dict[str, Case] = {}
 
     # -- setup -------------------------------------------------------------------
@@ -201,9 +221,21 @@ class Orchestrator:
                             "tau": float(self.tau), "fast_path": fast, "latency_ms": round(float(d.latency_ms), 2)}
             if fast:
                 case.route = "fast"
-                return self.fast_parser.parse(r)
+                return self._read(case, self.fast_parser)
         case.route = "system_two"
-        return self.parser.parse(r)
+        return self._read(case, self.parser)
+
+    def _read(self, case: Case, parser) -> ParseResult:
+        """Intents resolved against the published timetable when ``parser`` reads them, else the plain parse."""
+        compile_ = getattr(parser, "compile", None)
+        if compile_ is not None:
+            base = self.store.current_version()
+            week = self.current_week() if self.current_week else None
+            case.compiled = compile_(case.request, _regular(base.assignment) if base else {}, week)
+            if case.compiled is not None:
+                case.route += "+intents"
+                return case.compiled.result
+        return parser.parse(case.request)
 
     def submit(self, request: Request) -> Case:
         case = Case(request=request)
@@ -219,10 +251,14 @@ class Orchestrator:
                       routing=case.routing, seconds=round(case.timings["parse"], 3))
         action = case.parse.action
 
+        if action == ExpectedAction.WITHDRAW:
+            return self._withdraw_by_message(case)
         if self._is_swap(case):
             return self._swap(case)
         if self._is_extra(case):
             return self._extra(case)
+        if case.intents(CancelIntent) and action != ExpectedAction.REFUSE:
+            return self._cancel(case)
         if action == ExpectedAction.REFUSE:
             case.reply = f"Your request was not processed: {case.parse.refusal}. The timetable coordinator has been informed."
             self._advance(case, S.REFUSED, reason=case.parse.refusal)
@@ -265,7 +301,8 @@ class Orchestrator:
             self._advance(case, S.ESCALATED, reason="needs approval", cited=case.policy.cited)
             return case
 
-        case.constraints = self._on_named_day(case, case.parse.constraints)
+        case.constraints = (case.parse.constraints if case.compiled is not None else
+                            self._on_named_day(case, case.parse.constraints))
         case.superseded = self._supersede(case)
         self.store.add_constraints(case.constraints, request_id=case.id)
         self._advance(case, S.COMPILED, constraints=[c.id for c in case.constraints],
@@ -281,14 +318,29 @@ class Orchestrator:
         if case.request.role == Role.STUDENT or case.parse.action in (
                 ExpectedAction.ANSWER, ExpectedAction.INVESTIGATE, ExpectedAction.OUT_OF_SCOPE):
             return False
+        if case.compiled is not None:
+            return bool(case.intents(SwapIntent)) and case.parse.action != ExpectedAction.REFUSE
         return case.parse.request_type == RequestType.SWAP or looks_like_swap(self.instance, case.request)
+
+    def _swap_reading(self, case: Case, timetable: Mapping[str, Placement]) -> SwapReading:
+        """Which two classes: from the parsed intents when there are any, else the swap reader."""
+        c, r = case.compiled, case.request
+        if c is None:
+            return self.swap_reader.read(r, timetable)
+        if c.question is not None:
+            return SwapReading(question=c.question, missing=c.missing)
+        ref = c.swaps[0]
+        return check_swap(self.instance, r, ref.mine, ref.theirs, timetable, ref.weeks)
 
     def _swap(self, case: Case) -> Case:
         r = case.request
         case.route += "+swap"
-        weeks_hint = RuleParser(self.instance).weeks(r.raw_text)
+        if case.compiled is not None:
+            weeks_hint = case.compiled.swaps[0].weeks if case.compiled.swaps else None
+        else:
+            weeks_hint = RuleParser(self.instance).weeks(r.raw_text)
         base = (self.store.current_version(weeks_hint[0]) if weeks_hint else None) or self.store.current_version()
-        reading = self.swap_reader.read(r, base.assignment if base else {})
+        reading = self._swap_reading(case, base.assignment if base else {})
         if reading.refusal:
             case.reply = f"Your request was not processed: {reading.refusal}."
             self._advance(case, S.REFUSED, reason=reading.refusal)
@@ -351,18 +403,79 @@ class Orchestrator:
                       consent=plan.counterpart)
         return self._solve(case)
 
+    # -- cancellations and withdrawals in a message (intent parsers) -------------------------
+
+    def _cancel(self, case: Case) -> Case:
+        """A class not held in some weeks: the coordinator arranges it (and the make-up), so the request
+        goes to them with the class and weeks resolved, or back to the sender when those are unclear."""
+        c = case.compiled
+        case.route += "+cancel"
+        if c.question is not None:
+            self._advance(case, S.POLICY_CHECKED, verdict="not_checked")
+            case.reply = c.question
+            self._advance(case, S.CLARIFICATION, missing=c.missing)
+            return case
+        base = self.store.current_version()
+        placed = base.assignment if base else {}
+        what = "; ".join(
+            f"{session_name(self.instance, x.session)}"
+            + (f" on {placement_text(self.instance, placed[x.session])}" if x.session in placed else "")
+            + (f" in week {x.weeks[0]}" if x.weeks and len(x.weeks) == 1 else
+               f" in weeks {x.weeks[0]}-{x.weeks[-1]}" if x.weeks else "")
+            for x in c.cancels)
+        case.reply = (f"Your request to cancel {what} has been passed to the timetable coordinator, who arranges "
+                      "cancellations and make-up classes.")
+        self._advance(case, S.FORWARDED, to="coordinator",
+                      cancel=[{"session": x.session, "weeks": x.weeks} for x in c.cancels])
+        return case
+
+    def _withdraw_by_message(self, case: Case) -> Case:
+        """"Please ignore my earlier request": the sender's one open request is taken back. With several
+        open, nothing is withdrawn on a guess: they are listed for the sender to choose."""
+        sender = case.request.sender_id
+        case.route += "+withdraw"
+        open_ = [c for c in self.cases.values()
+                 if c.request.sender_id == sender and c.id != case.id and self.withdrawable(c) is None]
+        if len(open_) == 1:
+            taken = self.withdraw(open_[0].id, by=sender)
+            case.reply = f"Your request {taken.id} (\"{_short(taken.request.raw_text)}\") was withdrawn. {taken.reply}"
+            self._advance(case, S.ANSWERED, withdrew=taken.id)
+        elif not open_:
+            case.reply = "You have no open request that can still be withdrawn."
+            self._advance(case, S.ANSWERED, withdrew=None)
+        else:
+            listed = "; ".join(f"{c.id} (\"{_short(c.request.raw_text)}\")" for c in open_[-4:])
+            case.reply = (f"You have {len(open_)} open requests: {listed}. Withdraw the one you mean from its page, "
+                          "or tell us which.")
+            self._advance(case, S.ANSWERED, withdrew=None, open=[c.id for c in open_])
+        return case
+
     # -- extra classes ---------------------------------------------------------------------
 
     def _is_extra(self, case: Case) -> bool:
         """A teacher asks for a class on top of the weekly ones. Questions about extra classes stay
         questions; a refusal (an injection) stays a refusal."""
+        if case.compiled is not None:
+            return (case.request.role in TEACHERS and bool(case.intents(ExtraIntent))
+                    and case.parse.action != ExpectedAction.REFUSE)
         return (case.request.role in TEACHERS and looks_like_extra(case.request.raw_text)
                 and case.parse.action not in (ExpectedAction.REFUSE, ExpectedAction.ANSWER, ExpectedAction.OUT_OF_SCOPE))
+
+    def _extra_reading(self, case: Case) -> ExtraReading:
+        """Which class, week and times: from the parsed intents when there are any, else the extra reader."""
+        c, r = case.compiled, case.request
+        if c is None:
+            return self.extra_reader.read(r.raw_text, r.sender_id)
+        if c.question is not None:
+            return ExtraReading(question=c.question, options=["class"] if c.missing == ["session"] else [])
+        ref = c.extras[0]
+        return ExtraReading(template=self.instance.session_by_id[ref.template], week=ref.weeks[0],
+                            days=ref.days, slots=ref.slots)
 
     def _extra(self, case: Case) -> Case:
         r = case.request
         case.route += "+extra"
-        reading = self.extra_reader.read(r.raw_text, r.sender_id)
+        reading = self._extra_reading(case)
         case.extra = {"template": reading.template.id if reading.template else None, "week": reading.week}
         if reading.template is not None and self.policy is not None:
             t = time.perf_counter()
@@ -389,7 +502,7 @@ class Orchestrator:
         """Find a time in the week when the teacher, the section and a room are free, and propose the
         week's timetable with the extra class in it. Nothing else moves, so there is nothing to negotiate."""
         r = case.request
-        reading = self.extra_reader.read(r.raw_text, r.sender_id)
+        reading = self._extra_reading(case)
         week, label = reading.week, self.extra_reader.label(reading.template)
         session = extra_session(reading.template, case.id)
         base = self.store.current_version(week) or self.store.current_version()
@@ -673,7 +786,8 @@ class Orchestrator:
             return self._place_extra(case)
         set_aside = self.overrides(case)
         if not case.constraints:  # sent up by the policy check before it was compiled
-            case.constraints = self._on_named_day(case, case.parse.constraints)
+            case.constraints = (case.parse.constraints if case.compiled is not None else
+                            self._on_named_day(case, case.parse.constraints))
             case.superseded = self._supersede(case)
             self.store.add_constraints(case.constraints, request_id=case.id)
         for c in case.constraints:
@@ -906,3 +1020,9 @@ def _plan_view(plan: SwapPlan) -> dict:
 def explain_constraint(instance: Instance, c: Constraint) -> str:
     """What the coordinator sees for a constraint (no private reasons)."""
     return describe(instance, c)
+
+
+def _short(text: str, n: int = 60) -> str:
+    """A message's first words, for naming a request in a reply."""
+    one = " ".join(text.split())
+    return one if len(one) <= n else one[: n - 1].rsplit(" ", 1)[0] + "..."

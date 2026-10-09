@@ -150,19 +150,30 @@ def test_a_time_for_a_long_class_is_when_it_starts(instance):
     assert morning.result.constraints[0].when.slots == [0, 1, 2, 3]  # a start already fits: left alone
 
 
-def test_a_class_that_meets_twice_a_week_needs_the_timetable_to_tell_which(instance, teacher):
-    s = next(s for s in instance.sessions if s.faculty == teacher and s.kind.value == "lecture" and
-             sum(o.course == s.course and o.kind == s.kind and o.faculty == teacher for o in instance.sessions) > 1)
+def test_moving_a_class_that_meets_several_times_a_week_moves_one_meeting(instance, teacher):
+    meetings = [o.id for o in instance.sessions if o.faculty == teacher and o.kind.value == "lecture"]
+    s = next(instance.session_by_id[x] for x in meetings
+             if sum(instance.session_by_id[y].course == instance.session_by_id[x].course for y in meetings) > 1)
+    same = [x for x in meetings if instance.session_by_id[x].course == s.course]
     ref = ClassRef(course=s.course, kind="lecture")
     c = compile_(instance, teacher, Move(which=ref, to=TimeSpec(days=["Fri"])))
-    assert c.result.action == ExpectedAction.CLARIFY and "Which day's class" in c.question
-    assert c.result.output.clarifying_question == c.question and not c.result.constraints
+    assert [x.scope.session for x in c.result.constraints] == [same[0]]  # any meeting will do: the first
 
     tt = timetable(instance)
+    tt[same[-1]] = tt[same[-1]].model_copy(update={"day": "Fri"})  # one meeting is on Friday already
+    c = compile_(instance, teacher, Move(which=ref, to=TimeSpec(days=["Fri"])), timetable=tt)
+    assert [x.scope.session for x in c.result.constraints] == [same[-1]]  # so Friday does not get two
+
     at = tt[s.id]
     ref = ClassRef(course=s.course, kind="lecture", day=at.day, time=f"{9 + at.slot:02d}:00")
-    c = compile_(instance, teacher, Move(which=ref, to=TimeSpec(days=["Fri"])), timetable=tt)
-    assert [x.scope.session for x in c.result.constraints] == [s.id]
+    c = compile_(instance, teacher, Move(which=ref, to=TimeSpec(days=["Mon"])), timetable=tt)
+    assert [x.scope.session for x in c.result.constraints] == [s.id]  # named by where it is: that one
+
+
+def test_moving_one_of_several_different_classes_asks_which(instance, teacher):
+    c = compile_(instance, teacher, Move(which=ClassRef(kind="lecture"), to=TimeSpec(days=["Fri"])))
+    assert c.result.action == ExpectedAction.CLARIFY and c.question.startswith("Which class do you mean")
+    assert c.result.output.clarifying_question == c.question and not c.result.constraints
 
 
 def test_a_class_the_sender_does_not_teach_is_not_found(instance, teacher):

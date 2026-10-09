@@ -333,6 +333,22 @@ uv run python -m training.distill denials                 # more denials from th
 uv run python -m training.distill export                  # data/multitask/{train,val}.jsonl, ≤900 per task
 ```
 
+**Readable explanations and intents** (the next model): the parser returns
+intents (`language.intents`: clock times, weeks, classes described as the
+message describes them) instead of slot numbers and IDs, and explanations are
+written from the readable facts.
+
+```sh
+uv run python -m language.intent_compiler                 # data/compiler-intents/: corpus gold as intents + new intents
+uv run python -m training.distill messages --messages messages-readable   # facts with their plain text; no API
+uv run python -m training.distill explain --readable --messages messages-readable --sample 600
+uv run python -m training.distill export --readable --compiler-dir data/compiler-intents --out data/multitask-readable
+```
+
+A model trained on it is used with `NTS_INTENTS=1` beside `--parser local`; the
+orchestrator then routes swaps, extra classes, cancellations and withdrawals by
+the intents it reads.
+
 - **Scenarios** come from benchmark seeds 1-10; seed 0 (the evaluation set) is
   refused, and the last seed is the validation split.
 - **Replies:** the tool call is drawn first (accept a random option, counter

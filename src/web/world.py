@@ -534,7 +534,12 @@ class World:
             self.model_link = ModelLink(
                 lambda: LocalClient(base_url=url, timeout=float(os.environ.get("NTS_LOCAL_TIMEOUT", "120"))),
                 probe=probe, on_change=self._model_changed)
-            make_parser = lambda c: CompilerParser(self.instance, c)  # noqa: E731
+            if os.environ.get("NTS_INTENTS") == "1":  # a model trained on intents (language.intent_compiler)
+                from language.intent_compiler import IntentCompilerParser
+
+                make_parser = lambda c: IntentCompilerParser(self.instance, c)  # noqa: E731
+            else:
+                make_parser = lambda c: CompilerParser(self.instance, c)  # noqa: E731
         self.model_link.usable()  # connect now if it can; it is tried again later if not
         parser = Fallback(self.model_link, make_parser, rule_parser, "parser")
         policy = Fallback(self.model_link, lambda c: PolicyAgent(self.rules, c, self.instance, retriever=kind),
