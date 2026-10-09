@@ -37,7 +37,7 @@ split. Policy examples use the corpus train/val splits.
     uv run python -m training.distill reply --voice template --kinds counter --blocks 1         --per-message 1 --fraction 0.15 --name reply-blocks        # counters for a whole morning or afternoon
     uv run python -m training.distill explain                     # teacher: agent model
     uv run python -m training.distill messages --messages messages-readable   # facts with their plain text
-    uv run python -m training.distill explain --readable --messages messages-readable   # explain-readable.jsonl
+    uv run python -m training.distill explain --readable --messages messages-readable --sample 300   # explain-readable.jsonl
     uv run python -m training.distill export --readable           # train on explain-readable.jsonl
     uv run python -m training.distill policy                      # teacher: agent model
     uv run python -m training.distill denials                     # more policy denials, no API
@@ -389,6 +389,21 @@ def check_explanation(facts: list[Fact], got: ExplanationOut, checker: ClaimChec
     if leaks(" ".join(c["text"] for c in clean), private):
         return None, "leak"
     return ExplanationOut.model_validate({"claims": clean}), "ok"
+
+
+def stratified(rows: list[dict], n: int, seed: int = 0) -> list[dict]:
+    """``n`` rows in proportion to each (split, scenario family) group, at least one from each; the rows of a
+    group are a fixed random sample, so a larger ``n`` keeps the rows a smaller one chose."""
+    groups: dict[tuple, list[dict]] = {}
+    for r in rows:
+        groups.setdefault((r["split"], r["scenario"].split("-", 2)[-1]), []).append(r)
+    rng = random.Random(seed)
+    picked = []
+    for key in sorted(groups):
+        g = groups[key]
+        rng.shuffle(g)
+        picked += g[:max(1, round(n * len(g) / len(rows)))]
+    return picked
 
 
 def explain_samples(rows: list[dict], teacher, *, workers: int = 4,
@@ -752,6 +767,8 @@ def main() -> None:
     ap.add_argument("--teacher-model", default=None, help="explain/policy: default the agent model")
     ap.add_argument("--workers", type=int, default=4)
     ap.add_argument("--limit", type=int, default=None, help="reply/explain/policy: first N items (smoke test)")
+    ap.add_argument("--sample", type=int, default=None,
+                    help="explain: N messages spread over splits and scenario families (stratified)")
     ap.add_argument("--corpus", type=Path, nargs="+",
                     default=[Path("data/requests.jsonl"), Path("data/requests-para.jsonl")])
     ap.add_argument("--instance", type=Path, default=Path("data/synthetic-cse-s0.json"))
@@ -785,7 +802,10 @@ def main() -> None:
               f"labels {dict(Counter(json.loads(r['messages'][2]['content'])['decision'] for r in rows))}, "
               f"{sum(r['id'].endswith('-retry') for r in rows)} after a rejected call")
     elif args.stage == "explain":
-        rows, reasons = explain_samples(_read(DIR / f"{args.messages}.jsonl")[: args.limit],
+        messages = _read(DIR / f"{args.messages}.jsonl")[: args.limit]
+        if args.sample:
+            messages = stratified(messages, args.sample)
+        rows, reasons = explain_samples(messages,
                                         _teacher(args.teacher_model), workers=args.workers, readable=args.readable)
         name = "explain-readable" if args.readable else "explain"
         print(f"wrote {_write(DIR / f'{name}.jsonl', rows)} explanations; teacher outputs: {dict(reasons)}")
