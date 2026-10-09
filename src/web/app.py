@@ -144,7 +144,7 @@ def _case_detail(w: World, case: Case) -> dict:
             "messages": [_message(w, m) for m in o.messages],
             "replies": [r.model_dump(exclude_none=True) for r in o.replies],
             "concessions": [e.model_dump() | {"name": w.name_of(e.stakeholder)} for e in o.concessions],
-            "notices": {k: plain(v) for k, v in o.notices.items()},
+            "notices": {k: [plain(t) for t in v] for k, v in o.notices.items()},
             "escalation": None if o.escalation is None else {"to": o.escalation.to, "to_name": w.name_of(
                 o.escalation.to) if o.escalation.to in inst.faculty_by_id else o.escalation.to,
                 "reason": plain(o.escalation.reason), "text": plain(o.escalation.text),
