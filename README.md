@@ -347,7 +347,13 @@ uv run python -m training.distill export --readable --compiler-dir data/compiler
 
 A model trained on it is used with `NTS_INTENTS=1` beside `--parser local`; the
 orchestrator then routes swaps, extra classes, cancellations and withdrawals by
-the intents it reads.
+the intents it reads. `evaluation.intents` scores it on the 389 test requests
+(277 from the corpus, 112 new intents) by what the intents resolve to:
+
+```sh
+uv run python -m evaluation.intents --parser rule         # baseline: 66.8% outcome match (new intents 12.5%)
+uv run python -m evaluation.intents --parser local --local-model qwen3.5-4b-nts-read-100.Q8_0
+```
 
 - **Scenarios** come from benchmark seeds 1-10; seed 0 (the evaluation set) is
   refused, and the last seed is the validation split.

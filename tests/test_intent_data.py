@@ -88,3 +88,24 @@ def test_new_requests_cover_every_generator_and_resolve(instance):
     assert all((e.split == "test") == (e.template == TEST_TEMPLATE) for e in examples)
     withdraw = [e for e in examples if e.generator == "withdraw"]
     assert withdraw and all(e.gold.action == "withdraw" for e in withdraw)
+
+
+def test_the_scorer_gives_gold_full_marks_and_catches_a_wrong_class(instance):
+    from evaluation.intents import Reader, score
+
+    rows = [json.loads(line) for line in (DATA / "compiler-intents" / "test.jsonl").read_text(encoding="utf-8")
+            .splitlines() if line.strip()]
+    rows = [r for r in rows if r["kind"] in ("move", "cancel", "withdraw", "unavailability")][:30]
+    assert score(rows, instance, Reader("gold", instance))["summary"]["outcome_match"] == 1.0
+
+    class OffByAnHour(Reader):  # moves every class reference and time by an hour
+        def read(self, row):
+            text = row["messages"][2]["content"]
+            for h in range(16, 8, -1):
+                text = text.replace(f'"{h:02d}:00"', f'"{h + 1:02d}:00"')
+            return IntentOutput.model_validate_json(text)
+
+    got = score(rows, instance, OffByAnHour("gold", instance))
+    timed = [r for r in got["rows"] if "00\"" in json.dumps(r["gold"])]
+    assert timed and not any(r["match"] for r in timed)  # a different hour is a different answer
+    assert got["by_kind"]["withdraw"]["outcome_match"] == 1.0  # nothing timed to get wrong

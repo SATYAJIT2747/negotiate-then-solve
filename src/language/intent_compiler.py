@@ -293,14 +293,24 @@ def export_rows(instance: Instance, corpora, generated, seed: int = 0):
             continue
         mine = [s.id for s in instance.sessions if s.faculty == req.sender_id]
         timetable = random_timetable(instance, rng, mine)
+        week = rng.randint(1, instance.calendar.weeks)
         yield ex.split, {"id": ex.id, "source": "corpus", "kind": ex.request_type.value,
                          "paraphrased": ex.template_text is not None,
-                         "messages": _chat(intent_message(instance, req, timetable, rng.randint(1, instance.calendar.weeks)),
-                                           out)}
+                         "messages": _chat(intent_message(instance, req, timetable, week), out),
+                         **_meta(req, timetable, week)}
     for ex in generated:
         mine = {sid: p for sid, p in ex.timetable.items() if instance.session_by_id[sid].faculty == ex.request.sender_id}
         yield ex.split, {"id": ex.id, "source": "generated", "kind": ex.generator, "paraphrased": False,
-                         "messages": _chat(intent_message(instance, ex.request, mine, ex.current_week), ex.gold)}
+                         "messages": _chat(intent_message(instance, ex.request, mine, ex.current_week), ex.gold),
+                         **_meta(ex.request, ex.timetable, ex.current_week)}
+
+
+def _meta(request: Request, timetable: Mapping[str, Placement], week: int) -> dict:
+    """What the scorer (``evaluation.intents``) resolves gold and predicted intents against: the request, the
+    whole timetable (a swap's colleague's classes too, which the prompt does not show) and the current week.
+    The multitask export keeps only the messages."""
+    return {"request": request.model_dump(mode="json"), "current_week": week,
+            "timetable": {sid: p.model_dump() for sid, p in timetable.items()}}
 
 
 def _chat(user: str, out: IntentOutput) -> list[dict]:
