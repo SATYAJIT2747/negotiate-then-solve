@@ -142,6 +142,14 @@ def test_move_names_one_class(instance, teacher):
                                                                            [0, 1, 2, 3])
 
 
+def test_a_time_for_a_long_class_is_when_it_starts(instance):
+    s = next(s for s in instance.sessions if s.duration == 2)
+    at_two = compile_(instance, s.faculty, Move(which=ClassRef(session=s.id), to=TimeSpec(days=["Fri"], at=["14:00"])))
+    assert at_two.result.constraints[0].when.slots == [5, 6]  # 2 to 4 pm: a 2-hour class starting at 2 pm
+    morning = compile_(instance, s.faculty, Move(which=ClassRef(session=s.id), to=TimeSpec(part="morning")))
+    assert morning.result.constraints[0].when.slots == [0, 1, 2, 3]  # a start already fits: left alone
+
+
 def test_a_class_that_meets_twice_a_week_needs_the_timetable_to_tell_which(instance, teacher):
     s = next(s for s in instance.sessions if s.faculty == teacher and s.kind.value == "lecture" and
              sum(o.course == s.course and o.kind == s.kind and o.faculty == teacher for o in instance.sessions) > 1)

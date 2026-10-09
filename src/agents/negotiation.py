@@ -857,17 +857,15 @@ class Negotiator:
             self.ledger.record(entry)
 
     def _message(self, rnd: int, target: str, cons, mus, offers: list[Offer], private, raw_requests) -> Message:
-        views = [OptionView(key=o.key, placements=o.placements, drop=tuple(o.drop)) for o in offers]
+        views = [OptionView(key=o.key, placements=o.placements, drop=tuple(o.drop), moved=o.moved) for o in offers]
         counts = self.ledger.times() if self.use_ledger else {}
-        facts = conflict_facts(self.instance, cons, mus, views, counts)
+        facts = conflict_facts(self.instance, cons, mus, views, counts, recipient=target)
         raw = [raw_requests[cons[i].source.request] for i in mus if cons[i].source.request in raw_requests]
         exp = self.explainer.explain(facts, target, raw_requests=raw, private=private)
         invented, omitted = option_mismatches(exp.text, [o.placements for o in offers], facts, raw)
-        lines = [exp.text, "", "Options:"]
-        for o in offers:
-            lines.append(f"{o.key}) " + "; ".join(
-                f"{session_name(self.instance, s)} on {placement_text(self.instance, p)}"
-                for s, p in sorted(o.placements.items())))
+        options = {f.id: f.reader for f in facts if f.id.startswith("OPT-")}
+        lines = [exp.lead if exp.lead is not None else exp.text, "", "Options:"]
+        lines += [f"{o.key}) {options[f'OPT-{o.key}']}" for o in offers]
         lines.append("Reply with a letter, or tell us which days and times would work for you.")
         return Message(round=rnd, to=target, mus=list(mus), offers=offers, text="\n".join(lines),
                        facts=[{"id": f.id, "text": f.text} for f in facts],

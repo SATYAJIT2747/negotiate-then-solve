@@ -42,8 +42,18 @@ PRIVATE_TERMS = ("medical", "hospital", "doctor", "family", "surgery", "illness"
 
 @dataclass(frozen=True)
 class Fact:
+    """``text`` is what the model is given and its claims are checked against: it names sessions by ID and
+    tiers by number, and stays stable so prompts and cached answers do too. ``plain`` says the same to the
+    person reading the message: no IDs, no tier codes, "you" for the recipient."""
+
     id: str
     text: str
+    plain: str | None = None
+
+    @property
+    def reader(self) -> str:
+        """``""`` when another fact's sentence already says this one (one sentence per class)."""
+        return self.text if self.plain is None else self.plain
 
 
 @dataclass(frozen=True)
@@ -53,6 +63,7 @@ class OptionView:
     key: str
     placements: dict[str, Placement]
     drop: tuple[str, ...]
+    moved: int | None = None  # other classes that move
 
 
 # ---------------------------------------------------------------------------
@@ -93,31 +104,102 @@ def placement_text(instance: Instance, p: Placement) -> str:
     return f"{FULL_DAY[p.day]} at {hour(p.slot)} in {room}"
 
 
-def describe(instance: Instance, c: Constraint) -> str:
-    """One constraint in plain words: who, what, when, tier. Never the reason."""
-    who = instance.faculty_by_id[c.owner].name if c.owner in instance.faculty_by_id else (
+def _body(instance: Instance, c: Constraint, you: str | None = None) -> str:
+    """Who, what and when. With ``you``, the reader's own constraint is said to them, without IDs."""
+    own = you is not None and c.owner == you
+    who = "You" if own else instance.faculty_by_id[c.owner].name if c.owner in instance.faculty_by_id else (
         "The lab in-charge" if c.owner and c.owner.startswith("S-LAB") else "The institute")
     s = c.scope
-    what = (session_name(instance, s.session) if s.session else
-            f"{instance.room_by_id[s.room].name}" if s.room and s.room in instance.room_by_id else
-            f"{instance.group_by_id[s.group].name}'s classes" if s.group else
-            f"the {instance.course_title(s.course)} classes" if s.course else
-            "their classes" if s.faculty and s.faculty == c.owner else "all classes")
+    if s.session:
+        x = instance.session_by_id.get(s.session)
+        what = (session_name(instance, s.session) if you is None or x is None else
+                f"{'your' if own else 'the'} {instance.course_title(x.course)} {x.kind.value}")
+    else:
+        what = (f"{instance.room_by_id[s.room].name}" if s.room and s.room in instance.room_by_id else
+                f"{instance.group_by_id[s.group].name}'s classes" if s.group else
+                f"the {instance.course_title(s.course)} classes" if s.course else
+                ("your classes" if own else "their classes") if s.faculty and s.faculty == c.owner else "all classes")
     when = _when(instance, c)
     if c.type == ConstraintType.UNAVAILABLE:
-        body = f"{what[0].upper() + what[1:]} is unavailable {when}" if s.room else f"{who} is unavailable {when}"
+        body = (f"{what[0].upper() + what[1:]} is unavailable {when}" if s.room else
+                f"{who} {'are' if own else 'is'} unavailable {when}")
     elif c.type == ConstraintType.PREFER:
-        body = f"{who} {'needs' if c.hard else 'would like'} {what} {when}"
+        body = f"{who} {('need' if own else 'needs') if c.hard else 'would like'} {what} {when}"
     elif c.type == ConstraintType.AVOID:
         body = f"{who} {'cannot have' if c.hard else 'would rather not have'} {what} {when}"
     elif c.type == ConstraintType.REQUIRE_ROOM:
         need = (", ".join(c.room.equipment) if c.room and c.room.equipment else
                 " or ".join(instance.room_by_id[r].name for r in (c.room.rooms or [])) if c.room else "")
-        body = f"{who} needs {what} in a room with {need}" if c.room and c.room.equipment else \
-            f"{who} needs {what} in {need}"
+        verb = "need" if own else "needs"
+        body = f"{who} {verb} {what} in a room with {need}" if c.room and c.room.equipment else \
+            f"{who} {verb} {what} in {need}"
     else:
         body = f"No one may teach more than {c.limit} hours in a row"
-    return f"{body.strip()} (Tier {int(c.tier)}, {TIER_NAME[c.tier]})."
+    return body.strip()
+
+
+def describe(instance: Instance, c: Constraint) -> str:
+    """One constraint in plain words: who, what, when, tier. Never the reason."""
+    return f"{_body(instance, c)} (Tier {int(c.tier)}, {TIER_NAME[c.tier]})."
+
+
+# what a fixed constraint is, to someone who cannot change it; Tiers 3-5 need no note
+FIXED_NOTE = {Tier.PHYSICAL: "this cannot be changed", Tier.POLICY: "an institute rule",
+              Tier.COMMITMENT: "an agreed commitment"}
+
+
+def plain_describe(instance: Instance, c: Constraint, you: str | None) -> str:
+    note = FIXED_NOTE.get(c.tier)
+    return f"{_body(instance, c, you or '')}{f' ({note})' if note else ''}."
+
+
+EQUIPMENT_WORDS = {"gpu": "GPUs"}
+
+
+def _equipment(names: Iterable[str]) -> str:
+    return _and([EQUIPMENT_WORDS.get(e, e) for e in names])
+
+
+def _and(items: list[str]) -> str:
+    return items[0] if len(items) == 1 else ", ".join(items[:-1]) + " and " + items[-1]
+
+
+def plain_group(instance: Instance, cs: list[Constraint], you: str | None) -> str:
+    """One sentence for one person's constraints on one class: "You need your ML practical on Tuesday in the
+    afternoon, in a room with GPUs." Anything else gets a sentence per constraint."""
+    times = [c for c in cs if c.type == ConstraintType.PREFER]
+    rooms = [c for c in cs if c.type == ConstraintType.REQUIRE_ROOM and c.room and c.room.equipment]
+    if len(cs) < 2 or len(times) > 1 or len(times) + len(rooms) != len(cs) or not cs[0].scope.session:
+        return " ".join(plain_describe(instance, c, you) for c in cs)
+    base = times[0] if times else rooms[0]
+    body = _body(instance, base, you or "") if times else _body(instance, base, you or "").split(" in a room")[0]
+    need = _equipment(sorted({e for c in rooms for e in c.room.equipment}))
+    note = next((FIXED_NOTE[c.tier] for c in cs if c.tier in FIXED_NOTE), None)
+    return f"{body}, in a room with {need}{f' ({note})' if note else ''}."
+
+
+def _as_asked(c: Constraint, sid: str, p: Placement) -> bool:
+    return (c.type == ConstraintType.PREFER and c.scope.session == sid and
+            (not c.when.days or p.day in c.when.days) and (c.when.slots is None or p.slot in c.when.slots))
+
+
+def plain_option(instance: Instance, o: OptionView, asked: Iterable[Constraint], you: str | None) -> str:
+    """"Friday at 2 pm in Lab 3, as you asked; 2 other classes move"."""
+    asked = list(asked)
+    parts = []
+    for sid, p in sorted(o.placements.items()):
+        s = instance.session_by_id.get(sid)
+        where = placement_text(instance, p)
+        if len(o.placements) > 1 and s is not None:
+            where = f"{'your' if s.faculty == you else 'the'} {instance.course_title(s.course)} {s.kind.value} on {where}"
+        if any(_as_asked(c, sid, p) for c in asked):
+            where += ", as you asked"
+        parts.append(where)
+    text = "; ".join(parts) or "the timetable stays as it is"
+    if o.moved is not None:
+        text += (" (nothing else moves)" if o.moved == 0 else
+                 f" ({o.moved} other class{'es' if o.moved != 1 else ''} move{'s' if o.moved == 1 else ''})")
+    return text
 
 
 def conflict_facts(
@@ -126,26 +208,47 @@ def conflict_facts(
     mus: Iterable[str],
     options: Iterable[OptionView] = (),
     ledger_counts: Mapping[str, float] | None = None,
+    recipient: str | None = None,
 ) -> list[Fact]:
     facts: list[Fact] = []
     involved = [constraints[i] for i in mus]
+    groups: dict[tuple, list[Constraint]] = {}
     for c in involved:
-        facts.append(Fact(c.id, describe(instance, c)))
+        groups.setdefault((c.owner, tuple(c.scope.model_dump().values())), []).append(c)
+    for c in involved:
+        group = groups[(c.owner, tuple(c.scope.model_dump().values()))]
+        plain = plain_group(instance, group, recipient) if c is group[0] else ""
+        facts.append(Fact(c.id, describe(instance, c), plain))
         if c.source.rule:
-            facts.append(Fact(f"RULE-{c.id}", f"This comes from the institute rule: {c.source.rule} [{c.id}]."))
-    for eq in sorted({e for c in involved if c.room for e in c.room.equipment}):
-        rooms = [r.name for r in instance.rooms if eq in r.equipment]
-        facts.append(Fact(f"RES-{eq}", f"Rooms with {eq}: {', '.join(rooms) if rooms else 'none'}."))
+            facts.append(Fact(f"RULE-{c.id}", f"This comes from the institute rule: {c.source.rule} [{c.id}].",
+                              f"That is the institute's rule on {c.source.rule}."))
+    equipment = sorted({e for c in involved if c.room for e in c.room.equipment})
+    holders = {eq: tuple(r.name for r in instance.rooms if eq in r.equipment) for eq in equipment}
+    said: set[tuple] = set()
+    for eq in equipment:
+        rooms = holders[eq]
+        plain = ""
+        if rooms not in said:  # "Only Lab 2 has GPUs and routers."
+            said.add(rooms)
+            same = [e for e in equipment if holders[e] == rooms]
+            plain = (f"No room has {_equipment(same)}." if not rooms else
+                     f"Only {_and(list(rooms))} {'has' if len(rooms) == 1 else 'have'} {_equipment(same)}.")
+        facts.append(Fact(f"RES-{eq}", f"Rooms with {eq}: {', '.join(rooms) if rooms else 'none'}.", plain))
     for o in options:
         where = "; ".join(f"{session_name(instance, s)} on {placement_text(instance, p)}"
                           for s, p in sorted(o.placements.items()))
-        facts.append(Fact(f"OPT-{o.key}", f"Option {o.key}: {where}. The solver confirms this works."))
+        facts.append(Fact(f"OPT-{o.key}", f"Option {o.key}: {where}. The solver confirms this works.",
+                          plain_option(instance, o, (c for c in involved if c.owner == recipient), recipient)))
     owners = {c.owner for c in involved if c.owner in instance.faculty_by_id}
     for owner in sorted(owners):
         n = (ledger_counts or {}).get(owner, 0)
         if n:
-            facts.append(Fact(f"LED-{owner}", f"{instance.faculty_by_id[owner].name} has conceded "
-                                              f"{n:g} time{'s' if n != 1 else ''} before."))
+            times = f"{n:g} time{'s' if n != 1 else ''}"
+            often = "once" if n == 1 else "twice" if n == 2 else times
+            name = instance.faculty_by_id[owner].name
+            facts.append(Fact(f"LED-{owner}", f"{name} has conceded {times} before.",
+                              f"You have given way {often} before." if owner == recipient else
+                              f"{name} has given way {often} before."))
     return facts
 
 
@@ -173,7 +276,8 @@ class Explanation:
     claims: list[tuple[str, list[str], bool]] = field(default_factory=list)  # (text, facts, supported)
     rejected: int = 0
     leaks: list[str] = field(default_factory=list)
-    body: str | None = None  # the full text, when the model wrote free prose
+    body: str | None = None  # the full text, when the model wrote free prose or the template laid it out
+    lead: str | None = None  # the template's explanation without its option list (messages list options apart)
 
     @property
     def text(self) -> str:
@@ -281,12 +385,43 @@ class Explainer:
         self.checker = ClaimChecker(instance)
 
     def template(self, facts: list[Fact], recipient: str | None = None) -> Explanation:
+        """What clashes, then the options, in the reader's words (``Fact.reader``), one claim per fact."""
         out = Explanation(mode="template")
         conflict = [f for f in facts if not f.id.startswith(("OPT-", "LED-"))]
+        ledger = [f for f in facts if f.id.startswith("LED-")]
+        options = [f for f in facts if f.id.startswith("OPT-")]
+        why: list[str] = []
         if conflict:
-            out.claims.append(("Your request cannot be met as asked, because these conflict:", [], True))
-        for f in facts:
-            out.claims.append((f.text, [f.id], True))
+            asked = [f for f in conflict if f.reader.startswith("You ")]
+            lead = ("Your request can't be met exactly as asked." if asked else
+                    "A change to the timetable needs one of your classes to move.")
+            out.claims.append((lead, [], True))
+            why.append(lead)
+            # the reader's own request first, then what it clashes with, then rules and rooms
+            for f in sorted(conflict, key=lambda f: (f.id.startswith(("RULE-", "RES-")), f not in asked)):
+                if f.reader:
+                    out.claims.append((f.reader, [f.id], True))
+                    why.append(f.reader)
+            if len([f for f in conflict if not f.id.startswith(("RULE-", "RES-"))]) == 1:
+                rest = "It does not fit with the rest of the timetable as it stands."
+                out.claims.append((rest, [], True))
+                why.append(rest)
+        for f in ledger:
+            out.claims.append((f.reader, [f.id], True))
+            why.append(f.reader)
+        paragraphs = [" ".join(why)] if why else []
+        out.lead = paragraphs[0] if paragraphs else ""
+        if options:
+            head = ("This option has been checked and works:" if len(options) == 1 else
+                    "Each of these options has been checked and works:")
+            out.claims.append((head, [], True))
+            lines = [head]
+            for f in options:
+                line = f"{f.id.removeprefix('OPT-')}: {f.reader}."
+                out.claims.append((line, [f.id], True))
+                lines.append(line)
+            paragraphs.append("\n".join(lines))
+        out.body = "\n\n".join(paragraphs)
         return out
 
     def explain(self, facts: list[Fact], recipient: str | None = None, *,
