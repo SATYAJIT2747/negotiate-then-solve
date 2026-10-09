@@ -88,6 +88,7 @@ class ExpectedAction(str, Enum):
     ANSWER = "answer"
     OUT_OF_SCOPE = "out_of_scope"
     WITHDRAW = "withdraw"  # takes back an earlier request (intent parsers only; no corpus label)
+    CLUB_BOOKING = "club_booking"  # a room for a club activity, for the club desk (intent parsers only)
 
 
 class Variant(str, Enum):

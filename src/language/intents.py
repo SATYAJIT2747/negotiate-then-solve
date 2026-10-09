@@ -252,15 +252,45 @@ class LoadLimit(_Base):
     justification: JustificationLit = JUSTIFICATION
 
 
-Intent = Annotated[Unavailable | Avoid | Only | Move | Swap | ExtraClass | Cancel | RoomClosed | NeedsRoom | LoadLimit,
-                   Field(discriminator="kind")]
+DateText = Annotated[str, Field(pattern=r"^\d{4}-\d{2}-\d{2}$", description="YYYY-MM-DD")]
+
+
+class ClubBooking(_Base):
+    """A room for a club activity (the club desk checks and books it). Students may ask for one."""
+
+    kind: Literal["club_booking"] = "club_booking"
+    club: str | None = Field(None, description="the club's name as the message gives it")
+    activity: str | None = None
+    day: Day | None = None
+    date: DateText | None = Field(None, description="only when the message gives a calendar date")
+    period: Period = Field(default_factory=Period)
+    start: Clock | None = None
+    end: Clock | None = None
+    attendees: int | None = Field(None, ge=1)
+    cohorts: list[str] = Field(default_factory=list, description="programmes the members come from, as named")
+    room: str | None = Field(None, description="the room as the message names it")
+    justification: JustificationLit = JUSTIFICATION
+
+
+class ClashReport(_Base):
+    """Students report two of their classes at the same time: when, and which courses (with ``investigate``)."""
+
+    kind: Literal["clash_report"] = "clash_report"
+    time: TimeSpec = Field(default_factory=TimeSpec)
+    courses: list[str] = Field(default_factory=list, description="course IDs from the directory")
+    justification: JustificationLit = JUSTIFICATION
+
+
+Intent = Annotated[Unavailable | Avoid | Only | Move | Swap | ExtraClass | Cancel | RoomClosed | NeedsRoom | LoadLimit
+                   | ClubBooking | ClashReport, Field(discriminator="kind")]
 IntentKind = Literal["unavailable", "avoid", "only", "move", "swap", "extra_class", "cancel", "room_closed",
-                     "needs_room", "load_limit"]
+                     "needs_room", "load_limit", "club_booking", "clash_report"]
 
 REQUEST_TYPE: dict[str, str] = {
     "unavailable": "unavailability", "avoid": "preference", "only": "preference", "move": "preference",
     "swap": "swap", "extra_class": "preference", "cancel": "preference", "room_closed": "room_issue",
-    "needs_room": "room_issue", "load_limit": "preference",
+    "needs_room": "room_issue", "load_limit": "preference", "club_booking": "club_booking",
+    "clash_report": "clash_report",
 }
 
 
@@ -488,6 +518,32 @@ class CancelRef:
 
 
 @dataclass
+class ClubRef:
+    """A club booking with everything the desk needs but the calendar date: ``date`` when the message gave
+    one, else ``day`` in ``weeks`` (the week it falls in; None: the next one)."""
+
+    club: str | None
+    activity: str | None
+    date: str | None
+    day: str | None
+    weeks: list[int] | None
+    start: str
+    end: str
+    attendees: int
+    cohorts: list[str]
+    room: str | None
+
+
+@dataclass
+class ClashRef:
+    """What a clash report names: days and start slots (None: not said) and course IDs."""
+
+    days: list[str] | None
+    slots: list[int] | None
+    courses: list[str]
+
+
+@dataclass
 class Compiled:
     """An ``IntentOutput`` resolved against the instance and timetable.
     ``result`` is what the orchestrator takes for constraint intents; the
@@ -498,6 +554,8 @@ class Compiled:
     swaps: list[SwapRef] = field(default_factory=list)
     extras: list[ExtraRef] = field(default_factory=list)
     cancels: list[CancelRef] = field(default_factory=list)
+    clubs: list[ClubRef] = field(default_factory=list)
+    clashes: list[ClashRef] = field(default_factory=list)
     question: str | None = None
     missing: list[str] = field(default_factory=list)
 
@@ -551,6 +609,30 @@ def _load_limit(instance: Instance, intent: LoadLimit, request: Request, index: 
                       valid=Validity())
 
 
+def club_ref(intent: ClubBooking, current_week: int | None, instance: Instance) -> ClubRef:
+    if intent.date is None and intent.day is None:
+        raise Unresolved("On which date is the activity?", "date")
+    if intent.start is None or intent.end is None:
+        raise Unresolved("From what time to what time do you need the room?", "time")
+    if minutes(intent.end) <= minutes(intent.start):
+        raise Unresolved("The activity has to end after it starts. From what time to what time?", "time")
+    if intent.attendees is None:
+        raise Unresolved("How many people will come?", "attendees")
+    wk = None if intent.date else weeks(instance, intent.period, current_week)
+    return ClubRef(intent.club, intent.activity, intent.date, intent.day, wk, intent.start, intent.end,
+                   intent.attendees, list(intent.cohorts), intent.room)
+
+
+def clash_ref(intent: ClashReport, instance: Instance) -> ClashRef:
+    """Whatever of the report resolves: a report goes on even when its times are off."""
+    try:
+        d, q = days(instance, intent.time), slots(instance, intent.time)
+    except Unresolved:
+        d, q = None, None
+    known = {s.course for s in instance.sessions}
+    return ClashRef(d, q, [c for c in intent.courses if c in known])
+
+
 def compile_intents(instance: Instance, request: Request, out: IntentOutput, *,
                     timetable: Mapping[str, Placement] | None = None, current_week: int | None = None) -> Compiled:
     """Resolve every intent; the first reference that cannot be resolved turns the whole request into a question."""
@@ -558,9 +640,15 @@ def compile_intents(instance: Instance, request: Request, out: IntentOutput, *,
     drafts: list[DraftConstraint] = []
     compiled = Compiled(output=out, result=ParseResult(request=request, output=None))
     limits: list[LoadLimit] = []
+    if out.action == "investigate":
+        compiled.clashes = [clash_ref(i, instance) for i in out.intents if isinstance(i, ClashReport)]
     try:
         for intent in out.intents if out.action == "compile" else []:
             match intent:
+                case ClubBooking():
+                    compiled.clubs.append(club_ref(intent, current_week, instance))
+                case ClashReport():
+                    pass  # only read with ``investigate``
                 case Swap():
                     if intent.theirs.owner is None and intent.theirs.session is None:
                         raise Unresolved("Who would you like to swap with?", "faculty")
@@ -583,8 +671,12 @@ def compile_intents(instance: Instance, request: Request, out: IntentOutput, *,
     except Unresolved as e:
         compiled.question, compiled.missing = e.question, [e.missing]
         drafts, limits = [], []
-        compiled.swaps, compiled.extras, compiled.cancels = [], [], []
+        compiled.swaps, compiled.extras, compiled.cancels, compiled.clubs = [], [], [], []
 
+    if out.action == "compile" and out.intents and all(isinstance(i, ClubBooking) for i in out.intents):
+        # a club booking goes to the club desk, not the solver: anyone may ask, students included
+        compiled.result = ParseResult(request=request, output=None, club=True)
+        return compiled
     if out.action == "withdraw":
         compiled.result = ParseResult(request=request, output=None, withdraw=True)
         if request.role == Role.STUDENT:
@@ -617,5 +709,8 @@ def lower(out: IntentOutput, drafts: list[DraftConstraint]) -> ParseOutput:
     action = out.action
     if action == "compile" and any(i.kind == "extra_class" for i in out.intents):
         action = "investigate"
-    return ParseOutput(request_type=out.request_type, action=action, constraints=drafts,
-                       missing=out.missing, clarifying_question=out.question)
+    rtype = out.request_type
+    if rtype == "club_booking":  # a club booking has no place in the old format: the first other intent's type
+        rtype = next((REQUEST_TYPE[i.kind] for i in out.intents if i.kind != "club_booking"), "out_of_scope")
+    return ParseOutput(request_type=rtype, action=action, constraints=drafts, missing=out.missing,
+                       clarifying_question=out.question)

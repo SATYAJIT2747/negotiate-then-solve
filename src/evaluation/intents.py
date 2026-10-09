@@ -12,8 +12,10 @@ same request, timetable and current week, and the outcomes compared:
 * **action**: compile, clarify (a question), withdraw, investigate, answer,
   out of scope, refuse;
 * **outcome match**: the same action, and the same constraints (exact, as in
-  ``evaluation.parsing``), swaps, extra classes and cancellations; when both
-  ask a question, any question counts;
+  ``evaluation.parsing``), swaps, extra classes, cancellations, club bookings
+  (date or day and week, times, size, programmes, room; not the club's name
+  or activity, which are free text) and clash reports (time and courses);
+  when both ask a question, any question counts;
 * **constraint atoms**: micro P/R/F1 over the constraints' facts, for partial
   credit;
 * **literal match**: the same JSON as the gold, a stricter reading.
@@ -54,6 +56,9 @@ def outcome(instance: Instance, c: Compiled) -> dict:
         "extras": sorted((_class(instance, x.template), tuple(x.weeks or ()), tuple(x.days or ()), tuple(x.slots or ()))
                          for x in c.extras),
         "cancels": sorted((x.session, tuple(x.weeks or ())) for x in c.cancels),
+        "clubs": sorted((x.date, x.day, tuple(x.weeks or ()), x.start, x.end, x.attendees,
+                         tuple(sorted(n.lower() for n in x.cohorts)), (x.room or "").lower()) for x in c.clubs),
+        "clashes": sorted((tuple(x.days or ()), tuple(x.slots or ()), tuple(sorted(x.courses))) for x in c.clashes),
     }
 
 
@@ -69,7 +74,7 @@ def same(instance: Instance, pred: dict, gold: dict) -> bool:
     if gold["action"] == "clarify":
         return True
     return (exact_match(pred["constraints"], gold["constraints"], instance)
-            and all(pred[k] == gold[k] for k in ("swaps", "extras", "cancels")))
+            and all(pred[k] == gold[k] for k in ("swaps", "extras", "cancels", "clubs", "clashes")))
 
 
 def _context(row: dict) -> tuple[Request, dict[str, Placement], int | None]:
@@ -114,8 +119,9 @@ def score(rows: list[dict], instance: Instance, reader: Reader, workers: int = 1
             pred = outcome(instance, compile_intents(instance, request, pred_out, timetable=timetable,
                                                      current_week=week))
         except (LLMError, ValueError) as e:  # an invalid or cut-off answer is a wrong answer
-            pred_out, pred, error = None, {"action": "invalid", "constraints": [], "swaps": [], "extras": [],
-                                           "cancels": []}, f"{type(e).__name__}: {str(e)[:120]}"
+            pred_out, error = None, f"{type(e).__name__}: {str(e)[:120]}"
+            pred = {"action": "invalid", "constraints": [], "swaps": [], "extras": [], "cancels": [], "clubs": [],
+                    "clashes": []}
         hit = same(instance, pred, gold)
         literal = pred_out is not None and json.loads(pred_out.model_dump_json(exclude_defaults=True)) == \
             json.loads(gold_out.model_dump_json(exclude_defaults=True))

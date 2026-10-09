@@ -2,8 +2,8 @@
 
 Move a class named by where it is now, swap with a colleague, an extra
 class, a cancelled class, a limit on hours in a row, taking back a request,
-weeks named relative to now ("next week", "from week 10") and times between
-two hours. Each example is a message, the sender's timetable it refers to
+weeks named relative to now ("next week", "from week 10"), times between
+two hours, a room for a club activity and a student's clash report. Each example is a message, the sender's timetable it refers to
 (random placements: only consistency with the message matters), the current
 week and the gold ``IntentOutput``.
 
@@ -19,17 +19,19 @@ from __future__ import annotations
 import random
 from collections.abc import Callable
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import date, datetime, timedelta
 
 from core.instance import Instance, Session, SessionKind
 from core.schemas import Channel, Placement, Request, Role
 
-from .corpus import FULL_DAY, hour
-from .intent_compiler import clock, random_timetable
+from .corpus import FULL_DAY, ExpectedAction, hour
+from .intent_compiler import clock, random_timetable, random_today
 from .intents import (
     Avoid,
     Cancel,
+    ClashReport,
     ClassRef,
+    ClubBooking,
     ExtraClass,
     IntentOutput,
     LoadLimit,
@@ -59,6 +61,7 @@ class IntentExample:
     current_week: int
     asks: bool = False  # the message leaves something out: the gold compiles to a question
     want: dict = field(default_factory=dict)  # what the gold must resolve to
+    today: date | None = None
 
 
 @dataclass
@@ -68,10 +71,12 @@ class _Ctx:
     sender: str
     timetable: dict[str, Placement]
     week: int
+    today: date = date(2026, 9, 1)
 
     @property
     def name(self) -> str:
-        return self.instance.faculty_by_id[self.sender].name
+        f = self.instance.faculty_by_id.get(self.sender)
+        return f.name if f else self.rng.choice(["Ananya", "Rohan", "Meera", "Kabir", "Ishita", "Arjun"])
 
     def mine(self, kind: SessionKind | None = None) -> list[Session]:
         return [s for s in self.instance.sessions if s.faculty == self.sender and (kind is None or s.kind == kind)]
@@ -276,9 +281,92 @@ def avoid_between(ctx: _Ctx, t: int):
     return text, IntentOutput(action="compile", intents=[gold]), {}, False
 
 
+CLUBS = [("Robotics Club", "robot building session"), ("Music Society", "band practice"),
+         ("Debating Society", "practice debate"), ("Coding Club", "programming contest"),
+         ("Photography Club", "photo editing workshop"), ("Drama Club", "rehearsal"), ("Quiz Club", "quiz night"),
+         ("Entrepreneurship Cell", "startup talk"), ("Literary Club", "poetry reading"),
+         ("Astronomy Club", "stargazing briefing")]
+PROGRAMMES = ["first-year CSE", "second-year CSE", "third-year ECE", "B.Tech CSD", "M.Tech CSE", "second-year ECD"]
+CLUB_TIMES = [("18:00", "19:00"), ("18:00", "20:00"), ("18:30", "20:30"), ("19:00", "21:00"), ("14:00", "16:00"),
+              ("15:00", "17:00")]
+ROOMS = ["H101", "H203", "B4-302", "D101", "the auditorium", "CL-1"]
+
+
+def _time_words(c: str) -> str:
+    h, m = map(int, c.split(":"))
+    return f"{h % 12 or 12}{f':{m:02d}' if m else ''} {'am' if h < 12 else 'pm'}"
+
+
+def club_booking(ctx: _Ctx, t: int):
+    club, activity = ctx.rng.choice(CLUBS)
+    start, end = ctx.rng.choice(CLUB_TIMES)
+    s, e = _time_words(start), _time_words(end)
+    n = ctx.rng.choice([15, 20, 25, 30, 40, 45, 60, 80, 120])
+    day = ctx.rng.choice(["Mon", "Tue", "Wed", "Thu", "Fri", "Sat"])
+    D = FULL_DAY.get(day, "Saturday")
+    words, period = ctx.rng.choice([("next week", Period(relative="next_week")), ("this week", Period(relative="this_week")),
+                                    ("", Period())])
+    on = ctx.today + timedelta(days=ctx.rng.randint(3, 40))
+    date_words = f"{on.day} {on.strftime('%B')}"
+    if ctx.rng.random() < 0.12:  # no time or size: the desk cannot check it, so the parser asks
+        text = ctx.rng.choice([f"Can the {club} get a room on {D} {words}?".replace("  ", " ").replace(" ?", "?"),
+                               f"We'd like to book a room for our {activity} on {date_words}."])
+        gold = ClubBooking(club=club if "Can the" in text else None, activity=None if "Can the" in text else activity,
+                           day=day if "Can the" in text else None, period=period if "Can the" in text else Period(),
+                           date=None if "Can the" in text else on.isoformat())
+        return text, IntentOutput(action="compile", intents=[gold]), {}, True
+    pw = f" {words}" if words else ""
+    room = ctx.rng.choice(ROOMS)
+    cohort = ctx.rng.choice(PROGRAMMES)
+    texts = [
+        (f"The {club} would like a room on {D}{pw} from {s} to {e} for about {n} people, for a {activity}.",
+         {"day": day, "period": period}),
+        (f"Can we book a room for our {activity}{pw} on {D}, {s} to {e}? We expect {n} members of the {club}.",
+         {"day": day, "period": period}),
+        (f"Requesting {room} on {date_words} from {s} to {e} for the {club}'s {activity}; around {n} attendees.",
+         {"date": on.isoformat(), "room": room.removeprefix("the ")}),
+        (f"{club} here: we need a space for {n} people on {D}{pw}, {s}-{e}, mostly {cohort} students.",
+         {"day": day, "period": period, "cohorts": [cohort]}),
+        (f"Could the {club} use a lecture hall{pw} on {D} between {s} and {e}? About {n} of us will come for a {activity}.",
+         {"day": day, "period": period}),
+    ]
+    text, fields = texts[t]
+    gold = ClubBooking(club=club, activity=None if t == 3 else activity, start=start, end=end, attendees=n, **fields)
+    return text, IntentOutput(action="compile", intents=[gold]), {}, False
+
+
+def clash_report(ctx: _Ctx, t: int):
+    inst = ctx.instance
+    g1 = inst.group_by_id[ctx.sender[3:]]
+    mine = sorted({s.course for s in inst.sessions if g1.id in s.groups})
+    other = [g for g in inst.groups if g.id != g1.id]
+    g2 = ctx.rng.choice(other)
+    theirs = sorted({s.course for s in inst.sessions if g2.id in s.groups} - set(mine))
+    if not mine or not theirs:
+        return None
+    c1, c2 = ctx.rng.choice(mine), ctx.rng.choice(theirs)
+    t1, t2 = inst.course_title(c1), inst.course_title(c2)
+    if t1 == t2 or sum(inst.course_title(c) == t1 for c in mine) > 1:
+        return None  # every section has its own course of a title: the other section is named to tell which
+    day = ctx.rng.choice(inst.calendar.days)
+    q = ctx.rng.choice([x for x in range(inst.calendar.slots_per_day) if x != inst.calendar.lunch_slot])
+    D, h = FULL_DAY[day], hour(q)
+    texts = [f"My {t1} class and {t2} ({g2.name}) are both on {D} at {h}; I can't attend both.",
+             f"Some of us in {g1.name} also take {t2} with {g2.name}, and it clashes with {t1} on {D} at {h}.",
+             f"There's a clash between {t1} and {t2} with {g2.name} on {D}s at {h}. Can someone look into it?",
+             f"{t1} and {t2} ({g2.name} section) clash every week for those of us taking both.",
+             f"We have {t1} and {t2} of {g2.name} at the same time on {D} ({h}), please fix this."]
+    time = TimeSpec() if t == 3 else TimeSpec(days=[day], at=[clock(q)])
+    gold = ClashReport(time=time, courses=sorted([c1, c2]))
+    return texts[t], IntentOutput(action="investigate", intents=[gold]), {}, False
+
+
 GENERATORS: dict[str, Gen] = {"move": move, "swap": swap, "extra_class": extra, "cancel": cancel,
                               "load_limit": load_limit, "withdraw": withdraw,
-                              "unavailable_relative": unavailable_relative, "avoid_between": avoid_between}
+                              "unavailable_relative": unavailable_relative, "avoid_between": avoid_between,
+                              "club_booking": club_booking, "clash_report": clash_report}
+# who sends each kind: club bookings mostly students (sometimes a faculty adviser), clash reports students
+SENDERS = {"club_booking": "student_or_teacher", "clash_report": "student"}
 TEST_TEMPLATE = 4  # each generator's last wording is held out for test
 
 
@@ -297,6 +385,10 @@ def _resolves(ex: IntentExample, instance: Instance) -> bool:
         return [instance.session_by_id[r.template].course for r in got.extras] == [w["extra"]]
     if "cancel" in w:
         return [r.session for r in got.cancels] == [w["cancel"]]
+    if ex.generator == "club_booking":
+        return len(got.clubs) == 1 and got.result.action == ExpectedAction.CLUB_BOOKING
+    if ex.generator == "clash_report":
+        return len(got.clashes) == 1 and len(got.clashes[0].courses) == 2
     return True
 
 
@@ -309,9 +401,12 @@ def intent_examples(instance: Instance, per_generator: int = 70, seed: int = 0) 
         made, tries = 0, 0
         while made < per_generator and tries < per_generator * 20:
             tries += 1
-            sender = rng.choice(teachers)
+            who = SENDERS.get(name, "teacher")
+            student = who == "student" or (who == "student_or_teacher" and rng.random() < 0.75)
+            sender = f"ST-{rng.choice(instance.groups).id}" if student else rng.choice(teachers)
             mine = [s.id for s in instance.sessions if s.faculty == sender]
-            ctx = _Ctx(instance, rng, sender, random_timetable(instance, rng, mine), rng.randint(1, instance.calendar.weeks))
+            ctx = _Ctx(instance, rng, sender, random_timetable(instance, rng, mine), rng.randint(1, instance.calendar.weeks),
+                       random_today(rng))
             t = made % 5
             got = gen(ctx, t)
             if got is None:
@@ -321,9 +416,11 @@ def intent_examples(instance: Instance, per_generator: int = 70, seed: int = 0) 
             if text in seen:
                 continue
             split = "test" if t == TEST_TEMPLATE else "val" if rng.random() < 0.1 else "train"
-            request = Request(id=f"I-{name}-{made:03d}", channel=Channel.PORTAL, sender_id=sender, role=Role.FACULTY,
-                              raw_text=text, received_at=datetime(2026, 9, 1))
-            ex = IntentExample(request.id, name, t, split, request, gold, ctx.timetable, ctx.week, asks, want)
+            request = Request(id=f"I-{name}-{made:03d}", channel=Channel.PORTAL, sender_id=sender,
+                              role=Role.STUDENT if student else Role.FACULTY, raw_text=text,
+                              received_at=datetime(2026, 9, 1))
+            ex = IntentExample(request.id, name, t, split, request, gold, ctx.timetable, ctx.week, asks, want,
+                               ctx.today)
             if not _resolves(ex, instance):
                 continue
             seen.add(text)

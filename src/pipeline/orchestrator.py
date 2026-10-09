@@ -21,7 +21,7 @@ from __future__ import annotations
 import time
 from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import date, datetime
 
 from agents.explainer import describe, placement_text, session_name
 from agents.extra import RULE as EXTRA_RULE
@@ -66,7 +66,8 @@ from core.solver import TimetableSolver
 from core.validator import validate_constraint, verify_timetable
 from language.corpus import FULL_DAY, ExpectedAction, RequestType, hour
 from language.intents import Cancel as CancelIntent
-from language.intents import Compiled
+from language.intents import ClubBooking as ClubIntent
+from language.intents import ClubRef, Compiled
 from language.intents import ExtraClass as ExtraIntent
 from language.intents import Swap as SwapIntent
 from language.parsing import ParseResult
@@ -162,6 +163,8 @@ class Orchestrator:
         swap_reader=None,
         offer_choices: Callable[[], bool] | None = None,
         current_week: Callable[[], int | None] | None = None,
+        today: Callable[[], date] | None = None,
+        club_desk: Callable[[ClubRef, Request], tuple[str, str]] | None = None,
     ) -> None:
         """``offer_choices``: whether, right now, a sender whose request fits in more than one way is
         asked which time they prefer (``_let_sender_choose``); never when omitted. ``current_week``: the
@@ -169,7 +172,11 @@ class Orchestrator:
 
         A parser with ``compile(request, timetable, current_week)`` reads intents (``language.intents``):
         swaps, extra classes, cancellations and withdrawals are routed by what it read. ``compile`` may
-        return None (a stand-in without intents answers): the request is then parsed as before."""
+        return None (a stand-in without intents answers): the request is then parsed as before.
+
+        ``club_desk`` books a club activity from a message (``ClubRef``) and returns the reply and the outcome
+        (booked, rejected, or needs_approval: the timetable office decides); without one, club bookings go to
+        the coordinator."""
         self.instance = instance
         self.store = store
         self.parser = parser
@@ -186,6 +193,8 @@ class Orchestrator:
         self.extra_reader = ExtraReader(instance)
         self.offer_choices = offer_choices
         self.current_week = current_week
+        self.today = today or date.today
+        self.club_desk = club_desk
         self.cases: dict[str, Case] = {}
 
     # -- setup -------------------------------------------------------------------
@@ -231,7 +240,7 @@ class Orchestrator:
         if compile_ is not None:
             base = self.store.current_version()
             week = self.current_week() if self.current_week else None
-            case.compiled = compile_(case.request, _regular(base.assignment) if base else {}, week)
+            case.compiled = compile_(case.request, _regular(base.assignment) if base else {}, week, today=self.today())
             if case.compiled is not None:
                 case.route += "+intents"
                 return case.compiled.result
@@ -253,6 +262,8 @@ class Orchestrator:
 
         if action == ExpectedAction.WITHDRAW:
             return self._withdraw_by_message(case)
+        if case.intents(ClubIntent):
+            return self._club(case)
         if self._is_swap(case):
             return self._swap(case)
         if self._is_extra(case):
@@ -272,6 +283,8 @@ class Orchestrator:
             case.reply = case.policy.answer or case.policy.explanation
             self._advance(case, S.ANSWERED, cited=case.policy.cited)
             return case
+        if action == ExpectedAction.INVESTIGATE and case.compiled is not None and case.compiled.clashes:
+            return self._clash(case)
         if action in (ExpectedAction.INVESTIGATE, ExpectedAction.OUT_OF_SCOPE):
             to = "coordinator" if action == ExpectedAction.INVESTIGATE else "the relevant office"
             case.reply = f"Thank you. Your message has been passed to {to}."
@@ -427,6 +440,69 @@ class Orchestrator:
                       "cancellations and make-up classes.")
         self._advance(case, S.FORWARDED, to="coordinator",
                       cancel=[{"session": x.session, "weeks": x.weeks} for x in c.cancels])
+        return case
+
+    def _club(self, case: Case) -> Case:
+        """A room for a club activity: the club desk checks it against the semester timetable and the
+        bookings, and books it, turns it down with alternatives, or leaves it to the timetable office."""
+        c = case.compiled
+        case.route += "+club"
+        if c.question is not None:
+            self._advance(case, S.POLICY_CHECKED, verdict="not_checked")
+            case.reply = c.question
+            self._advance(case, S.CLARIFICATION, missing=c.missing)
+            return case
+        ref = c.clubs[0]
+        if self.club_desk is None:
+            case.reply = "Your room request for the club activity has been passed to the timetable office."
+            self._advance(case, S.FORWARDED, to="coordinator", club=ref.__dict__)
+            return case
+        try:
+            reply, outcome = self.club_desk(ref, case.request)
+        except ValueError as e:
+            case.reply = f"The club desk could not check this ({e}); it has been passed to the timetable office."
+            self._advance(case, S.FORWARDED, to="coordinator", club=ref.__dict__)
+            return case
+        case.reply = reply
+        if outcome == "needs_approval":
+            self._advance(case, S.FORWARDED, to="coordinator", club=ref.__dict__, outcome=outcome)
+        else:
+            self._advance(case, S.ANSWERED, club=ref.__dict__, outcome=outcome)
+        return case
+
+    def _clash(self, case: Case) -> Case:
+        """Students report two classes at once. The published timetable is checked first: a real overlap goes
+        to the coordinator with both classes named; none, and the students hear at once where each class is."""
+        ref = case.compiled.clashes[0]
+        case.route += "+clash"
+        base = self.store.current_version()
+        placed = _regular(base.assignment) if base else {}
+        sessions = [s for s in self.instance.sessions if s.course in ref.courses and s.id in placed]
+        if len(ref.courses) < 2 or not sessions:
+            case.reply = "Thank you. Your message has been passed to coordinator."
+            self._advance(case, S.FORWARDED, to="coordinator")
+            return case
+
+        def cells(s) -> set[tuple[str, int]]:
+            p = placed[s.id]
+            return {(p.day, q) for q in range(p.slot, p.slot + s.duration)
+                    if (not ref.days or p.day in ref.days) and (ref.slots is None or q in ref.slots)}
+
+        overlaps = sorted({(a.id, b.id) for a in sessions for b in sessions
+                           if a.course < b.course and cells(a) & cells(b)})
+        if overlaps:
+            pairs = "; ".join(f"{session_name(self.instance, a)} and {session_name(self.instance, b)} on "
+                              f"{placement_text(self.instance, placed[a])}" for a, b in overlaps[:3])
+            case.reply = (f"We checked the published timetable: {pairs} are at the same time. This has been passed "
+                          "to the timetable coordinator to fix.")
+            self._advance(case, S.FORWARDED, to="coordinator", clash=[list(x) for x in overlaps])
+            return case
+        where = "; ".join(f"{session_name(self.instance, s.id)} is on {placement_text(self.instance, placed[s.id])}"
+                          for s in sessions[:6])
+        case.reply = (f"We checked the published timetable and these do not overlap: {where}. If you still have two "
+                      "classes at once (for example an elective the timetable does not list), write again with the "
+                      "class names and times and the timetable office will look at it.")
+        self._advance(case, S.ANSWERED, clash=[])
         return case
 
     def _withdraw_by_message(self, case: Case) -> Case:
@@ -804,6 +880,24 @@ class Orchestrator:
             for c in set_aside:
                 self.store.set_active(c.id, True)
             case.decision = None
+        return case
+
+    def act_on(self, case_id: str, by: str, request: Request) -> Case:
+        """The coordinator takes up a message forwarded to them (a student's clash report, a change only the
+        office can make) as their own ``request``, which the caller then submits: it goes through the whole
+        pipeline with the coordinator's authority. The forwarded message is answered with a pointer to it."""
+        case = self.cases[case_id]
+        if by not in self.approvers:
+            raise NotAuthorised(f"{by} cannot act for the timetable office")
+        if case.forwarded_to != "coordinator":
+            raise ValueError(f"case {case_id} was not forwarded to the coordinator ({case.status.value})")
+        if case.handled is not None:
+            raise ValueError(f"case {case_id} has already been answered")
+        note = f"The timetable office is acting on your message as request {request.id}."
+        case.handled = {"by": by, "note": note, "at": datetime.now().isoformat(timespec="seconds"),
+                        "acting": request.id}
+        case.reply = note
+        self.store.log(case.id, "acted_on", by=by, request=request.id)
         return case
 
     def handle(self, case_id: str, handler: str, note: str, name: str | None = None) -> Case:

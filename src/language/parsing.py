@@ -238,6 +238,7 @@ class ParseResult:
     errors: list[str] = field(default_factory=list)
     refusal: str | None = None
     withdraw: bool = False  # the message takes back an earlier request (``ParseOutput`` has no such action)
+    club: bool = False  # a club booking, for the club desk (nor this)
 
     @property
     def action(self) -> ExpectedAction:
@@ -246,6 +247,8 @@ class ParseResult:
             return ExpectedAction.REFUSE
         if self.withdraw:
             return ExpectedAction.WITHDRAW
+        if self.club:
+            return ExpectedAction.CLUB_BOOKING
         if self.output is None or self.errors:
             return ExpectedAction.CLARIFY
         return ExpectedAction(self.output.action)
