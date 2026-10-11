@@ -1,6 +1,7 @@
 """The request lifecycle end to end, intake, and the portal API. Parsing is
 stubbed with the gold constraints, so these test everything around the LLM."""
 
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
 
 import pytest
@@ -141,6 +142,16 @@ def test_email_intake_identity_dedupe_and_threads(world):
         intake.from_email(msg.replace(addr, "spoof@evil.example"))
     m = intake.from_messaging({"user": {"email": addr}, "text": "Friday morning is fine", "ts": "1757000000"})
     assert m.channel == Channel.MESSAGING and m.sender_id == who.id
+
+
+def test_requests_arriving_together_get_their_own_ids(world):
+    """Two users submitting at once (or one while a world seeds) must not be given the same id."""
+    sc, _, store, _ = world
+    intake = Intake(Directory.from_instance(sc.instance), store)
+    who = sc.instance.faculty[0].id
+    with ThreadPoolExecutor(8) as pool:
+        made = list(pool.map(lambda i: intake.from_portal(who, f"Request number {i}"), range(40)))
+    assert all(made) and len({r.id for r in made}) == 40
 
 
 def test_portal_api(world):

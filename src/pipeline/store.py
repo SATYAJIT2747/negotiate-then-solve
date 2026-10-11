@@ -11,6 +11,7 @@ from __future__ import annotations
 import json
 import sqlite3
 import threading
+from collections.abc import Callable
 from datetime import datetime
 
 from core.instance import ExtraClass
@@ -85,6 +86,21 @@ class Store:
                    (r.id, r.model_dump_json(), r.status.value, dedupe_key, r.thread_id))
         return True
 
+    def add_new_request(self, make: Callable[[str], Request], dedupe_key: str | None = None) -> Request | None:
+        """Number and store a new request in one step: ``make`` builds it from its id. Two requests
+        arriving together (two users, or one while a world is seeding) would otherwise get the same id.
+        None if an identical request is already stored, as ``add_request``."""
+        with self._lock:
+            if dedupe_key and self.db.execute("SELECT 1 FROM requests WHERE dedupe_key=? AND status!=?",
+                                              (dedupe_key, RequestStatus.WITHDRAWN.value)).fetchone():
+                return None
+            (n,) = self.db.execute("SELECT COUNT(*) FROM requests").fetchone()
+            r = make(f"R-{n + 1:05d}")
+            self.db.execute("INSERT INTO requests VALUES (?,?,?,?,?)",
+                            (r.id, r.model_dump_json(), r.status.value, dedupe_key, r.thread_id))
+            self.db.commit()
+            return r
+
     def save_request(self, r: Request) -> None:
         self._exec("UPDATE requests SET body=?, status=? WHERE id=?", (r.model_dump_json(), r.status.value, r.id))
 
@@ -96,10 +112,6 @@ class Store:
         rows = (self._exec("SELECT body FROM requests WHERE status=?", (status.value,)) if status
                 else self._exec("SELECT body FROM requests"))
         return [Request.model_validate_json(b) for (b,) in rows.fetchall()]
-
-    def next_request_id(self) -> str:
-        (n,) = self._exec("SELECT COUNT(*) FROM requests").fetchone()
-        return f"R-{n + 1:05d}"
 
     # -- constraints ---------------------------------------------------------------
 
