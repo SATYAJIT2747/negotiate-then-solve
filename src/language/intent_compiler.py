@@ -379,7 +379,7 @@ def main() -> None:
     from pathlib import Path
 
     from .corpus import extra_denials, extra_parser_examples, load_jsonl
-    from .intent_corpus import intent_examples
+    from .intent_corpus import intent_examples, train_only_examples
 
     ap = argparse.ArgumentParser(description="Export the compiler data on intents.")
     ap.add_argument("--corpus", type=Path, nargs="+",
@@ -390,8 +390,11 @@ def main() -> None:
     ap.add_argument("--min-per-action", type=int, default=50)
     ap.add_argument("--per-generator", type=int, default=70, help="generated examples per new intent")
     ap.add_argument("--max-per-kind", type=int, default=78,
-                    help="train: at most this many corpus examples of one request type (the corpus repeats "
-                         "itself; every generated example is kept)")
+                    help="train: at most this many corpus examples of one request type, and as many of the "
+                         "extra denials of one (the corpus repeats itself; every clarification and every "
+                         "generated example is kept)")
+    ap.add_argument("--train-only", type=int, default=30,
+                    help="examples per set of train-only wordings (intent_corpus.TRAIN_ONLY)")
     args = ap.parse_args()
 
     from .compiler import rows
@@ -399,8 +402,10 @@ def main() -> None:
     instance = Instance.model_validate_json(args.instance.read_text(encoding="utf-8"))
     corpora = [load_jsonl(p, instance) for p in args.corpus]
     held = [e for c in corpora for e in c if e.split in ("val", "test")]
+    denials: set[str] = set()
     if args.extra_denials:
         corpora.append(extra_denials(instance, args.extra_denials, seed=1, exclude=held, near_miss=0.35))
+        denials = {e.id for e in corpora[-1]}
     if args.min_per_action:  # the same top-up as language.compiler, so the corpus part matches its export
         have = Counter(ex.expected_action.value for ex, _, g in rows(corpora, instance)
                        if g is not None and ex.split == "train")
@@ -408,22 +413,40 @@ def main() -> None:
         corpora.append(extra_parser_examples(instance, seed=2, exclude=[e for c in corpora for e in c], **need))
     generated = intent_examples(instance, args.per_generator)
 
-    args.out.mkdir(parents=True, exist_ok=True)
-    files = {s: (args.out / f"{s}.jsonl").open("w", encoding="utf-8") for s in ("train", "val", "test")}
     counts: Counter = Counter()
     kinds: Counter = Counter()
+    # Towards the cap: by request type, the extra denials apart (150 of them would leave no room for the
+    # ordinary preferences they are filed with). A clarification neither counts nor is cut: there are few,
+    # and --min-per-action has just topped them up.
+    used: Counter = Counter()
     rows_out = list(export_rows(instance, corpora, generated))
     random.Random(1).shuffle(rows_out)
-    try:
-        for split, row in rows_out:
-            if (row is not None and split == "train" and row["source"] == "corpus" and args.max_per_kind
-                    and kinds[(split, row["kind"])] >= args.max_per_kind):
+    kept = []
+    for split, row in rows_out:
+        if row is not None and split == "train":
+            clarify = row["messages"][2]["content"].startswith('{"action":"clarify"')
+            key = (row["kind"], row["id"] in denials)
+            if row["source"] == "corpus" and args.max_per_kind and not clarify and used[key] >= args.max_per_kind:
                 counts["train_capped"] += 1
                 continue
-            counts[split] += 1
-            if row is not None:
-                files[split].write(json.dumps(row, ensure_ascii=False) + "\n")
-                kinds[(split, row["kind"])] += 1
+            used[key] += not clarify
+        counts[split] += 1
+        if row is not None:
+            kept.append((split, row))
+            kinds[(split, row["kind"])] += 1
+    # the train-only wordings go in among the rest afterwards, so the rows above stay the same rows in the
+    # same order with or without them
+    place = random.Random(2)
+    for split, row in export_rows(instance, [], train_only_examples(instance, args.train_only)):
+        kept.insert(place.randrange(len(kept) + 1), (split, row))
+        counts[split] += 1
+        kinds[(split, row["kind"])] += 1
+
+    args.out.mkdir(parents=True, exist_ok=True)
+    files = {s: (args.out / f"{s}.jsonl").open("w", encoding="utf-8") for s in ("train", "val", "test")}
+    try:
+        for split, row in kept:
+            files[split].write(json.dumps(row, ensure_ascii=False) + "\n")
     finally:
         for f in files.values():
             f.close()

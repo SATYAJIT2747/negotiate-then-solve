@@ -16,7 +16,7 @@ from language.intent_compiler import (
     random_timetable,
     spec_from,
 )
-from language.intent_corpus import GENERATORS, TEST_TEMPLATE, _resolves, intent_examples
+from language.intent_corpus import GENERATORS, TEST_TEMPLATE, _resolves, intent_examples, train_only_examples
 from language.intents import IntentOutput, TimeSpec
 from language.local import grammar_schema
 from language.parsing import postprocess, to_constraint
@@ -88,6 +88,15 @@ def test_new_requests_cover_every_generator_and_resolve(instance):
     assert all((e.split == "test") == (e.template == TEST_TEMPLATE) for e in examples)
     withdraw = [e for e in examples if e.generator == "withdraw"]
     assert withdraw and all(e.gold.action == "withdraw" for e in withdraw)
+
+
+def test_train_only_wordings_stay_out_of_test_and_say_what_the_test_wording_says(instance):
+    examples = train_only_examples(instance, per_generator=10)
+    assert {e.generator for e in examples} == {"move", "club_booking"}
+    assert all(_resolves(e, instance) and e.split != "test" for e in examples)
+    intents = [e.gold.intents[0] for e in examples]
+    assert all(not i.hard for i in intents if i.kind == "move")  # a wish
+    assert all(i.room is None for i in intents if i.kind == "club_booking")  # a kind of room, not a room
 
 
 def test_the_scorer_gives_gold_full_marks_and_catches_a_wrong_class(instance):

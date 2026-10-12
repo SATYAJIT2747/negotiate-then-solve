@@ -11,7 +11,9 @@ Every example is checked by compiling its gold: it must resolve to the
 classes it was written about, or (for the requests that leave something
 out) ask a question. Each generator's last wording is kept for the test
 split, so the test measures wordings the model has not seen; val is a
-random tenth of the rest.
+random tenth of the rest. Where that wording is also the only one with its
+meaning (a move that is a wish, a club that asks for a kind of room), the
+``TRAIN_ONLY`` generators say the same meaning in other words.
 """
 
 from __future__ import annotations
@@ -297,16 +299,22 @@ def _time_words(c: str) -> str:
     return f"{h % 12 or 12}{f':{m:02d}' if m else ''} {'am' if h < 12 else 'pm'}"
 
 
-def club_booking(ctx: _Ctx, t: int):
+def _club_ask(ctx: _Ctx):
+    """What a club asks for: (club, activity, start, end, attendees, day, week in words, period, date)."""
     club, activity = ctx.rng.choice(CLUBS)
     start, end = ctx.rng.choice(CLUB_TIMES)
-    s, e = _time_words(start), _time_words(end)
     n = ctx.rng.choice([15, 20, 25, 30, 40, 45, 60, 80, 120])
     day = ctx.rng.choice(["Mon", "Tue", "Wed", "Thu", "Fri", "Sat"])
-    D = FULL_DAY.get(day, "Saturday")
     words, period = ctx.rng.choice([("next week", Period(relative="next_week")), ("this week", Period(relative="this_week")),
                                     ("", Period())])
     on = ctx.today + timedelta(days=ctx.rng.randint(3, 40))
+    return club, activity, start, end, n, day, words, period, on
+
+
+def club_booking(ctx: _Ctx, t: int):
+    club, activity, start, end, n, day, words, period, on = _club_ask(ctx)
+    s, e = _time_words(start), _time_words(end)
+    D = FULL_DAY.get(day, "Saturday")
     date_words = f"{on.day} {on.strftime('%B')}"
     if ctx.rng.random() < 0.12:  # no time or size: the desk cannot check it, so the parser asks
         text = ctx.rng.choice([f"Can the {club} get a room on {D} {words}?".replace("  ", " ").replace(" ?", "?"),
@@ -361,6 +369,51 @@ def clash_report(ctx: _Ctx, t: int):
     return texts[t], IntentOutput(action="investigate", intents=[gold]), {}, False
 
 
+def move_wish(ctx: _Ctx, t: int):
+    mine = ctx.mine()
+    if not mine:
+        return None
+    s = ctx.rng.choice(mine)
+    d, _, h = ctx.at(s)
+    to_words, to = ctx.to_time(s, ctx.other_day(d))
+    D, k, title = FULL_DAY[d], ctx.kind_word(s), ctx.title(s)
+    named = t in (0, 2)
+    texts = [f"I'd prefer to have my {D} {h} {title} {k} moved to {to_words}, if that can be managed.",
+             f"It would be nice if my {k} on {D} at {h} could shift to {to_words}; no problem if it can't.",
+             f"Ideally the {title} {k} I teach on {D} at {h} would move to {to_words}, but it is not urgent.",
+             f"Would you mind moving my {D} {h} {k} to {to_words}, where the timetable allows?",
+             f"My {h} {k} on {D} would suit me better if it went to {to_words}. Only a preference."]
+    intent = Move(which=_ref(s, ctx, k, course=named), to=to, hard=False)
+    return texts[t], IntentOutput(action="compile", intents=[intent]), {"move": s.id}, False
+
+
+ROOM_KINDS = ["a classroom", "a seminar room", "a tutorial room", "a hall", "a large room", "any free classroom"]
+
+
+def club_room_kind(ctx: _Ctx, t: int):
+    club, activity, start, end, n, day, words, period, on = _club_ask(ctx)
+    s, e = _time_words(start), _time_words(end)
+    D = FULL_DAY.get(day, "Saturday")
+    pw = f" {words}" if words else ""
+    rk = ctx.rng.choice(ROOM_KINDS)  # a kind of room is not a room: the desk picks one that fits
+    cohort = ctx.rng.choice(PROGRAMMES)
+    texts = [
+        (f"The {club} is looking for {rk} on {D}{pw} from {s} to {e} for a {activity}; about {n} people.",
+         {"day": day, "period": period}),
+        (f"Is {rk} free on {D}{pw}, {s} to {e}? The {club} has a {activity} with roughly {n} members.",
+         {"day": day, "period": period}),
+        (f"We need {rk} for the {club}'s {activity} on {on.day} {on.strftime('%B')}, {s}-{e}. Around {n} will attend.",
+         {"date": on.isoformat()}),
+        (f"Could you give the {club} {rk} on {D}{pw} between {s} and {e}? {n} of us, mostly {cohort} students.",
+         {"day": day, "period": period, "cohorts": [cohort]}),
+        (f"Booking request from the {club}: {rk}, {D}{pw}, {s} to {e}, {n} people, for our {activity}.",
+         {"day": day, "period": period}),
+    ]
+    text, fields = texts[t]
+    gold = ClubBooking(club=club, activity=None if t == 3 else activity, start=start, end=end, attendees=n, **fields)
+    return text, IntentOutput(action="compile", intents=[gold]), {}, False
+
+
 GENERATORS: dict[str, Gen] = {"move": move, "swap": swap, "extra_class": extra, "cancel": cancel,
                               "load_limit": load_limit, "withdraw": withdraw,
                               "unavailable_relative": unavailable_relative, "avoid_between": avoid_between,
@@ -368,6 +421,9 @@ GENERATORS: dict[str, Gen] = {"move": move, "swap": swap, "extra_class": extra, 
 # who sends each kind: club bookings mostly students (sometimes a faculty adviser), clash reports students
 SENDERS = {"club_booking": "student_or_teacher", "clash_report": "student"}
 TEST_TEMPLATE = 4  # each generator's last wording is held out for test
+# more wordings of a generator, for train and val only: the meaning only its test wording has
+TRAIN_ONLY: dict[str, tuple[str, Gen]] = {"move-wish": ("move", move_wish),
+                                          "club_booking-room-kind": ("club_booking", club_room_kind)}
 
 
 def _resolves(ex: IntentExample, instance: Instance) -> bool:
@@ -393,11 +449,21 @@ def _resolves(ex: IntentExample, instance: Instance) -> bool:
 
 
 def intent_examples(instance: Instance, per_generator: int = 70, seed: int = 0) -> list[IntentExample]:
-    rng = random.Random(seed)
+    return _examples(instance, random.Random(seed), {name: (name, gen) for name, gen in GENERATORS.items()},
+                     per_generator, TEST_TEMPLATE)
+
+
+def train_only_examples(instance: Instance, per_generator: int = 30, seed: int = 100) -> list[IntentExample]:
+    """The ``TRAIN_ONLY`` wordings: none goes to test, so adding them leaves the test split as it was."""
+    return _examples(instance, random.Random(seed), TRAIN_ONLY, per_generator, None)
+
+
+def _examples(instance: Instance, rng: random.Random, generators: dict[str, tuple[str, Gen]], per_generator: int,
+              test_template: int | None) -> list[IntentExample]:
     teachers = [f.id for f in instance.faculty if any(s.faculty == f.id for s in instance.sessions)]
     out: list[IntentExample] = []
     seen: set[str] = set()
-    for name, gen in GENERATORS.items():
+    for key, (name, gen) in generators.items():
         made, tries = 0, 0
         while made < per_generator and tries < per_generator * 20:
             tries += 1
@@ -415,8 +481,8 @@ def intent_examples(instance: Instance, per_generator: int = 70, seed: int = 0) 
             text = rng.choice(_OPEN) + text + rng.choice(_CLOSE).format(name=ctx.name)
             if text in seen:
                 continue
-            split = "test" if t == TEST_TEMPLATE else "val" if rng.random() < 0.1 else "train"
-            request = Request(id=f"I-{name}-{made:03d}", channel=Channel.PORTAL, sender_id=sender,
+            split = "test" if t == test_template else "val" if rng.random() < 0.1 else "train"
+            request = Request(id=f"I-{key}-{made:03d}", channel=Channel.PORTAL, sender_id=sender,
                               role=Role.STUDENT if student else Role.FACULTY, raw_text=text,
                               received_at=datetime(2026, 9, 1))
             ex = IntentExample(request.id, name, t, split, request, gold, ctx.timetable, ctx.week, asks, want,

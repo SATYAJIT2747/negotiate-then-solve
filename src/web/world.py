@@ -379,9 +379,7 @@ class World:
     def _apply(self, snap: dict) -> None:
         """Put a snapshot's state in place (a copy of it, so it can be applied again)."""
         keep = {id(self.instance): self.instance}
-        with self.store._lock:
-            self.store.db.deserialize(snap["db"])
-        self.store.ensure_schema()  # a state saved before a table was added
+        self.store.load(snap["db"])
         self.orch.cases = copy.deepcopy(snap["cases"], keep)  # a fresh copy, so it can be restored again
         items: dict[str, InboxItem] = {}
         for iid, case_id, to, message, created, reply, by, at in copy.deepcopy(snap["inbox"], keep):

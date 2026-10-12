@@ -342,7 +342,7 @@ written from the readable facts.
 uv run python -m language.intent_compiler                 # data/compiler-intents/: corpus gold as intents + new intents
 uv run python -m training.distill messages --messages messages-readable   # facts with their plain text; no API
 uv run python -m training.distill explain --readable --messages messages-readable --sample 600
-uv run python -m training.distill export --readable --compiler-dir data/compiler-intents --out data/multitask-readable
+uv run python -m training.distill export --readable --compiler-dir data/compiler-intents --out data/multitask-readable --max-per-task 1100   # keeps all 1062 intent examples
 ```
 
 A model trained on it is used with `NTS_INTENTS=1` beside `--parser local`; the
