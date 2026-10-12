@@ -61,10 +61,18 @@ class Store:
         self.db.executescript(SCHEMA)
         self._lock = threading.Lock()
 
-    def ensure_schema(self) -> None:
-        """Add tables a database saved by an older version lacks (after ``deserialize``)."""
+    def load(self, data: bytes) -> None:
+        """Replace the database with a saved one (``db.serialize()``), adding tables an older version lacks.
+
+        On a new connection: ``deserialize`` keeps the old one's prepared statements, and those go on
+        reading the tables where they were before, which is somewhere else in a database whose tables
+        were not all created at once."""
+        db = sqlite3.connect(":memory:", check_same_thread=False)
+        db.deserialize(data)
+        db.executescript(SCHEMA)
         with self._lock:
-            self.db.executescript(SCHEMA)
+            old, self.db = self.db, db
+        old.close()
 
     def _exec(self, sql: str, args: tuple = ()) -> _Rows:
         # rows are read under the lock: the connection is shared, and another thread's

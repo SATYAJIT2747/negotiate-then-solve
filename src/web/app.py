@@ -515,6 +515,10 @@ class HandleBody(BaseModel):
     note: str
 
 
+class ActBody(BaseModel):
+    text: str = ""  # the request the office makes of it; the forwarded message itself when empty
+
+
 class SeenBody(BaseModel):
     items: dict[str, int]  # inbox item -> the event of it now read
 
@@ -832,6 +836,25 @@ def create_web_app(world: World | None = None, *, worlds_dir: Path | None = None
         except ValueError as e:
             raise HTTPException(409 if body.note.strip() else 422, str(e)) from None
         return _case_detail(w, c)
+
+    @app.post("/api/cases/{case_id}/act")
+    def act(case_id: str, body: ActBody, u: dict = Depends(user)) -> dict:
+        """The coordinator acts on a forwarded message: ``text`` (by default the message itself) becomes a
+        request of theirs, solved and negotiated like any other; the sender is told which request it is."""
+        w = W()
+        c = w.orch.cases.get(case_id)
+        if c is None:
+            raise HTTPException(404)
+        if u["id"] != COORDINATOR:
+            raise HTTPException(403, "only the timetable office acts on forwarded messages")
+        if c.forwarded_to != "coordinator" or c.handled is not None:
+            raise HTTPException(409, "this message is not waiting for the timetable office")
+        r = w.intake.from_portal(u["id"], (body.text or c.request.raw_text).strip())
+        if r is None:
+            raise HTTPException(409, "duplicate request")
+        w.orch.act_on(case_id, u["id"], r)
+        w.submit(r)
+        return {"id": r.id, "case": _case_detail(w, c)}
 
     @app.post("/api/cases/{case_id}/withdraw")
     def withdraw(case_id: str, u: dict = Depends(user)) -> dict:

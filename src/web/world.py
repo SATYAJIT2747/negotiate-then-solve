@@ -11,7 +11,7 @@ import pickle
 import random
 import threading
 import time
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 from pathlib import Path
 
 from agents.documents import load_corpus, ocr_backend
@@ -235,7 +235,8 @@ class World:
             responders={f: InboxResponder(self, f) for f in teaching}, approvers={COORDINATOR}, semester=SEMESTER,
             swap_reader=self._swap_reader(),
             # a person picks the time; not while the start-up history replays, nor in a scored test run
-            offer_choices=lambda: not (self.seeding or self.restoring or self.test_data))
+            offer_choices=lambda: not (self.seeding or self.restoring or self.test_data),
+            current_week=self.current_week, club_desk=self.club_desk)
         self.orch.bootstrap(policy_constraints(self.instance), approved_by=COORDINATOR)
         self.started = datetime.now(UTC)
         self.threads: dict[str, threading.Thread] = {}
@@ -378,9 +379,7 @@ class World:
     def _apply(self, snap: dict) -> None:
         """Put a snapshot's state in place (a copy of it, so it can be applied again)."""
         keep = {id(self.instance): self.instance}
-        with self.store._lock:
-            self.store.db.deserialize(snap["db"])
-        self.store.ensure_schema()  # a state saved before a table was added
+        self.store.load(snap["db"])
         self.orch.cases = copy.deepcopy(snap["cases"], keep)  # a fresh copy, so it can be restored again
         items: dict[str, InboxItem] = {}
         for iid, case_id, to, message, created, reply, by, at in copy.deepcopy(snap["inbox"], keep):
@@ -497,6 +496,61 @@ class World:
                 return "bm25"
         return kind
 
+    def current_week(self) -> int | None:
+        """The teaching week today falls in, counted from the semester planner's start."""
+        from semester.clubs import semester_week
+
+        start = self.semester.state.semester_start
+        return semester_week(date.today(), date.fromisoformat(start), self.instance.calendar.weeks) if start else None
+
+    def club_desk(self, ref, request) -> tuple[str, str]:
+        """A club booking from a message, through the semester planner's club desk (``semester.clubs``):
+        the date from the day and week, programmes and room matched by name. Returns the reply and the outcome."""
+        from datetime import timedelta
+
+        from agents.policy import BM25
+        from semester.clubs import ClubRequest
+
+        p = self.semester
+        start = date.fromisoformat(p.state.semester_start)
+        if ref.date:
+            on = date.fromisoformat(ref.date)
+        else:
+            offset = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"].index(ref.day)
+            if ref.weeks:
+                on = start + timedelta(weeks=ref.weeks[0] - 1, days=offset)
+            else:  # the next one
+                today = date.today()
+                on = today + timedelta(days=(offset - today.weekday()) % 7 or 7)
+        cohorts = []
+        for name in ref.cohorts:
+            words = set(name.lower().replace("-", " ").split())
+            best = max(p.state.doc.cohorts if p.state.doc else [], default=None,
+                       key=lambda c: len(words & set(c.name.lower().replace("-", " ").split())))
+            if best is not None and words & set(best.name.lower().replace("-", " ").split()):
+                cohorts.append(best.id)
+        room = None
+        if ref.room:
+            if ref.room.lower().startswith("audi"):
+                room = "auditorium"
+            else:
+                room = next((r.id for r in p.rooms if r.id.lower() == ref.room.lower().replace(" ", "")), None)
+        req = ClubRequest(club=ref.club or "Club", activity=ref.activity or "club activity", date=on.isoformat(),
+                          start=ref.start, end=ref.end, attendees=ref.attendees, cohorts=cohorts, room=room,
+                          requested_by=request.sender_id)
+        hits = BM25(self.rules).search(f"club event activity room booking auditorium notice {req.activity}", 3)
+        d = p.club(req, submit=True, rules=[{"id": r.id, "title": r.title, "source": r.source, "text": r.text}
+                                             for r in hits])
+        when = f"{on.strftime('%A %d %B')}, {req.start}-{req.end}"
+        if d.status == "booked":
+            return f"Booked: {d.room} on {when} for the {req.club} ({req.attendees} people).", "booked"
+        failed = "; ".join(c.detail for c in d.checks if not c.ok)
+        if d.status == "needs_approval":
+            where = "the auditorium" if room == "auditorium" else "events this large"
+            return f"Your request for {when} has gone to the timetable office, which decides on {where}.", "needs_approval"
+        alts = "; ".join(", ".join(f"{v}" for v in a.values()) for a in d.alternatives[:2])
+        return (f"Not booked for {when}: {failed}." + (f" Options that work: {alts}." if alts else ""), "rejected")
+
     def _components(self):
         """The parser and policy check. With a model (``gemini``, ``local``) each is wrapped so that the
         rule-based stand-in answers whenever the model cannot (``web.fallback``); offline, the stand-ins."""
@@ -534,7 +588,12 @@ class World:
             self.model_link = ModelLink(
                 lambda: LocalClient(base_url=url, timeout=float(os.environ.get("NTS_LOCAL_TIMEOUT", "120"))),
                 probe=probe, on_change=self._model_changed)
-            make_parser = lambda c: CompilerParser(self.instance, c)  # noqa: E731
+            if os.environ.get("NTS_INTENTS") == "1":  # a model trained on intents (language.intent_compiler)
+                from language.intent_compiler import IntentCompilerParser
+
+                make_parser = lambda c: IntentCompilerParser(self.instance, c)  # noqa: E731
+            else:
+                make_parser = lambda c: CompilerParser(self.instance, c)  # noqa: E731
         self.model_link.usable()  # connect now if it can; it is tried again later if not
         parser = Fallback(self.model_link, make_parser, rule_parser, "parser")
         policy = Fallback(self.model_link, lambda c: PolicyAgent(self.rules, c, self.instance, retriever=kind),

@@ -227,7 +227,7 @@ export interface CaseDetail extends CaseSummary {
   /** This viewer is the one the escalation was sent to, and it is still open. */
   can_decide?: boolean;
   /** The coordinator's answer to a forwarded message. */
-  answer?: null | { by: string; by_name: string; note: string; at: string };
+  answer?: null | { by: string; by_name: string; note: string; at: string; acting?: string };
   /** This viewer is the coordinator and the forwarded message is still unanswered. */
   can_handle?: boolean;
   /** This viewer sent it, and nothing it asked for is in the published timetable yet. */
