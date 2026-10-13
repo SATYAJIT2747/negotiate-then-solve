@@ -130,9 +130,28 @@ def completion(out: IntentOutput) -> str:
     return json.dumps(d, ensure_ascii=False, separators=(",", ":"))
 
 
+def read_answer(client, prompt: str) -> tuple[IntentOutput, list[str]]:
+    """The model's ``IntentOutput`` for ``prompt``, and what was repaired: an answer that misses the schema on
+    a detail ("at": ["all"]) is repaired (``checks.repair_raw``) instead of lost."""
+    from .checks import read_repaired
+    from .llm import InvalidOutput
+
+    try:
+        return client.generate(INTENT_PROMPT, prompt, IntentOutput), []
+    except InvalidOutput as e:
+        if not getattr(e, "text", None):
+            raise
+        try:
+            out, notes = read_repaired(e.text)
+        except ValueError:
+            raise e from None
+        return out, ["repaired an invalid answer", *notes]
+
+
 class IntentCompilerParser:
-    """A model trained on intents as a parser. ``compile`` gives the resolved intents; ``parse`` the
-    ``ParseResult`` every parser gives. ``client`` is any client with ``generate``."""
+    """A model trained on intents as a parser. ``compile`` gives the resolved intents, checked against the
+    message and the timetable (``language.checks``); ``parse`` the ``ParseResult`` every parser gives.
+    ``client`` is any client with ``generate``."""
 
     def __init__(self, instance: Instance, client) -> None:
         self.instance = instance
@@ -140,14 +159,19 @@ class IntentCompilerParser:
 
     def read_intents(self, request: Request, timetable: Mapping[str, Placement] | None = None,
                      current_week: int | None = None, today: date | None = None) -> IntentOutput:
-        return self.client.generate(INTENT_PROMPT,
-                                    intent_message(self.instance, request, timetable, current_week, today),
-                                    IntentOutput)
+        return self.read(request, timetable, current_week, today)[0]
+
+    def read(self, request: Request, timetable: Mapping[str, Placement] | None = None,
+             current_week: int | None = None, today: date | None = None) -> tuple[IntentOutput, list[str]]:
+        return read_answer(self.client, intent_message(self.instance, request, timetable, current_week, today))
 
     def compile(self, request: Request, timetable: Mapping[str, Placement] | None = None,
                 current_week: int | None = None, today: date | None = None) -> Compiled:
-        out = self.read_intents(request, timetable, current_week, today)
-        return compile_intents(self.instance, request, out, timetable=timetable, current_week=current_week)
+        from .checks import checked_compile
+
+        out, notes = self.read(request, timetable, current_week, today)
+        return checked_compile(self.instance, request, out, timetable=timetable, current_week=current_week,
+                               notes=notes)
 
     def parse(self, request: Request):
         return self.compile(request).result

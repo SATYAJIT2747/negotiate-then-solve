@@ -432,8 +432,11 @@ def _names(instance: Instance, sids: list[str], timetable: Mapping[str, Placemen
 
 
 def _titled(instance: Instance, text: str, course: str) -> bool:
-    """Whether ``text`` (lower case) names ``course``'s title."""
-    return re.search(rf"\b{re.escape(instance.course_title(course).lower())}\b", text) is not None
+    """Whether ``text`` (lower case) names ``course``'s title, allowing a typo in a long one."""
+    from .lexicon import mentions
+
+    title = instance.course_title(course).lower()
+    return re.search(rf"\b{re.escape(title)}\b", text) is not None or mentions(text, title)
 
 
 def _sections(instance: Instance) -> dict[str, set[str]]:
@@ -638,6 +641,7 @@ class Compiled:
     clashes: list[ClashRef] = field(default_factory=list)
     question: str | None = None
     missing: list[str] = field(default_factory=list)
+    notes: list[str] = field(default_factory=list)  # what ``checks`` repaired or changed in the reading
 
     @property
     def needs_clarification(self) -> bool:
