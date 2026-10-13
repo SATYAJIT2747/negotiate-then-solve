@@ -105,7 +105,7 @@ def deny_targets(ex: CorpusExample, instance: Instance) -> list[Constraint]:
     if ex.targets:
         return list(ex.targets)
     request = ex.request.model_copy(update={"raw_text": ex.template_text or ex.request.raw_text})
-    parse = RuleParser(instance).parse(request)
+    parse = RuleParser(instance, robust=False).parse(request)  # the reading the labels were made with
     if parse.action != ExpectedAction.COMPILE or parse.errors or not parse.constraints:
         return []
     lunch, limit = instance.calendar.lunch_slot, instance.policy.max_consecutive

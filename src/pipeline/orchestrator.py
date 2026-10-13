@@ -230,7 +230,13 @@ class Orchestrator:
                             "tau": float(self.tau), "fast_path": fast, "latency_ms": round(float(d.latency_ms), 2)}
             if fast:
                 case.route = "fast"
-                return self._read(case, self.fast_parser)
+                result = self._read(case, self.fast_parser)
+                # System One is sure of the kind of request, not of the reading: one the fast parser could not
+                # settle (a question) goes to System Two rather than back to the sender
+                if result.action != ExpectedAction.CLARIFY:
+                    return result
+                case.compiled = None
+                case.routing["fast_path_deferred"] = True
         case.route = "system_two"
         return self._read(case, self.parser)
 

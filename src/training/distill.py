@@ -468,7 +468,7 @@ def check_policy(ex: CorpusExample, out: PolicyOutput, shown: set[str]) -> tuple
 def policy_samples(corpora: list[list[CorpusExample]], instance: Instance, handbook: Path, teacher,
                    *, workers: int = 4, limit: int | None = None) -> tuple[list[dict], Counter]:
     agent = PolicyAgent(load_handbook(handbook), teacher, instance)
-    parser = RuleParser(instance)  # the input parse; at run time it comes from the local compiler
+    parser = RuleParser(instance, robust=False)  # the input parse; at run time it comes from the local compiler
     reasons: Counter = Counter()
     lock = threading.Lock()
     seen: set[str] = set()

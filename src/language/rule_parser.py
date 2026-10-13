@@ -17,6 +17,7 @@ from core.schemas import Request
 
 from . import intents
 from .corpus import INJECTIONS
+from .lexicon import mentions, normalise
 from .intents import (
     Avoid,
     ClassRef,
@@ -61,6 +62,10 @@ EXTRA = re.compile(r"\b(extra|additional|revision|remedial|doubt.clearing)\s+(cl
 OUT_OF_SCOPE = re.compile(r"\b(auditorium|wifi|wi-fi|salary|projector|exam results|fest|book the)\b", re.IGNORECASE)
 VAGUE = re.compile(r"\b(a few days|couple of days|soon|next month|later this semester|some days|fewer early)\b", re.IGNORECASE)
 EQUIPMENT = {"gpu": "gpu", "graphics": "gpu", "router": "routers", "networking": "routers", "electronic": "electronics"}
+PLACE_WORD = re.compile(r"\b(schedule|move|put|shift|stack)\b", re.IGNORECASE)  # robust=False
+# moving a class ("could my Wednesday class go to Tuesday", "please shift", "reschedule")
+MOVE = re.compile(r"\b(schedule|reschedule|move|moved|put|shift|shifted|stack|push|bring)\b|"
+                  r"\b(go|went|be moved) to\b", re.IGNORECASE)
 SWAP = re.compile(r"\b(swap|swapp\w*|exchange|trade|switch)\b|"
                   r"\btake my\b.*\b(and )?I (take|teach|cover) (their|his|her)\b", re.IGNORECASE)
 _TITLE_WORD = re.compile(r"^(dr|prof|professor|mr|ms|mrs)\.?$", re.IGNORECASE)
@@ -81,8 +86,13 @@ def _clock(hour: int, ampm: str) -> str:
 
 
 class RuleParser:
-    def __init__(self, instance: Instance) -> None:
+    """``robust``: read everyday English (typos, shorthand, acronyms, "from ... to ...") and check the reading
+    (``language.checks``). ``robust=False`` is the reading the corpus labels were made with
+    (``compiler.deny_targets``), kept as it was so that regenerating the data leaves the gold unchanged."""
+
+    def __init__(self, instance: Instance, robust: bool = True) -> None:
         self.instance = instance
+        self.robust = robust
         cal = instance.calendar
         lunch = cal.lunch_slot if cal.lunch_slot is not None else cal.slots_per_day // 2
         self.morning = list(range(lunch))
@@ -131,9 +141,14 @@ class RuleParser:
         return Period(weeks=self.weeks(text))
 
     def sessions_named(self, text: str, faculty: str | None) -> list[str]:
+        """The sessions whose course title the text names: allowing a typo, and by acronym ("CA") among one
+        teacher's own classes, where an acronym is unlikely to mean two of them."""
         low = text.lower()
         mine = [s for s in self.instance.sessions if faculty is None or s.faculty == faculty]
         named = [s for s in mine if self.instance.course_title(s.course).lower() in low]
+        if not named and self.robust:
+            named = [s for s in mine if mentions(text, self.instance.course_title(s.course),
+                                                 acronyms=faculty is not None)]
         if re.search(r"\b(practical|lab session|lab)\b", low):
             named = [s for s in (named or mine) if s.kind == SessionKind.PRACTICAL]
         return [s.id for s in named]
@@ -164,7 +179,13 @@ class RuleParser:
     # -- parsing -----------------------------------------------------------------------
 
     def parse(self, request: Request) -> ParseResult:
-        return compile_intents(self.instance, request, self.read_intents(request)).result
+        from .checks import checked_compile
+
+        out = self.read_intents(request)
+        if not self.robust:
+            return compile_intents(self.instance, request, out).result
+        # a reading by patterns makes a requirement only where the message says one (``strict``)
+        return checked_compile(self.instance, request, out, strict=True).result
 
     def read(self, request: Request) -> ParseOutput:
         """The ``ParseOutput`` a model would return for ``request`` (before post-processing)."""
@@ -174,6 +195,8 @@ class RuleParser:
         text = _INJECTION.sub("", request.raw_text)
         for inj in INJECTIONS:
             text = text.replace(inj, "")
+        if self.robust:
+            text = normalise(text)  # one spelling for the regular expressions: "thrusday", "b4", "aftrnoon"
         low = text.lower()
         sender = request.sender_id
         role = request.role.value
@@ -243,14 +266,27 @@ class RuleParser:
                                              justification="stated" if stated else "none"))
 
         # a specific placement ("schedule my lecture at 1 pm on Friday", "4 lectures back-to-back")
-        if re.search(r"\b(schedule|move|put|shift|stack)\b", low) and (days or slots):
+        if (MOVE if self.robust else PLACE_WORD).search(low) and (days or slots):
             sessions = self.sessions_named(text, other or sender)
             if re.search(r"back.to.back|in a row|straight|consecutive|without (any )?breaks?", low):
                 t = times if slots else TimeSpec(part="morning")
                 return self._compile(Only(who=who, time=when(t=t), hard=True))
+            if not self.robust:
+                if sessions:
+                    return self._compile(Move(which=ClassRef(session=sessions[0]), to=when(), period=period,
+                                              hard=True))
+                return self._compile(Only(who=who, time=when(), period=period, hard=True))
+            # "from Wednesday 3 pm to Friday morning": the destination is what follows "to"
+            to = when()
+            if (m := re.search(r"\bfrom\b(.+?)\b(?:to|until|till|into)\b(.+)", low)) and \
+                    (self.days(m[2]) or self.times(m[2]).has_times):
+                to = self.times(m[2]).model_copy(update={"days": self.days(m[2])})
+            hard = not WISH.search(low)
             if sessions:
-                return self._compile(Move(which=ClassRef(session=sessions[0]), to=when(), period=period, hard=True))
-            return self._compile(Only(who=who, time=when(), period=period, hard=True))
+                return self._compile(Move(which=ClassRef(session=sessions[0]), to=to, period=period, hard=hard))
+            if other is None:  # "move my lecture to Friday": which one is for resolution, or a question
+                return self._compile(Move(which=self._class(text, sender), to=to, period=period, hard=hard))
+            return self._compile(Only(who=who, time=to, period=period, hard=True))
 
         if days or slots:
             hard = not WISH.search(low) and bool(re.search(r"\b(must|need|has to|have to|cannot)\b", low))
@@ -261,6 +297,10 @@ class RuleParser:
                                               hard=hard))
                 return self._compile(Only(who=who, time=when(), period=period, hard=hard))
             if (ONLY.search(low) or WANT.search(low)) and days and not AVOID.search(low):
+                if self.robust and WANT.search(low) and (sessions := self.sessions_named(text, other or sender)):
+                    # "I need my Computer Architecture lecture on Thursday at 2 pm": that class, not all of them
+                    return self._compile(Move(which=ClassRef(session=sessions[0]), to=when(), period=period,
+                                              hard=hard))
                 return self._compile(Only(who=who, time=when(), period=period, hard=hard))
             return self._compile(Avoid(who=who, time=when(), period=period, hard=hard))
 

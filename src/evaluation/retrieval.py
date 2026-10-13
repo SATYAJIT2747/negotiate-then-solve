@@ -74,7 +74,7 @@ def main() -> None:
         rules, _ = load_corpus(args.handbook, args.policies, ocr_backend())
     known = {r.id for r in rules}
     instance = Instance.model_validate_json(args.instance.read_text(encoding="utf-8"))
-    parser = RuleParser(instance)
+    parser = RuleParser(instance, robust=False)  # as in the recorded runs
 
     corpus_raw, corpus_hinted = [], []
     for path in args.corpus:
