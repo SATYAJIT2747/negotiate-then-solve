@@ -223,7 +223,7 @@ class RuleParser:
             which = ClassRef(session=sessions[0])
             found = [NeedsRoom(which=which, equipment=needs, justification="stated")]
             if days or slots:
-                found.append(Move(which=which, to=when(), period=period))
+                found.append(Move(which=which, to=when(), period=period, hard=True))
             return self._compile(*found)
 
         if (VAGUE.search(low) and not days and not weeks) or (UNAVAILABLE.search(low) and not days and not weeks):
@@ -249,7 +249,7 @@ class RuleParser:
                 t = times if slots else TimeSpec(part="morning")
                 return self._compile(Only(who=who, time=when(t=t), hard=True))
             if sessions:
-                return self._compile(Move(which=ClassRef(session=sessions[0]), to=when(), period=period))
+                return self._compile(Move(which=ClassRef(session=sessions[0]), to=when(), period=period, hard=True))
             return self._compile(Only(who=who, time=when(), period=period, hard=True))
 
         if days or slots:

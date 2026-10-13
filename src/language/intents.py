@@ -197,7 +197,7 @@ class Move(_Base):
     which: ClassRef
     to: TimeSpec = Field(default_factory=TimeSpec)
     period: Period = Field(default_factory=Period)
-    hard: bool = True
+    hard: bool = False  # a wish unless they say it must be
     justification: JustificationLit = JUSTIFICATION
 
 
