@@ -36,6 +36,48 @@ def test_explanation_filter():
     assert distill.check_explanation(FACTS, leaky, checker)[1] == "leak"
 
 
+def test_readable_explanations_drop_codes_and_long_sentences():
+    checker = ClaimChecker(uc3_lab_contention()[0])
+    ask = ("You asked for your Algorithms practical on Monday afternoon, but that cannot work.", ["C-A"])
+    option = ("Option A: Tuesday at 2 pm in Lab 2.", ["OPT-A"])
+    assert distill.check_explanation(FACTS, _claims(ask, option), checker, readable=True)[1] == "ok"
+    for text, why in (("Option A: the Algorithms practical (C3-P) on Tuesday at 2 pm in Lab 2.", "unreadable: code"),
+                      ("Option A: Tuesday at 2 pm in Lab 2 [OPT-A].", "unreadable: code"),
+                      ("You asked for Monday afternoon (Tier 4, operational requirement).", "unreadable: code"),
+                      ("Option A " + "really " * 30 + "is Tuesday at 2 pm in Lab 2.", "unreadable: long")):
+        assert distill.check_explanation(FACTS, _claims(ask, (text, ["OPT-A"])), checker, readable=True)[1] == why
+    assert distill.check_explanation(FACTS, _claims(ask, ask, option), checker, readable=True)[1] == \
+        "unreadable: repeated"
+    # the same codes pass the model-text filter, which the deployed model is still trained with
+    coded = _claims(ask, ("Option A: the Algorithms practical (C3-P) on Tuesday at 2 pm in Lab 2.", ["OPT-A"]))
+    assert distill.check_explanation(FACTS, coded, checker)[1] == "ok"
+
+
+def test_readable_grounded_explanations_see_and_are_checked_against_plain_facts():
+    from agents.explainer import READABLE_PROMPT, Explainer
+
+    class Teacher:
+        def generate(self, system, prompt, schema):
+            self.system, self.prompt = system, prompt
+            return _claims(("You need your ML practical on Tuesday in the afternoon, which cannot work.", ["C-1"]),
+                           ("Option A: Monday at 3 pm in Lab 2.", ["OPT-A"]))
+
+    inst = uc3_lab_contention()[0]
+    facts = [Fact("C-1", "Dr. Khan needs the ML practical (ML-P) on Tuesday in the afternoon (Tier 4, operational "
+                         "requirement).", "You need your ML practical on Tuesday in the afternoon."),
+             Fact("C-2", "Dr. Khan needs the ML practical (ML-P) in a room with gpu (Tier 4, operational requirement).",
+                  ""),
+             Fact("OPT-A", "Option A: the ML practical (ML-P) on Monday at 3 pm in Lab 2. The solver confirms this works.",
+                  "Monday at 3 pm in Lab 2 (nothing else moves)")]
+    teacher = Teacher()
+    out = Explainer(inst, mode="grounded", client=teacher, readable=True).explain(facts, "F-201")
+    assert teacher.system == READABLE_PROMPT
+    assert "[C-1] You need your ML practical" in teacher.prompt and "C-2" not in teacher.prompt
+    assert "(ML-P)" not in teacher.prompt and "Tier" not in teacher.prompt
+    assert out.mode == "grounded" and out.rejected == 0
+    assert out.lead.startswith("You need your ML practical") and out.text.endswith("Option A: Monday at 3 pm in Lab 2.")
+
+
 def test_random_windows_are_contiguous_and_skip_lunch():
     rng = random.Random(1)
     for _ in range(200):

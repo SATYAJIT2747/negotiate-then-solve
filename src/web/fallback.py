@@ -119,6 +119,20 @@ class Fallback:
     def parse(self, *args, **kwargs):
         return self._call("parse", *args, **kwargs)
 
+    def compile(self, *args, **kwargs):
+        """Intents from a model that reads them; None otherwise (the stand-in, or a model trained on the
+        older format), and the orchestrator then parses the plain way."""
+        p = self.primary()
+        if p is None or not hasattr(p, "compile"):
+            return None
+        try:
+            return p.compile(*args, **kwargs)
+        except Exception as e:  # noqa: BLE001 - the plain parse (and its stand-in) answers instead
+            if _outage(e):
+                self.link.failed(e)
+            print(f"[model] {self.name}: {type(e).__name__}: {str(e)[:160]}; parsed without intents", flush=True)
+            return None
+
     def review(self, *args, **kwargs):
         return self._call("review", *args, **kwargs)
 

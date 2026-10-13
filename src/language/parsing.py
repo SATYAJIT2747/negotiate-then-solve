@@ -196,6 +196,21 @@ def to_constraint(draft: DraftConstraint, request: Request, index: int) -> Const
     )
 
 
+def fit_duration(instance: Instance, c: Constraint) -> Constraint:
+    """"My practical on Friday at 2 pm" names when a 2-hour class starts. A placement constraint holds only if
+    every hour the class takes is inside its times, so when no start time leaves room for the whole class, the
+    times are read as start times and widened to cover it. Constraints a start fits already are left as they are."""
+    s = instance.session_by_id.get(c.scope.session or "")
+    slots = c.when.slots
+    if c.type != ConstraintType.PREFER or s is None or s.duration < 2 or not slots:
+        return c
+    if any(all(q in slots for q in range(start, start + s.duration)) for start in slots):
+        return c
+    last = instance.calendar.slots_per_day
+    covered = sorted({q for start in slots for q in range(start, min(start + s.duration, last))})
+    return c.model_copy(update={"when": c.when.model_copy(update={"slots": covered})})
+
+
 def check_authority(instance: Instance, request: Request, c: Constraint) -> str | None:
     """``None`` if the sender may create ``c``, otherwise the reason not."""
     role, sender = request.role, request.sender_id
@@ -222,12 +237,18 @@ class ParseResult:
     constraints: list[Constraint] = field(default_factory=list)
     errors: list[str] = field(default_factory=list)
     refusal: str | None = None
+    withdraw: bool = False  # the message takes back an earlier request (``ParseOutput`` has no such action)
+    club: bool = False  # a club booking, for the club desk (nor this)
 
     @property
     def action(self) -> ExpectedAction:
         """The next step for the orchestrator. Policy (deny) is decided later."""
         if self.refusal:
             return ExpectedAction.REFUSE
+        if self.withdraw:
+            return ExpectedAction.WITHDRAW
+        if self.club:
+            return ExpectedAction.CLUB_BOOKING
         if self.output is None or self.errors:
             return ExpectedAction.CLARIFY
         return ExpectedAction(self.output.action)
@@ -257,7 +278,7 @@ def postprocess(instance: Instance, request: Request, out: ParseOutput) -> Parse
         return result
     for i, draft in enumerate(out.constraints, 1):
         try:
-            c = to_constraint(draft, request, i)
+            c = fit_duration(instance, to_constraint(draft, request, i))
         except ValueError as e:
             result.errors.append(f"draft {i}: {e}")
             continue

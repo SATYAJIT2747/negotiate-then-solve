@@ -333,6 +333,28 @@ uv run python -m training.distill denials                 # more denials from th
 uv run python -m training.distill export                  # data/multitask/{train,val}.jsonl, ≤900 per task
 ```
 
+**Readable explanations and intents** (the next model): the parser returns
+intents (`language.intents`: clock times, weeks, classes described as the
+message describes them) instead of slot numbers and IDs, and explanations are
+written from the readable facts.
+
+```sh
+uv run python -m language.intent_compiler                 # data/compiler-intents/: corpus gold as intents + new intents
+uv run python -m training.distill messages --messages messages-readable   # facts with their plain text; no API
+uv run python -m training.distill explain --readable --messages messages-readable --sample 600
+uv run python -m training.distill export --readable --compiler-dir data/compiler-intents --out data/multitask-readable --max-per-task 1100   # keeps all 1062 intent examples
+```
+
+A model trained on it is used with `NTS_INTENTS=1` beside `--parser local`; the
+orchestrator then routes swaps, extra classes, cancellations and withdrawals by
+the intents it reads. `evaluation.intents` scores it on the 417 test requests
+(277 from the corpus, 140 new intents) by what the intents resolve to:
+
+```sh
+uv run python -m evaluation.intents --parser rule         # baseline: 55.9% outcome match (new intents 7.1%)
+uv run python -m evaluation.intents --parser local --local-model qwen3.5-4b-nts-read-100.Q8_0
+```
+
 - **Scenarios** come from benchmark seeds 1-10; seed 0 (the evaluation set) is
   refused, and the last seed is the validation split.
 - **Replies:** the tool call is drawn first (accept a random option, counter

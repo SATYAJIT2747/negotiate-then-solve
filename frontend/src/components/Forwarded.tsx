@@ -1,5 +1,5 @@
 import clsx from "clsx";
-import { ArrowRight, Check, Mail, Send } from "lucide-react";
+import { ArrowRight, Check, Mail, Send, Wrench } from "lucide-react";
 import { useState } from "react";
 import { Link } from "react-router-dom";
 import { api } from "../lib/api";
@@ -7,8 +7,8 @@ import { ago } from "../lib/meta";
 import type { CaseDetail, CaseSummary } from "../lib/types";
 import { Badge, Button, Card, CardHeader } from "./ui";
 
-/** A message forwarded to the timetable office: nothing in it reaches the solver, so a person answers
- * it. The office writes the answer here and the sender gets it as the reply. */
+/** A message forwarded to the timetable office: nothing in it reaches the solver by itself, so a person
+ * answers it, or acts on it: the office's own request made of it goes through the whole pipeline. */
 export function ForwardedPanel({ c, onHandled }: { c: CaseDetail; onHandled?: (msg: string) => void }) {
   const h = c.answer;
   return (
@@ -25,8 +25,13 @@ export function ForwardedPanel({ c, onHandled }: { c: CaseDetail; onHandled?: (m
             {h && <Badge tone="muted">{ago(h.at)}</Badge>}
           </div>
           <p className="mt-1 max-w-3xl text-[13.5px] leading-relaxed text-ink-2">
-            {h ? `“${h.note}”` : "This is not a change the system can make by itself, so a person answers it. The timetable is not changed."}
+            {h ? `“${h.note}”` : "This is not a change the system can make by itself, so a person answers it or acts on it."}
           </p>
+          {h?.acting && (
+            <Link to={`/requests/${h.acting}`} className="mt-1.5 inline-flex items-center gap-1 text-[13px] font-medium text-brand">
+              Follow request {h.acting} <ArrowRight size={14} />
+            </Link>
+          )}
         </div>
       </div>
       {c.can_handle && <HandleForm c={c} onHandled={onHandled} />}
@@ -53,6 +58,21 @@ function HandleForm({ c, onHandled }: { c: CaseDetail; onHandled?: (msg: string)
     }
   };
 
+  // the office's own request made of the message: what is written in the box, else the message itself
+  const act = async () => {
+    setBusy(true);
+    setError(null);
+    try {
+      const { id } = await api.act(c.id, note.trim());
+      setNote("");
+      onHandled?.(`Acting on it as request ${id}; ${c.sender_name} has been told.`);
+    } catch (err) {
+      setError((err as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  };
+
   return (
     <div className="bg-panel-2/40 p-5">
       <textarea
@@ -60,11 +80,14 @@ function HandleForm({ c, onHandled }: { c: CaseDetail; onHandled?: (msg: string)
         onChange={(e) => setNote(e.target.value)}
         onKeyDown={(e) => e.key === "Enter" && (e.ctrlKey || e.metaKey) && note.trim() && void send()}
         rows={3}
-        placeholder={`Your reply to ${c.sender_name}, e.g. what you have arranged or why it cannot be done`}
+        placeholder={`Your reply to ${c.sender_name}, or the change to make of it (e.g. "Move the Algorithms lecture of G-02 on Tuesday to the afternoon")`}
         className="w-full resize-none rounded-md border border-line bg-panel px-3 py-2 text-[14px] outline-none focus:border-brand/60"
       />
       <div className="mt-2 flex items-center justify-end gap-3">
         {error && <p className="mr-auto text-[13px] text-bad">{error}</p>}
+        <Button icon={Wrench} loading={busy} onClick={act}>
+          {note.trim() ? "Make this change" : "Act on the message"}
+        </Button>
         <Button variant="primary" icon={Send} loading={busy} disabled={!note.trim()} onClick={send}>
           Send reply
         </Button>
@@ -80,7 +103,7 @@ export function ForwardedList({ cases }: { cases: CaseSummary[] }) {
       <CardHeader
         icon={Mail}
         title={`Messages passed to you (${cases.length})`}
-        subtitle="Requests the system cannot act on by itself. Reply to each one; the timetable is not changed."
+        subtitle="Requests the system cannot act on by itself. Reply to each one, or act on it as your own request."
       />
       <ul className="divide-y divide-line">
         {cases.map((c) => (
