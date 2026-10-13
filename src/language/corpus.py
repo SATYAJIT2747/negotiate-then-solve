@@ -566,7 +566,7 @@ _CONSECUTIVE = [  # {n} hours from 9 am, ending at {end}, {d} day
     "I'd like to teach {n} hours straight on {d} morning, no breaks.",
     "Can {n} of my {d} classes run as one block from 9 am to {end}?",
     "Schedule my {d} teaching as {n} consecutive hours starting at 9, please.",
-    "I'd rather get my {d} classes done in one go: {n} hours in a row from 9.",
+    "I want my {d} classes done in one go: {n} hours in a row from 9.",  # a requirement, as labelled
 ]
 
 
