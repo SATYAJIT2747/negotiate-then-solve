@@ -66,6 +66,11 @@ PLACE_WORD = re.compile(r"\b(schedule|move|put|shift|stack)\b", re.IGNORECASE)  
 # moving a class ("could my Wednesday class go to Tuesday", "please shift", "reschedule")
 MOVE = re.compile(r"\b(schedule|reschedule|move|moved|put|shift|shifted|stack|push|bring)\b|"
                   r"\b(go|went|be moved) to\b", re.IGNORECASE)
+# what the patterns below cannot read, so a robust reading asks instead of acting on part of the message:
+# weeks counted from now, a second request, a club's booking
+BEYOND = re.compile(r"\b((coming|next|following) (\w+ )?weeks|for (\w+ )?weeks|end of (the )?(term|semester)|"
+                    r"rest of (the )?(term|semester)|this week and next|separately|two things|another thing|"
+                    r"club|society|\bcell\b)\b|\. also\b|; (also|plus)\b", re.IGNORECASE)
 SWAP = re.compile(r"\b(swap|swapp\w*|exchange|trade|switch)\b|"
                   r"\btake my\b.*\b(and )?I (take|teach|cover) (their|his|her)\b", re.IGNORECASE)
 _TITLE_WORD = re.compile(r"^(dr|prof|professor|mr|ms|mrs)\.?$", re.IGNORECASE)
@@ -203,6 +208,9 @@ class RuleParser:
 
         if OUT_OF_SCOPE.search(low):
             return IntentOutput(action="out_of_scope")
+        if self.robust and BEYOND.search(low) and not SWAP.search(low):
+            return self._clarify("avoid", ["days", "weeks"], "I can only read part of that right now. Could you "
+                                 "send one request at a time, with its days, times and weeks?")
         if role == "student" and re.search(r"\bclash|overlap|same time\b", low):
             return IntentOutput(action="investigate")
         if "?" in text and QUESTION.search(low) and not re.search(r"\b(could you|can you|please)\b", low):
@@ -254,7 +262,10 @@ class RuleParser:
             return self._clarify("unavailable" if UNAVAILABLE.search(low) else "avoid", missing or ["days"],
                                  "Could you tell me which " + " and ".join(missing or ["days"]) + " you mean?")
 
-        if UNAVAILABLE.search(low):
+        # "I want my Tuesday lecture moved to Thursday; it can't stay there": a move, whatever else it says
+        moving = self.robust and MOVE.search(low) and (days or slots) and (
+            self.sessions_named(text, other or sender) or re.search(r"\b(lecture|class|lab|tutorial|practical)\b", low))
+        if UNAVAILABLE.search(low) and not moving:
             # "can't on Mon, Wed or Fri; I am only on campus on Tue and Thu": the days they *can* come are not
             # unavailable ones. Take the days from the clauses that say when they cannot, when those name days.
             clauses = re.split(r"[;.]|\bbut\b", text)
@@ -302,6 +313,10 @@ class RuleParser:
                     return self._compile(Move(which=ClassRef(session=sessions[0]), to=when(), period=period,
                                               hard=hard))
                 return self._compile(Only(who=who, time=when(), period=period, hard=hard))
+            if self.robust and not AVOID.search(low):
+                # times with no word for what to do with them: free, or filled? A guess could be the opposite
+                return self._clarify("avoid", ["slots"], "Would you like those times kept free, or your classes "
+                                     "put there?")
             return self._compile(Avoid(who=who, time=when(), period=period, hard=hard))
 
         return self._clarify("avoid", ["days", "slots"], "Could you tell me which days and times you mean?")

@@ -145,3 +145,17 @@ def test_the_rule_parser_reads_typos_and_does_not_pin_every_class(instance, lect
     # the reading the corpus labels were made with is kept
     old = RuleParser(instance, robust=False).parse(request(lecture.faculty, "no clases b4 11 on thrusday plz"))
     assert not old.constraints
+
+
+def test_the_fallback_asks_about_what_it_cannot_read(instance, lecture):
+    rules = RuleParser(instance)
+    title = instance.course_title(lecture.course)
+    for text in ("I won't be around on Mondays over the coming two weeks.",  # weeks counted from now
+                 "Could my Friday 11 am lecture move to Monday morning? Separately, I can't teach in week 5.",
+                 f"2 pm on Monday would suit my {title} lecture better."):  # no word for free or filled
+        r = rules.parse(request(lecture.faculty, text))
+        assert r.action.value == "clarify" and not r.constraints, text
+    # a move that also says the class can't stay is a move, not an unavailability
+    r = rules.parse(request(lecture.faculty, f"I want my {title} lecture moved to Thursday after lunch; "
+                                             "it can't stay where it is."))
+    assert r.constraints and all(c.type == ConstraintType.PREFER for c in r.constraints)
