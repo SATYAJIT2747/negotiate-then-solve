@@ -11,7 +11,11 @@ those, deterministically:
 * ``Period`` -> weeks: explicit weeks, ranges, "from week 9", "next week"
   (against the current week);
 * ``ClassRef`` -> a session ID: by ID, or by owner, course, kind, group and
-  where the class is now in the timetable ("my Thursday 10 am lecture").
+  where the class is now in the timetable ("my Thursday 10 am lecture");
+* course IDs are checked against the message (``ground_courses``): each
+  section has its own course of a title, and a parser that picks the right
+  title in the wrong section, or a look-alike title, is corrected by what
+  the message names and who sent it.
 
 Anything that resolves to nothing, or to more than one thing where one is
 needed, becomes a clarifying question rather than a guess. Intents that
@@ -26,6 +30,7 @@ format, so parsers that emit intents feed everything built on that format.
 
 from __future__ import annotations
 
+import re
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from typing import Annotated, Literal
@@ -408,23 +413,98 @@ def weeks(instance: Instance, period: Period, current_week: int | None = None) -
     return out
 
 
-def _describe(instance: Instance, sid: str, timetable: Mapping[str, Placement] | None) -> str:
+def _describe(instance: Instance, sid: str, timetable: Mapping[str, Placement] | None,
+              section: bool = False) -> str:
     s = instance.session_by_id[sid]
     name = instance.course_title(s.course) + ("" if s.kind.value == "lecture" else f" {s.kind.value}")
+    if section:
+        name += " for " + ", ".join(instance.group_by_id[g].name if g in instance.group_by_id else g for g in s.groups)
     p = (timetable or {}).get(sid)
     return f"{name} on {FULL_DAY[p.day]} at {hour(p.slot)}" if p else name
 
 
+def _names(instance: Instance, sids: list[str], timetable: Mapping[str, Placement] | None) -> list[str]:
+    """How a question names ``sids``: by course, kind and time, and by section where that alone tells them
+    apart (the same course taught to two sections)."""
+    names = list(dict.fromkeys(_describe(instance, sid, timetable) for sid in sids))
+    sections = list(dict.fromkeys(_describe(instance, sid, timetable, True) for sid in sids))
+    return sections if len(sections) > len(names) else names
+
+
+def _titled(instance: Instance, text: str, course: str) -> bool:
+    """Whether ``text`` (lower case) names ``course``'s title."""
+    return re.search(rf"\b{re.escape(instance.course_title(course).lower())}\b", text) is not None
+
+
+def _sections(instance: Instance) -> dict[str, set[str]]:
+    """The groups that take each course."""
+    out: dict[str, set[str]] = {}
+    for s in instance.sessions:
+        out.setdefault(s.course, set()).update(s.groups)
+    return out
+
+
+def _named(instance: Instance, course: str, text: str, sections: dict[str, set[str]]) -> str:
+    """``course``, or the one course in the same section whose title the message names when it does not name
+    ``course``'s ("Data Structures" read as Database Systems). An abbreviation ("ML") names no title: kept."""
+    if course not in sections or _titled(instance, text, course):
+        return course
+    hits = {c for c in sections if sections[c] & sections[course] and _titled(instance, text, c)}
+    return hits.pop() if len(hits) == 1 else course
+
+
+def _section_of(instance: Instance, course: str, text: str, sender: str, sections: dict[str, set[str]]) -> str:
+    """In a student's clash report, the course of ``course``'s title in the section the message ties it to
+    ("Information Security (Section 9)", "... with Section 4", "... of Section 2"), else in the sender's own."""
+    title = instance.course_title(course).lower()
+    group = next((g.id for g in instance.groups if re.search(
+        rf"\b{re.escape(title)}\b\s*(?:\(|with\s+|of\s+)(?:the\s+)?{re.escape(g.name.lower())}\b", text)),
+        sender[3:])
+    same = [c for c in sections if group in sections[c] and instance.course_title(c).lower() == title]
+    return same[0] if len(same) == 1 else course
+
+
+def ground_courses(instance: Instance, request: Request, out: IntentOutput) -> IntentOutput:
+    """``out`` with its course IDs checked against the message: a course whose title the message does not name
+    becomes the one it does in the same section, and in a student's clash report each course is taken in the
+    section the message ties it to, or the student's own. Class references keep their course otherwise; which
+    section's copy the sender teaches is settled by ``classes``."""
+    text, sender = request.raw_text.lower(), request.sender_id
+    sections = _sections(instance)
+    intents = []
+    for intent in out.intents:
+        update = {}
+        for name in ("which", "mine", "theirs"):
+            ref = getattr(intent, name, None)
+            if isinstance(ref, ClassRef) and ref.course is not None:
+                update[name] = ref.model_copy(update={"course": _named(instance, ref.course, text, sections)})
+        if isinstance(intent, ClashReport):
+            courses = [_named(instance, c, text, sections) for c in intent.courses]
+            if sender.startswith("ST-"):
+                courses = [_section_of(instance, c, text, sender, sections) for c in courses]
+            update["courses"] = list(dict.fromkeys(courses))
+        intents.append(intent.model_copy(update=update) if update else intent)
+    return out.model_copy(update={"intents": intents})
+
+
 def classes(instance: Instance, ref: ClassRef, sender: str,
             timetable: Mapping[str, Placement] | None = None) -> list[str]:
-    """Every session ``ref`` fits (owner defaults to the sender)."""
+    """Every session ``ref`` fits (owner defaults to the sender). Each section has its own course of a title,
+    and a message names the title: a course stands for every course of its title the owner teaches, unless
+    the reference names a group. Which section is meant is then up to the rest of the reference (day and
+    time), or a question."""
     if ref.session is not None:
         if ref.session not in instance.session_by_id:
             raise Unresolved("I could not find that class. Which one do you mean?", "session")
         return [ref.session]
     owner = ref.owner or sender
+    courses = {ref.course} if ref.course is not None else None
+    if ref.course is not None and ref.group is None and ref.course in instance.course_titles:
+        title = instance.course_title(ref.course)
+        courses = {s.course for s in instance.sessions if s.faculty == owner
+                   and instance.course_title(s.course) == title} or courses
     found = [s for s in instance.sessions if s.faculty == owner
-             and (ref.course is None or s.course == ref.course)
+             and (courses is None or s.course in courses)
              and (ref.kind is None or s.kind.value == ref.kind)
              and (ref.group is None or ref.group in s.groups)]
     if ref.day is not None or ref.time is not None:
@@ -445,8 +525,8 @@ def one_class(instance: Instance, ref: ClassRef, sender: str,
     found = classes(instance, ref, sender, timetable)
     if len(found) == 1:
         return found[0]
-    names = [_describe(instance, sid, timetable) for sid in found]
-    if len(set(names)) == 1:  # the weekly meetings of one class, and no timetable to tell them apart
+    names = _names(instance, found, timetable)
+    if len(names) == 1:  # the weekly meetings of one class, and no timetable to tell them apart
         raise Unresolved(f"You have {len(found)} {names[0]} classes a week. Which day's class do you mean?", "session")
     raise Unresolved(f"Which class do you mean: {'; '.join(names[:4])}?", "session")
 
@@ -458,7 +538,7 @@ def _one_kind(instance: Instance, found: list[str], question: str) -> list[str]:
         s = instance.session_by_id[sid]
         first.setdefault((s.course, s.kind, tuple(s.groups)), sid)
     if len(first) > 1:
-        names = list(dict.fromkeys(_describe(instance, sid, None) for sid in first.values()))
+        names = _names(instance, list(first.values()), None)
         raise Unresolved(f"{question}: {'; '.join(names[:4])}?", "session")
     return found
 
@@ -637,6 +717,7 @@ def compile_intents(instance: Instance, request: Request, out: IntentOutput, *,
                     timetable: Mapping[str, Placement] | None = None, current_week: int | None = None) -> Compiled:
     """Resolve every intent; the first reference that cannot be resolved turns the whole request into a question."""
     sender = request.sender_id
+    out = ground_courses(instance, request, out)
     drafts: list[DraftConstraint] = []
     compiled = Compiled(output=out, result=ParseResult(request=request, output=None))
     limits: list[LoadLimit] = []

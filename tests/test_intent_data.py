@@ -92,10 +92,12 @@ def test_new_requests_cover_every_generator_and_resolve(instance):
 
 def test_train_only_wordings_stay_out_of_test_and_say_what_the_test_wording_says(instance):
     examples = train_only_examples(instance, per_generator=10)
-    assert {e.generator for e in examples} == {"move", "club_booking"}
+    assert {e.generator for e in examples} == {"move", "club_booking", "avoid_between"}
     assert all(_resolves(e, instance) and e.split != "test" for e in examples)
     intents = [e.gold.intents[0] for e in examples]
     assert all(not i.hard for i in intents if i.kind == "move")  # a wish
+    avoid = [i.hard for i in intents if i.kind == "avoid"]
+    assert avoid.count(True) > avoid.count(False) > 0  # mostly a must, with a wish beside it
     assert all(i.room is None for i in intents if i.kind == "club_booking")  # a kind of room, not a room
 
 

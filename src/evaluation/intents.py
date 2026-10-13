@@ -40,6 +40,7 @@ from core.instance import Instance
 from core.schemas import Placement, Request
 from evaluation.metrics import atom_counts, exact_match, prf
 from language.corpus import ExpectedAction
+from language.adapters import add_args, local_client, registry
 from language.intent_compiler import INTENT_PROMPT
 from language.intents import Compiled, IntentOutput, compile_intents
 from language.llm import LLMError
@@ -75,6 +76,14 @@ def same(instance: Instance, pred: dict, gold: dict) -> bool:
         return True
     return (exact_match(pred["constraints"], gold["constraints"], instance)
             and all(pred[k] == gold[k] for k in ("swaps", "extras", "cancels", "clubs", "clashes")))
+
+
+def dump(out: IntentOutput) -> dict:
+    """``out`` as JSON without its defaults, but with each intent's kind (a default too)."""
+    d = out.model_dump(mode="json", exclude_defaults=True)
+    if "intents" in d:
+        d["intents"] = [{"kind": i.kind, **x} for i, x in zip(out.intents, d["intents"])]
+    return d
 
 
 def _context(row: dict) -> tuple[Request, dict[str, Placement], int | None]:
@@ -141,8 +150,7 @@ def score(rows: list[dict], instance: Instance, reader: Reader, workers: int = 1
             out_rows.append({"id": row["id"], "kind": row["kind"], "source": row["source"], "match": hit,
                              "gold_action": gold["action"], "pred_action": pred["action"], "error": error,
                              "text": row["request"]["raw_text"][:200],
-                             "pred": pred_out.model_dump(mode="json", exclude_defaults=True) if pred_out else None,
-                             "gold": gold_out.model_dump(mode="json", exclude_defaults=True)})
+                             "pred": dump(pred_out) if pred_out else None, "gold": dump(gold_out)})
 
     if workers > 1:
         with ThreadPoolExecutor(workers) as pool:
@@ -180,6 +188,7 @@ def main() -> None:
     ap.add_argument("--local", metavar="URL", default="http://localhost:8080/v1")
     ap.add_argument("--local-model", default=None, help="model on a router-mode server (default NTS_LOCAL_MODEL)")
     ap.add_argument("--model", default=None, help="Gemini model id (default: the pinned agent model)")
+    add_args(ap)
     ap.add_argument("--out", type=Path, default=None)
     args = ap.parse_args()
 
@@ -191,9 +200,8 @@ def main() -> None:
     rows = rows[: args.limit]
     client = None
     if args.parser == "local":
-        from language.local import LocalClient
-
-        client = LocalClient(base_url=args.local, server_model=args.local_model)
+        client = local_client("compile", base_url=args.local, server_model=args.local_model, adapter=args.adapter,
+                              reg=registry(args.adapters))
     elif args.parser == "gemini":
         from language.llm import GeminiClient
 

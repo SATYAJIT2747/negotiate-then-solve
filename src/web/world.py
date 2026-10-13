@@ -41,6 +41,13 @@ def use_state_dir(folder: Path | str | None) -> None:
     STATE_DIR = Path(folder) if folder else None
 
 
+def _task(clients, task: str):
+    """The client for ``task``: the local model's link holds one per task (``language.adapters``), Gemini's one."""
+    from language.adapters import TaskClients
+
+    return clients.get(task) if isinstance(clients, TaskClients) else clients
+
+
 class _Pickler(pickle.Pickler):
     """The department is rebuilt at start-up, not saved: references to it are written as a name."""
 
@@ -457,8 +464,8 @@ class World:
             from .fallback import Fallback
 
             self.models["replies"] = self.models["parser"]
-            return Fallback(self.model_link, lambda c: ReplyParser(c, self.instance), RuleReplyParser(self.instance),
-                            "replies")
+            return Fallback(self.model_link, lambda c: ReplyParser(_task(c, "reply"), self.instance),
+                            RuleReplyParser(self.instance), "replies")
         self.models["replies"] = "offline rules (keywords)"
         return RuleReplyParser(self.instance)
 
@@ -571,33 +578,38 @@ class World:
             name = default_model("agent")
             self.model_link = ModelLink(lambda: GeminiClient(name), on_change=self._model_changed)
             make_parser = lambda c: SystemTwoParser(self.instance, c)  # noqa: E731
+            make_policy = lambda c: PolicyAgent(self.rules, c, self.instance, retriever=kind)  # noqa: E731
         else:
-            # the multi-task model parses (compiler prompt) and reviews (policy prompt), as in eval_policy --local
+            # the local model parses (compiler prompt) and reviews (policy prompt): one multi-task model, or a
+            # base with an adapter per task (NTS_ADAPTERS: language.adapters)
             import urllib.request
 
+            from language.adapters import registry, task_clients
             from language.compiler import CompilerParser
-            from language.local import LocalClient
 
             url = os.environ.get("NTS_LOCAL_URL", "http://localhost:8080/v1")
-            name = f"{os.environ.get('NTS_LOCAL_MODEL') or 'local model'} (fine-tuned)"
+            adapters = registry()
+            name = (f"adapters on {adapters.base} ({adapters.describe(os.environ.get('NTS_DOMAIN') or None)})"
+                    if adapters else f"{os.environ.get('NTS_LOCAL_MODEL') or 'local model'} (fine-tuned)")
 
             def probe(_client) -> None:  # a quick answer from /models, so a dead host costs seconds, not the timeout
                 with urllib.request.urlopen(f"{url.rstrip('/')}/models", timeout=3) as r:
                     r.read()
 
             self.model_link = ModelLink(
-                lambda: LocalClient(base_url=url, timeout=float(os.environ.get("NTS_LOCAL_TIMEOUT", "120"))),
+                lambda: task_clients(base_url=url, reg=adapters,
+                                     timeout=float(os.environ.get("NTS_LOCAL_TIMEOUT", "120"))),
                 probe=probe, on_change=self._model_changed)
             if os.environ.get("NTS_INTENTS") == "1":  # a model trained on intents (language.intent_compiler)
                 from language.intent_compiler import IntentCompilerParser
 
-                make_parser = lambda c: IntentCompilerParser(self.instance, c)  # noqa: E731
+                make_parser = lambda c: IntentCompilerParser(self.instance, _task(c, "compile"))  # noqa: E731
             else:
-                make_parser = lambda c: CompilerParser(self.instance, c)  # noqa: E731
+                make_parser = lambda c: CompilerParser(self.instance, _task(c, "compile"))  # noqa: E731
+            make_policy = lambda c: PolicyAgent(self.rules, _task(c, "policy"), self.instance, retriever=kind)  # noqa: E731
         self.model_link.usable()  # connect now if it can; it is tried again later if not
         parser = Fallback(self.model_link, make_parser, rule_parser, "parser")
-        policy = Fallback(self.model_link, lambda c: PolicyAgent(self.rules, c, self.instance, retriever=kind),
-                          rule_policy, "policy")
+        policy = Fallback(self.model_link, make_policy, rule_policy, "policy")
         fallback = " (rules when unreachable)"
         return parser, policy, {"parser": name + fallback, "policy": name + fallback, "retrieval": kind}
 

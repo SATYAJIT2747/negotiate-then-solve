@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 from collections import Counter
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
@@ -25,6 +26,7 @@ from pathlib import Path
 
 from agents.policy import RETRIEVERS, PolicyAgent, load_handbook
 from core.instance import Instance
+from language.adapters import add_args
 from language.corpus import CorpusExample, ExpectedAction, Variant, load_jsonl
 from language.llm import DailyQuotaReached, GeminiClient, LLMError, default_model
 from language.parsing import SystemTwoParser
@@ -131,17 +133,24 @@ def main() -> None:
                     help="the fine-tuned local model parses (compiler prompt) and reviews (policy prompt)")
     ap.add_argument("--local-url", default="http://localhost:8080/v1")
     ap.add_argument("--local-model", default=None, help="model to run on a router-mode server (default NTS_LOCAL_MODEL)")
+    add_args(ap)
     ap.add_argument("--out", type=Path, default=None)
     args = ap.parse_args()
 
     instance = Instance.model_validate_json(args.instance.read_text(encoding="utf-8"))
     corpus = load_jsonl(args.corpus, instance)
     if args.local:
+        from language.adapters import local_client, registry
         from language.compiler import CompilerParser
-        from language.local import LocalClient
+        from language.intent_compiler import IntentCompilerParser
 
-        local = LocalClient(base_url=args.local_url, timeout=600, server_model=args.local_model)
-        parser, policy_client = CompilerParser(instance, local), local
+        reg = registry(args.adapters)
+        policy_client = local_client("policy", base_url=args.local_url, timeout=600, server_model=args.local_model,
+                                     adapter=args.adapter, reg=reg)
+        reader = local_client("compile", base_url=args.local_url, timeout=600, server_model=args.local_model,
+                              reg=reg) if reg else policy_client
+        # NTS_INTENTS=1: the model reads intents (language.intent_compiler), as in the web app
+        parser = (IntentCompilerParser if os.environ.get("NTS_INTENTS") == "1" else CompilerParser)(instance, reader)
     else:
         parser = SystemTwoParser(instance, GeminiClient(args.parser_model or default_model()))
         policy_client = GeminiClient(args.policy_model or default_model())

@@ -295,3 +295,54 @@ def test_rule_parser_reads_times_as_clock_times(instance, teacher):
     assert rp.times("at 11 am or 3 pm") == TimeSpec(at=["11:00", "15:00"])
     assert rp.times("at 8 pm") == TimeSpec()  # no class then
     assert rp.slots("before 9 am") is None
+
+
+@pytest.fixture(scope="module")
+def cse():
+    """The department the data is made from: every section has its own course of a title."""
+    from pathlib import Path
+
+    from core.instance import Instance
+
+    return Instance.model_validate_json((Path(__file__).parents[1] / "data" / "synthetic-cse-s0.json")
+                                        .read_text(encoding="utf-8"))
+
+
+def _said(sender, text, role=Role.FACULTY):
+    return Request(id="R-0001", channel=Channel.PORTAL, sender_id=sender, role=role, raw_text=text,
+                   received_at=datetime(2026, 9, 1))
+
+
+def test_course_ids_are_checked_against_the_message(cse):
+    from language.intents import ClashReport, ground_courses
+
+    # a student in section 1 names Data Structures; the model picked Database Systems, of the same section
+    req = _said("ST-G-01", "21 of us in Section 1 also take Computer Graphics with Section 9, and it clashes with "
+                           "Data Structures on Tuesday at 2 pm.", Role.STUDENT)
+    out = IntentOutput(action="investigate", intents=[ClashReport(courses=["C-095", "C-014"])])
+    assert ground_courses(cse, req, out).intents[0].courses == ["C-095", "C-011"]
+    # each course in the section the message ties it to, else the student's own (the model had them swapped)
+    req = _said("ST-G-06", "We have Computer Graphics and Information Security of Section 9 at the same time on "
+                           "Wednesday (10 am), please fix this.", Role.STUDENT)
+    out = IntentOutput(action="investigate", intents=[ClashReport(courses=["C-064", "C-095"])])
+    assert sorted(ground_courses(cse, req, out).intents[0].courses) == ["C-063", "C-096"]
+    # an abbreviation names no title: the course stays
+    out = IntentOutput(action="compile", intents=[ExtraClass(which=ClassRef(course="C-031"),
+                                                             period=Period(weeks=[5]))])
+    assert ground_courses(cse, _said("F-102", "An extra CG class in week 5."), out) == out
+
+
+def test_a_course_taught_to_two_sections_asks_which(cse):
+    # F-102 teaches Computer Graphics to sections 3 (C-031) and 9 (C-095): the title alone does not say which
+    req = _said("F-102", "Could you schedule an additional Computer Graphics lecture in week 5?")
+    for course in ("C-031", "C-095"):
+        out = IntentOutput(action="compile", intents=[ExtraClass(which=ClassRef(course=course, kind="lecture"),
+                                                                 period=Period(weeks=[5]))])
+        c = compile_intents(cse, req, out)
+        assert c.missing == ["session"] and "Section 3" in c.question and "Section 9" in c.question
+    # naming the section settles it
+    out = IntentOutput(action="compile", intents=[ExtraClass(which=ClassRef(course="C-095", kind="lecture",
+                                                                            group="G-09"),
+                                                             period=Period(weeks=[5]))])
+    c = compile_intents(cse, req, out)
+    assert c.question is None and cse.session_by_id[c.extras[0].template].course == "C-095"

@@ -8,6 +8,7 @@ import pytest
 from agents.policy import (
     BM25,
     PolicyAgent,
+    PolicyDecision,
     PolicyOutput,
     Verdict,
     load_handbook,
@@ -137,3 +138,37 @@ def test_unknown_retriever_is_an_error(rules):
 
     with pytest.raises(ValueError, match="unknown retriever"):
         make_retriever(rules, "faiss")
+
+
+def _parse(instance, text, *constraints):
+    return postprocess(instance, request(text), ParseOutput(request_type="preference", action="compile",
+                                                            constraints=list(constraints)))
+
+
+def test_code_decides_the_slot_rules_where_the_parse_is_plain(rules, instance):
+    lunch = instance.calendar.lunch_slot
+    deny = PolicyOutput(verdict="forbidden", cited_rules=["P-LUNCH"], explanation="Lunch.")
+    # issue #4: "before lunch" denied under the lunch rule, though no slot asked for is the lunch hour
+    text = "On Thursday in week 14, move my machine learning class before lunch"
+    before = DraftConstraint(type="prefer", hard=True, scope_kind="faculty", scope_id="F-105", days=["Thu"],
+                             slots=list(range(lunch)))
+    d = PolicyAgent(rules, StubClient(deny), instance).review(text, _parse(instance, text, before))
+    assert d.verdict == Verdict.ALLOWED and not d.cited and "no requested slot" in d.overruled
+    # the lunch hour itself: the model's denial stands
+    at = before.model_copy(update={"slots": [lunch]})
+    d = PolicyAgent(rules, StubClient(deny), instance).review("At 1 pm on Thursday.", _parse(instance, "x", at))
+    assert d.verdict == Verdict.FORBIDDEN and d.overruled is None
+    # no parse: nothing to go by but the message, the model decides
+    assert PolicyAgent(rules, StubClient(deny), instance).review(text, None).verdict == Verdict.FORBIDDEN
+    # allowed by the model, but the parse asks for the lunch hour as a must: denied
+    allow = PolicyOutput(verdict="allowed", explanation="Fine.")
+    d = PolicyAgent(rules, StubClient(allow), instance).review("I must teach at 1 pm on Thursday.",
+                                                               _parse(instance, "x", at))
+    assert d.verdict == Verdict.FORBIDDEN and d.cited == ["P-LUNCH"] and d.overruled
+    # a wish for the lunch hour, or other rules cited, are left to the model
+    wish = at.model_copy(update={"hard": False})
+    d = PolicyAgent(rules, StubClient(allow), instance).review("1 pm would be nice.", _parse(instance, "x", wish))
+    assert d.verdict == Verdict.ALLOWED
+    both = PolicyDecision(verdict=Verdict.FORBIDDEN, cited=["P-LUNCH", "P-HOURS"])
+    agent = PolicyAgent(rules, StubClient(deny), instance)
+    assert agent.slot_rules(both, text, _parse(instance, text, before)) is both

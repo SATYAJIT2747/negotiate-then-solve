@@ -394,6 +394,49 @@ across both GPUs (`device_map="auto"`). Only one GPU computes at a time, so expe
 limit, and training checkpoints and resumes across sessions. It exports GGUF with
 llama.cpp's converter (Q5_K_M and Q4_K_M).
 
+### One base, an adapter per task
+
+Retraining one model on every task for each change takes 14+ hours, and the
+learning curve showed it is not needed: the policy and reply scores at half the
+reading equal those at all of it, and only reading requests (`compile`, half
+the training tokens) gains from the rest. So the local model can be the base
+Qwen3.5-4B with a LoRA adapter per group of tasks, named in `adapters.toml`:
+
+```toml
+base = "Qwen3.5-4B-Base-Q8_0"
+[adapters]
+nts-intents = ["compile"]
+nts-policy = ["policy"]
+nts-negotiation = ["reply", "explain"]
+[domains.iitx]          # another institute: its own policy adapter, the rest shared
+policy = "iitx-policy"
+```
+
+- **Train one adapter.** `train_multigpu_kaggle.ipynb` takes `ADAPTER` and
+  `TASKS`, keeps only those rows of the uploaded multitask data and exports
+  the adapter as a LoRA GGUF (tens of MB, minutes), not a merged model.
+- **Update instead of retrain.** `INIT_FROM` (the earlier version's output)
+  starts from its weights and reads only the rows it has not seen
+  (`trained.json` holds a hash of each row read, so a changed row is new) and
+  `REPLAY` times as many it has. Mined rows (`training.mine`) or a new intent
+  cost minutes of training, not a full run.
+- **Serve them together**, none applied until a request asks:
+
+  ```sh
+  llama-server -m Qwen3.5-4B-Base-Q8_0.gguf --lora nts-intents.gguf,nts-policy.gguf,nts-negotiation.gguf \
+    --lora-init-without-apply --jinja -ngl 99 -c 8192 --port 8080
+  ```
+
+  The client finds each adapter in the server's `/lora-adapters` and switches
+  it on per request (`"lora"`). A server that serves an adapter as a model of
+  its own name (a router preset of the base with the adapter, or the
+  notebook's `MERGE` GGUF) works too.
+- **Use them:** `NTS_ADAPTERS=adapters.toml` (and `NTS_DOMAIN=<name>`) for the
+  web app; `--adapters adapters.toml` or `--adapter <name>` for the `--local`
+  evaluations and `training.mine`. Answers are cached per adapter, so an
+  unchanged adapter's evaluations rerun from the cache; put a version in each
+  adapter's name (`nts-policy-v2`).
+
 ## Data
 
 `uv run python -m language.corpus` regenerates `data/requests.jsonl` (600 requests,

@@ -20,7 +20,7 @@ import os
 import re
 import threading
 from collections import Counter
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from enum import Enum
 from pathlib import Path
 from typing import Literal
@@ -289,6 +289,7 @@ class PolicyDecision:
     alternative: str | None = None
     answer: str | None = None
     uncited_escalation: bool = False  # the model denied without a valid citation
+    overruled: str | None = None  # why the slot rules' check changed the model's verdict
 
 
 def describe_parse(instance: Instance, parse: ParseResult | None) -> str:
@@ -337,6 +338,66 @@ def query_hints(instance: Instance, parse: ParseResult | None) -> str:
     return " ".join(dict.fromkeys(hints))
 
 
+SLOT_RULES = ("P-LUNCH", "P-MAXCONSEC")  # rules a request breaks by the slots it asks for
+
+
+def _longest_run(slots: list[int]) -> int:
+    run = best = 0
+    for i, s in enumerate(slots):
+        run = run + 1 if i and s == slots[i - 1] + 1 else 1
+        best = max(best, run)
+    return best
+
+
+_RUN = re.compile(r"back.to.back|in a row|straight|consecutive|without (any )?breaks?", re.IGNORECASE)
+
+
+def slot_breaks(instance: Instance, parse: ParseResult | None, text: str) -> dict[str, bool] | None:
+    """For each slot rule, whether the parsed request breaks it, decided by code from the slots the parse asks
+    for: a class wanted in the lunch hour (hard, and the lunch hour with at most one hour beside it: "at 1 pm",
+    "12 to 2"; a wider window of acceptable times only lets the solver pick, which it never does at lunch), or
+    more hours in a row than the limit (hard, and the message says they are a run: "in a row", "straight",
+    ...). None without a parse. Only wanted times (``prefer``) can break them; times avoided or unavailable
+    cannot."""
+    if parse is None or parse.output is None:
+        return None
+    cal, pol = instance.calendar, instance.policy
+    wanted = [c for c in parse.constraints if c.type.value == "prefer" and c.hard]
+    lunch = cal.lunch_slot is not None and any(
+        cal.lunch_slot in (c.when.slots or []) and len(c.when.slots) <= 2 for c in wanted)
+    consec = (bool(pol.max_consecutive) and bool(_RUN.search(text))
+              and any(_longest_run(sorted(c.when.slots or [])) > pol.max_consecutive for c in wanted))
+    return {"P-LUNCH": lunch, "P-MAXCONSEC": consec}
+
+
+def slot_clear(instance: Instance, parse: ParseResult | None, text: str) -> set[str]:
+    """The slot rules the parse shows plainly unbroken, soft wishes included: every wanted time has its slots,
+    and none is the lunch hour (P-LUNCH), or none is a run longer than the limit (P-MAXCONSEC)."""
+    if parse is None or parse.output is None or parse.action.value != "compile" or not parse.constraints:
+        return set()
+    cal, pol = instance.calendar, instance.policy
+    wanted = [c for c in parse.constraints if c.type.value == "prefer"]
+    if any(c.when.slots is None for c in wanted):
+        return set()
+    clear = set()
+    if cal.lunch_slot is None or not any(cal.lunch_slot in c.when.slots for c in wanted):
+        clear.add("P-LUNCH")
+    if not pol.max_consecutive or not _RUN.search(text) or not any(
+            _longest_run(sorted(c.when.slots)) > pol.max_consecutive for c in wanted):
+        clear.add("P-MAXCONSEC")
+    return clear
+
+
+def _slot_denial(instance: Instance, rule: Rule) -> tuple[str, str]:
+    """(explanation, alternative) for a denial under a slot rule."""
+    if rule.id == "P-LUNCH":
+        return (f"The hour from 13:00 to 14:00 is a common lunch break ({rule.cite()}).",
+                "Any other slot on the same day, for example 2 pm.")
+    n = instance.policy.max_consecutive
+    return (f"No more than {n} consecutive teaching hours ({rule.cite()}).",
+            f"{n} hours in a row, a one-hour break, then the rest.")
+
+
 class PolicyAgent:
     def __init__(self, rules: list[Rule], client: GeminiClient, instance: Instance, k: int = 5,
                  retriever: str = "bm25") -> None:
@@ -365,7 +426,27 @@ class PolicyAgent:
     def review(self, text: str, parse: ParseResult | None = None) -> PolicyDecision:
         retrieved = self.retrieve(f"{text} {query_hints(self.instance, parse)}")
         out = self.client.generate(SYSTEM_PROMPT, self.build_prompt(text, parse, retrieved), PolicyOutput)
-        return self.check(out, retrieved)
+        return self.slot_rules(self.check(out, retrieved), text, parse)
+
+    def slot_rules(self, d: PolicyDecision, text: str, parse: ParseResult | None) -> PolicyDecision:
+        """The lunch hour and the hours in a row are a matter of slots, which the compiled parse states: code
+        decides them where the parse is plain, the model everything else. A denial resting only on them is
+        overruled when the parse shows no slot rule broken ("before lunch" is not the lunch hour), and a
+        request the parse shows breaking one is denied though the model allowed it."""
+        if (d.verdict == Verdict.FORBIDDEN and d.cited and set(d.cited) <= set(SLOT_RULES)
+                and set(d.cited) <= slot_clear(self.instance, parse, text)):
+            return replace(d, verdict=Verdict.ALLOWED, cited=[], alternative=None,
+                           explanation="No institute rule is broken by this request.",
+                           overruled=f"denied under {', '.join(d.cited)}, but no requested slot breaks it")
+        breaks = slot_breaks(self.instance, parse, text) or {}
+        broken = [r for r in SLOT_RULES if breaks.get(r) and r in self.rules]
+        if d.verdict == Verdict.ALLOWED and broken and d.answer is None:
+            rule = self.rules[broken[0]]
+            explanation, alternative = _slot_denial(self.instance, rule)
+            return replace(d, verdict=Verdict.FORBIDDEN, cited=[rule.id], obligations=[],
+                           explanation=explanation, alternative=alternative,
+                           overruled=f"allowed, but the requested slots break {rule.id}")
+        return d
 
     @staticmethod
     def check(out: PolicyOutput, retrieved: list[Rule]) -> PolicyDecision:
@@ -406,7 +487,6 @@ class RulePolicyAgent:
     def review(self, text: str, parse: ParseResult | None = None) -> PolicyDecision:
         retrieved = self.retriever.search(f"{text} {query_hints(self.instance, parse)}", self.k)
         shown = [r.id for r in retrieved]
-        cal, pol = self.instance.calendar, self.instance.policy
 
         def decision(verdict: Verdict, cited: list[str], explanation: str, **kw) -> PolicyDecision:
             return PolicyDecision(verdict=verdict, cited=cited, retrieved=shown,
@@ -419,24 +499,11 @@ class RulePolicyAgent:
             return decision(Verdict.ALLOWED, [top.id], f"From {top.cite()}.", answer=f"{top.cite()}: {top.text}")
 
         cons = parse.constraints if parse is not None else []
-        for c in cons:
-            slots = sorted(c.when.slots or [])
-            if (c.type.value == "prefer" and c.hard and cal.lunch_slot is not None and cal.lunch_slot in slots
-                    and "P-LUNCH" in self.rules):
-                return decision(Verdict.FORBIDDEN, ["P-LUNCH"],
-                                f"The hour from 13:00 to 14:00 is a common lunch break ({self.rules['P-LUNCH'].cite()}).",
-                                alternative="Any other slot on the same day, for example 2 pm.")
-            run = best = 0
-            for i, s in enumerate(slots):
-                run = run + 1 if i and s == slots[i - 1] + 1 else 1
-                best = max(best, run)
-            if (c.type.value == "prefer" and c.hard and pol.max_consecutive and best > pol.max_consecutive
-                    and re.search(r"back.to.back|in a row|straight|consecutive|without (any )?breaks?", text, re.IGNORECASE)
-                    and "P-MAXCONSEC" in self.rules):
-                return decision(Verdict.FORBIDDEN, ["P-MAXCONSEC"],
-                                f"No more than {pol.max_consecutive} consecutive teaching hours "
-                                f"({self.rules['P-MAXCONSEC'].cite()}).",
-                                alternative=f"{pol.max_consecutive} hours in a row, a one-hour break, then the rest.")
+        breaks = slot_breaks(self.instance, parse, text) or {}
+        for rid in SLOT_RULES:
+            if breaks.get(rid) and rid in self.rules:
+                explanation, alternative = _slot_denial(self.instance, self.rules[rid])
+                return decision(Verdict.FORBIDDEN, [rid], explanation, alternative=alternative)
         obligations = [r for r in ("P-MAKEUP",) if r in self.rules and any(
             c.type.value == "unavailable" and c.scope.faculty and c.when.weeks for c in cons)]
         return decision(Verdict.ALLOWED, [], "No institute rule is broken by this request.",

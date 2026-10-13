@@ -18,11 +18,13 @@ from language.parsing import ParseOutput
 
 
 class FakeServer:
-    """Serves /v1/models and answers every chat request with ``reply``."""
+    """Serves /v1/models (and /lora-adapters when ``loras`` is set) and answers every chat request with
+    ``reply``."""
 
     def __init__(self) -> None:
         self.reply = "{}"
         self.models = ["/models/qwen3.5-4b-nts.Q5_K_M.gguf"]
+        self.loras: list[str] | None = None  # adapter paths, as llama-server --lora lists them
         self.requests: list[dict] = []
         fake = self
 
@@ -30,15 +32,19 @@ class FakeServer:
             def log_message(self, *args):
                 pass
 
-            def _send(self, body: dict) -> None:
+            def _send(self, body, status: int = 200) -> None:
                 data = json.dumps(body).encode()
-                self.send_response(200)
+                self.send_response(status)
                 self.send_header("Content-Type", "application/json")
                 self.send_header("Content-Length", str(len(data)))
                 self.end_headers()
                 self.wfile.write(data)
 
             def do_GET(self):
+                if self.path == "/lora-adapters":
+                    if fake.loras is None:
+                        return self._send({"error": "not found"}, 404)
+                    return self._send([{"id": i, "path": p, "scale": 0.0} for i, p in enumerate(fake.loras)])
                 self._send({"data": [{"id": m} for m in fake.models]})
 
             def do_POST(self):

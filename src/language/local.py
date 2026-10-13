@@ -14,6 +14,15 @@ so parsers and evaluations take either.
   lists every GGUF in the folder and loads the one a request names: choose it
   with ``server_model`` or ``NTS_LOCAL_MODEL`` (the name, the file name or the
   path the server lists).
+* ``adapter``: one LoRA adapter on a shared base model (``language.adapters``
+  says which adapter serves which task). A server started with the adapters
+  (``llama-server -m base.gguf --lora a.gguf,b.gguf --lora-init-without-apply``)
+  lists them at ``/lora-adapters``; each request then switches on its own
+  adapter (``"lora"``: that one at scale 1, the rest at 0). A server that does
+  not list it may serve the adapter as a model of its own name instead (a
+  router preset of the base with the adapter, or the adapter merged): that
+  model is used. The cache key holds the adapter, so each adapter file needs
+  its own name too (a version in the name: ``nts-policy-v2``).
 """
 
 from __future__ import annotations
@@ -68,22 +77,27 @@ class LocalClient:
         max_tokens: int = 512,
         thinking: bool = False,
         server_model: str | None = None,
+        adapter: str | None = None,
     ) -> None:
         self.base_url = base_url.rstrip("/")
         self.timeout = timeout
         self.max_tokens = max_tokens
         self.thinking = thinking
         self.server_model = server_model or os.environ.get("NTS_LOCAL_MODEL") or None
-        self.model = model or self._served_model()
+        self.adapter = adapter
+        self.lora: list[dict] | None = None  # the per-request adapter scales, when the server lists adapters
+        self.model = model or (self._with_adapter(adapter) if adapter else self._served_model())
         self.cache_dir = Path(cache_dir)
         self.cache_dir.mkdir(parents=True, exist_ok=True)
         self.usage = Usage()
         self.latencies: list[float] = []
         self._lock = threading.Lock()
 
-    def _request(self, path: str, payload: dict | None = None) -> dict:
+    def _request(self, path: str, payload: dict | None = None, *, root: bool = False) -> dict:
+        """``path`` under the API (``/v1``), or under the server's root with ``root`` (``/lora-adapters``)."""
         data = json.dumps(payload).encode() if payload is not None else None
-        req = urllib.request.Request(f"{self.base_url}{path}", data=data,
+        base = self.base_url.removesuffix("/v1") if root else self.base_url
+        req = urllib.request.Request(f"{base}{path}", data=data,
                                      headers={"Content-Type": "application/json"})
         try:
             with urllib.request.urlopen(req, timeout=self.timeout) as resp:
@@ -108,6 +122,27 @@ class LocalClient:
             raise LLMError(f"{self.base_url} serves {len(ids)} models (router mode): choose one with "
                            f"NTS_LOCAL_MODEL or --local-model: {ids}")
         return _name(ids[0])
+
+    def _with_adapter(self, adapter: str) -> str:
+        """Finds ``adapter`` among the server's LoRA adapters (by file name, with or without ``.gguf`` and a
+        type suffix such as ``.f16``) or, failing that, among its models; returns the name for reports."""
+        try:
+            loaded = self._request("/lora-adapters", root=True)
+        except LLMError:
+            loaded = []
+        if not isinstance(loaded, list):
+            loaded = []
+        stem = lambda p: Path(p).name.removesuffix(".gguf")  # noqa: E731
+        hits = [a["id"] for a in loaded if adapter in (stem(a["path"]), stem(a["path"]).split(".")[0])]
+        if hits:
+            self.lora = [{"id": a["id"], "scale": 1.0 if a["id"] == hits[0] else 0.0} for a in loaded]
+            return f"{self._served_model().removesuffix('.gguf')}+{adapter}.gguf"
+        ids = [m["id"] for m in self._request("/models").get("data", [])]
+        if any(adapter in (i, Path(i).name, stem(i)) for i in ids):
+            self.server_model = adapter
+            return self._served_model()
+        raise LLMError(f"adapter {adapter!r} is not served at {self.base_url}: adapters "
+                       f"{[stem(a['path']) for a in loaded]}, models {ids}")
 
     def generate(
         self,
@@ -138,6 +173,8 @@ class LocalClient:
         }
         if self.server_model:
             payload["model"] = self.server_model
+        if self.lora is not None:
+            payload["lora"] = self.lora
         started = time.monotonic()
         resp = self._request("/chat/completions", payload)
         latency = time.monotonic() - started

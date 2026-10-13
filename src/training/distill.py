@@ -701,7 +701,9 @@ def export(out_dir: Path, *, compiler_dir: Path, max_per_task: int, seed: int = 
     ``max_per_task`` training examples so none dominates. With ``held`` (the
     corpus's val and test texts), a row whose message repeats a request of a
     later split is dropped. ``explain`` names the explanation file
-    (``explain-readable`` for the readable model)."""
+    (``explain-readable`` for the readable model). Rows mined from the
+    model's mistakes (``training.mine``: ``mined.jsonl`` beside the compiler
+    data, ``mined-policy.jsonl`` here) are added to train past the cap."""
     rng = random.Random(seed)
     by_task: dict[str, list[dict]] = {}
     for split in ("train", "val"):
@@ -715,6 +717,10 @@ def export(out_dir: Path, *, compiler_dir: Path, max_per_task: int, seed: int = 
             if (DIR / f"{name}.jsonl").exists():
                 by_task.setdefault(task, []).extend(
                     {**r, "messages": _current_prompt(task, r["messages"])} for r in _read(DIR / f"{name}.jsonl"))
+    mined: dict[str, list[dict]] = {}
+    for task, path in (("compile", compiler_dir / "mined.jsonl"), ("policy", DIR / "mined-policy.jsonl")):
+        if path.exists():
+            mined[task] = [{**r, "task": task, "split": "train"} for r in _read(path)]
     splits: dict[str, list[dict]] = {"train": [], "val": []}
     counts: dict[str, dict[str, int]] = {}
     for task, rows in by_task.items():
@@ -729,6 +735,9 @@ def export(out_dir: Path, *, compiler_dir: Path, max_per_task: int, seed: int = 
             rng.shuffle(part)
             if split == "train":
                 part = part[:max_per_task]
+                if task in mined:
+                    counts.setdefault(task, {})["train_mined"] = len(mined[task])
+                    part += mined[task]
             out.extend(part)
             counts.setdefault(task, {})[split] = len(part)
     for split, rows in splits.items():

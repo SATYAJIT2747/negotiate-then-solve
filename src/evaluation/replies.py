@@ -38,6 +38,7 @@ from agents.negotiation import Message, Negotiator, Reply, ReplyParser, RuleRepl
 from agents.priority import PriorityModel
 from core.instance import Instance
 from core.scenarios import uc3_lab_contention
+from language.adapters import add_args, local_client, registry
 from language.corpus import FULL_DAY, hour
 
 from .stats import mean
@@ -193,6 +194,7 @@ def main() -> None:
     ap.add_argument("--local-url", default="http://localhost:8080/v1")
     ap.add_argument("--local-model", default=None, help="model to run on a router-mode server (default NTS_LOCAL_MODEL)")
     ap.add_argument("--agent-model", default=None)
+    add_args(ap)
     ap.add_argument("--cases", type=Path, default=Path("data/replies.jsonl"), help="written if missing")
     ap.add_argument("--out", type=Path, default=None)
     args = ap.parse_args()
@@ -209,9 +211,8 @@ def main() -> None:
         parser, model = RuleReplyParser(inst), "rule"
     else:
         if args.local:
-            from language.local import LocalClient
-
-            client = LocalClient(base_url=args.local_url, timeout=600, server_model=args.local_model)
+            client = local_client("reply", base_url=args.local_url, timeout=600, server_model=args.local_model,
+                                  adapter=args.adapter, reg=registry(args.adapters))
         else:
             from language.llm import GeminiClient, default_model
 
