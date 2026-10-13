@@ -52,11 +52,16 @@ class Fixed:
 
 
 @pytest.fixture(scope="module")
-def world():
+def world(tmp_path_factory):
     os.environ.setdefault("NTS_RETRIEVER", "bm25")
     from web.world import World
 
-    w = World(parser_mode="offline", seed_history=False, deadline=2)
+    # its own semester folder: not the one the app keeps in runs/ (which a test must neither read nor write);
+    # the demo department's semester timetable is built in the background at start-up, quickly here
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setenv("NTS_SEMESTER_TIME", "20")
+        w = World(parser_mode="offline", seed_history=False, deadline=2,
+                  semester_dir=tmp_path_factory.mktemp("semester"))
     w.orch.system_one = None  # every request goes to the parser under test
     w.orch.parser = IntentStub(w.instance, w.orch.parser)
     w.orch.current_week = lambda: 5
@@ -174,7 +179,23 @@ def _future(weekday: int) -> str:
     return (d + timedelta(days=(weekday - d.weekday()) % 7)).isoformat()
 
 
+def published_semester(world, wait: float = 180):
+    """The semester timetable the club desk checks against, once the start-up build has published it."""
+    import time
+
+    world.semester.bootstrap_demo()  # what a World with its start-up history does; this one has none
+    end = time.time() + wait
+    while world.semester.published() is None and time.time() < end:
+        if world.semester.status().get("error"):  # the build ends just before it publishes: wait for either
+            break
+        time.sleep(0.5)
+    v = world.semester.published()
+    assert v is not None, f"no semester timetable published: {world.semester.status()}"
+    return v
+
+
 def test_a_student_books_a_room_for_a_club_through_the_desk(world):
+    published_semester(world)
     case = submit(world, "ST-G-01", "Room for the Quiz Club, Thursday 7 to 9 pm, 30 of us?", IntentOutput(
         action="compile", intents=[ClubBooking(club="Quiz Club", activity="quiz night", date=_future(3),
                                                start="19:00", end="21:00", attendees=30)]))

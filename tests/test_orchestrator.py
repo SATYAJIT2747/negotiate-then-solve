@@ -185,13 +185,26 @@ def _hard_in(store, week=None):
     return [c for c in store.constraints() if c.hard and c.active_in(week)]
 
 
+def free_hour(sc, store, who):
+    """An hour ``who`` does not teach in the live timetable: not a class's start, nor an hour a longer class runs
+    into (the starting timetable comes from the solver, so it is found, not assumed)."""
+    sessions = sc.instance.session_by_id
+    busy = {(p.day, p.slot + k) for s, p in store.current_version().assignment.items()
+            if sessions[s].faculty == who for k in range(sessions[s].duration)}
+    return next((d, t) for d in sc.instance.calendar.days for t in range(sc.instance.calendar.slots_per_day)
+                if (d, t) not in busy)
+
+
+def teaching_day(sc, store, who):
+    """A day ``who`` teaches on in the live timetable."""
+    sessions = sc.instance.session_by_id
+    return next(p.day for s, p in sorted(store.current_version().assignment.items()) if sessions[s].faculty == who)
+
+
 def test_a_request_the_timetable_already_meets_needs_no_approval(world):
     sc, orch, store, owners = world
     who = owners["R-A"]
-    busy = {(p.day, p.slot) for s, p in store.current_version().assignment.items()
-            if next(x for x in sc.instance.sessions if x.id == s).faculty == who}
-    day, slot = next((d, t) for d in sc.instance.calendar.days for t in range(sc.instance.calendar.slots_per_day)
-                     if (d, t) not in busy)
+    day, slot = free_hour(sc, store, who)
     orch.parser.outputs["FREE-HOUR"] = ParseOutput(request_type="preference", action="compile", constraints=[
         DraftConstraint(type="avoid", hard=False, scope_kind="faculty", scope_id=who, days=[day], slots=[slot])])
     versions = len(store.versions())
@@ -219,7 +232,7 @@ def test_approving_an_older_proposal_does_not_undo_a_newer_change(world):
 def test_a_semester_change_reaches_weeks_with_their_own_repair(world):
     sc, orch, store, owners = world
     who = owners["R-B"]
-    day = sc.instance.calendar.days[0]
+    day = teaching_day(sc, store, who)  # a day they teach: being away then needs a week-7 repair
     orch.parser.outputs["AWAY-WEEK-7"] = ParseOutput(request_type="unavailability", action="compile", constraints=[
         DraftConstraint(type="unavailable", hard=True, scope_kind="faculty", scope_id=who, days=[day], weeks=[7],
                         justification="stated")])
@@ -283,10 +296,7 @@ def test_withdrawing_a_negotiated_request_undoes_everything_it_set_in_motion(wor
 def test_withdrawing_a_request_that_already_fitted_takes_it_out_of_force(world):
     sc, orch, store, owners = world
     who = owners["R-A"]
-    busy = {(p.day, p.slot) for s, p in store.current_version().assignment.items()
-            if next(x for x in sc.instance.sessions if x.id == s).faculty == who}
-    day, slot = next((d, t) for d in sc.instance.calendar.days for t in range(sc.instance.calendar.slots_per_day)
-                     if (d, t) not in busy)
+    day, slot = free_hour(sc, store, who)
     orch.parser.outputs["FREE-HOUR"] = ParseOutput(request_type="preference", action="compile", constraints=[
         DraftConstraint(type="avoid", hard=False, scope_kind="faculty", scope_id=who, days=[day], slots=[slot])])
     c = orch.submit(req("R-8", who, "FREE-HOUR"))
