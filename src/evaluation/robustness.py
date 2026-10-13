@@ -86,19 +86,22 @@ def protected(instance: Instance) -> set[str]:
     return {w.lower() for n in names for w in re.findall(r"[A-Za-z]+", n)}
 
 
+def rewrite_row(row: dict, level: str, seed: str, protect: set[str]) -> dict:
+    """``row`` (the intent data's row format) with its message rewritten at ``level``: in the request and in
+    the prompt the model reads. The gold is left as it is."""
+    r = copy.deepcopy(row)
+    old = r["request"]["raw_text"]
+    new = rewrite(old, level, seed, protect)
+    r["request"]["raw_text"] = new
+    user = r["messages"][1]["content"]
+    r["messages"][1]["content"] = user.replace(f"<message>\n{old}\n</message>", f"<message>\n{new}\n</message>")
+    assert r["messages"][1]["content"] != user or new == old, r["id"]
+    return r
+
+
 def rewritten(rows: list[dict], level: str, instance: Instance) -> list[dict]:
     keep = protected(instance)
-    out = []
-    for row in rows:
-        r = copy.deepcopy(row)
-        old = r["request"]["raw_text"]
-        new = rewrite(old, level, r["id"], keep)
-        r["request"]["raw_text"] = new
-        user = r["messages"][1]["content"]
-        r["messages"][1]["content"] = user.replace(f"<message>\n{old}\n</message>", f"<message>\n{new}\n</message>")
-        assert r["messages"][1]["content"] != user or new == old, r["id"]
-        out.append(r)
-    return out
+    return [rewrite_row(row, level, row["id"], keep) for row in rows]
 
 
 def _outcome_key(row: dict) -> str:
@@ -127,7 +130,7 @@ def main() -> None:
             if line.strip()][: args.limit]
     client = None
     if args.parser == "local":
-        client = local_client("compile", base_url=args.local, server_model=args.local_model, adapter=args.adapter,
+        client = local_client("compile", base_url=args.local, schema=args.schema, server_model=args.local_model, adapter=args.adapter,
                               reg=registry(args.adapters))
     elif args.parser == "gemini":
         from language.llm import GeminiClient

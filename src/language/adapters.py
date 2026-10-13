@@ -38,12 +38,15 @@ class Registry:
     base: str | None = None
     adapters: dict[str, list[str]] = field(default_factory=dict)
     domains: dict[str, dict[str, str]] = field(default_factory=dict)
+    # the intent vocabulary version an adapter was trained on (``intents.SCHEMA_VERSION``), when not the current
+    schemas: dict[str, int] = field(default_factory=dict)
 
     @classmethod
     def load(cls, path: Path | str) -> Registry:
         data = tomllib.loads(Path(path).read_text(encoding="utf-8"))
         reg = cls(base=data.get("base"), adapters={k: list(v) for k, v in data.get("adapters", {}).items()},
-                  domains={k: dict(v) for k, v in data.get("domains", {}).items()})
+                  domains={k: dict(v) for k, v in data.get("domains", {}).items()},
+                  schemas={k: int(v) for k, v in data.get("schemas", {}).items()})
         for name, tasks in reg.adapters.items():
             if unknown := set(tasks) - set(TASKS):
                 raise ValueError(f"{path}: adapter {name!r} has unknown tasks {sorted(unknown)}; tasks are {TASKS}")
@@ -99,10 +102,14 @@ def local_client(task: str, *, base_url: str, adapter: str | None = None, server
         adapter = reg.adapter_for(task, domain)
     if server_model is None and reg is not None:  # the adapters' base, or the base itself for a task without one
         server_model = reg.base
+    schema = kwargs.pop("schema", None)
     try:
-        return LocalClient(base_url=base_url, server_model=server_model, adapter=adapter, **kwargs)
+        client = LocalClient(base_url=base_url, server_model=server_model, adapter=adapter, **kwargs)
     except LLMError as e:
         raise LLMError(f"{task}: {e}") from e
+    # the vocabulary it reads in: given, else the registry's for the adapter, else the current one
+    client.schema = schema or (reg.schemas.get(adapter or server_model or "") if reg is not None else None)
+    return client
 
 
 def add_args(ap) -> None:
@@ -111,6 +118,9 @@ def add_args(ap) -> None:
                     help="LoRA adapter to run the task on (its GGUF name; see language.adapters)")
     ap.add_argument("--adapters", type=Path, default=None,
                     help="adapter registry (default NTS_ADAPTERS): each task on its adapter")
+    ap.add_argument("--schema", type=int, default=None,
+                    help="the intent vocabulary version the model was trained on (default: the registry's, "
+                         "else the current); an older one is asked with its prompt and its answer migrated")
 
 
 def task_clients(*, base_url: str, reg: Registry | None = None, domain: str | None = None,

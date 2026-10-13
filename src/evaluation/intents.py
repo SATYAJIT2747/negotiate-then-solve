@@ -219,7 +219,7 @@ def main() -> None:
     rows = rows[: args.limit]
     client = None
     if args.parser == "local":
-        client = local_client("compile", base_url=args.local, server_model=args.local_model, adapter=args.adapter,
+        client = local_client("compile", base_url=args.local, schema=args.schema, server_model=args.local_model, adapter=args.adapter,
                               reg=registry(args.adapters))
     elif args.parser == "gemini":
         from language.llm import GeminiClient

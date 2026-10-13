@@ -252,7 +252,8 @@ def main() -> None:
 
     instance = Instance.model_validate_json(args.instance.read_text(encoding="utf-8"))
     client = local_client("compile" if args.stage == "intents" else "policy", base_url=args.local,
-                          server_model=args.local_model, adapter=args.adapter, reg=registry(args.adapters))
+                          server_model=args.local_model, adapter=args.adapter, reg=registry(args.adapters),
+                          schema=args.schema)
     name = client.model.split(":")[-1].removesuffix(".gguf")
     corpora = [load_jsonl(p, instance) for p in args.corpus]
     held = [e for c in corpora for e in c if e.split in ("val", "test")]

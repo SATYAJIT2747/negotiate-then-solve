@@ -339,11 +339,31 @@ message describes them) instead of slot numbers and IDs, and explanations are
 written from the readable facts.
 
 ```sh
-uv run python -m language.intent_compiler                 # data/compiler-intents/: corpus gold as intents + new intents
+uv run python -m training.dataset build                    # data/compiler-intents/ + data/suites/ from data/recipes/intents.toml
 uv run python -m training.distill messages --messages messages-readable   # facts with their plain text; no API
 uv run python -m training.distill explain --readable --messages messages-readable --sample 600
-uv run python -m training.distill export --readable --compiler-dir data/compiler-intents --out data/multitask-readable --max-per-task 1100   # keeps all 1062 intent examples
+uv run python -m training.distill export --readable --compiler-dir data/compiler-intents --out data/multitask-readable --max-per-task 1100 --cap compile=4000
+uv run python -m evaluation.suites --parser local --local URL --local-model <model>   # every suite, onto runs/leaderboard.jsonl
 ```
+
+**Intent data that later runs build on** (`training.dataset`). A recipe
+(`data/recipes/*.toml`) names the sources: the first data
+(`intent_compiler.base_rows`, which `python -m language.intent_compiler` still
+writes alone), the registered generators (`language.intent_generators`, each
+with wordings held out for an evaluation suite), stored rows (mined failures,
+messages people labelled in `data/human/` by `docs/labelling.md`), and noisy
+twins of training rows. Every row records its origin and the vocabulary
+version it was written in (`intents.SCHEMA_VERSION`); stored rows are brought
+up to date by `language.migrations`, so old labels keep their meaning when a
+default changes. Every row passes `training.quality`'s gates (canonical
+target, resolves, follows the labelling rule, no copy of a held-out request),
+and the test split is frozen by fingerprint in the recipe. `manifest.json`
+beside the data records the recipe, code version and fingerprints; the
+export and the 4B notebook carry it into the adapter's manifest. To extend:
+copy the recipe, add a generator to `REGISTRY` or rows to `data/human/`, build,
+and update the adapter with `INIT_FROM` (it reads only rows it hasn't seen).
+`evaluation.robustness` and the `test-typo`/`test-noisy` suites measure noisy
+English; `--no-checks` scores the raw reading without `language.checks`.
 
 A model trained on it is used with `NTS_INTENTS=1` beside `--parser local`; the
 orchestrator then routes swaps, extra classes, cancellations and withdrawals by

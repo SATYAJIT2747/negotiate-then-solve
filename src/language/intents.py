@@ -61,6 +61,15 @@ from .parsing import (
     postprocess,
 )
 
+# The version of the intent vocabulary. A stored reading (training rows, mined failures, labelled messages)
+# carries the version it was written in; ``language.migrations`` brings it to this one. Bump it when a
+# reading's meaning changes (a default, a field's sense) and add the migration; an added optional field
+# needs a bump too, so that older code is not handed rows it cannot read.
+#   1  the first intents
+#   2  a move without ``hard`` is a wish (it was a requirement)
+#   3  periods of several weeks from now (``count``, ``rest_of_semester``); a kind of room for a club
+SCHEMA_VERSION = 3
+
 Day = Literal["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
 Clock = Annotated[str, Field(pattern=r"^([01]\d|2[0-3]):[0-5]\d$", description="24-hour HH:MM")]
 Kind = Literal["lecture", "tutorial", "practical"]
@@ -100,12 +109,15 @@ class TimeSpec(BaseModel):
 
 
 class Period(BaseModel):
-    """Semester weeks. Empty means every week (a recurring request)."""
+    """Semester weeks. Empty means every week (a recurring request). Weeks counted from now are
+    ``relative`` with ``count``: "the next three weeks" is next_week with count 3, "this week and next"
+    this_week with count 2, "for the rest of the semester" rest_of_semester."""
 
     weeks: list[int] | None = None
     from_week: int | None = None
     to_week: int | None = None
-    relative: Literal["this_week", "next_week"] | None = None
+    relative: Literal["this_week", "next_week", "rest_of_semester"] | None = None
+    count: int | None = Field(None, ge=1, description="with this_week/next_week: how many weeks from it")
 
     @model_validator(mode="after")
     def _one_way(self) -> Period:
@@ -113,6 +125,8 @@ class Period(BaseModel):
                 self.relative is not None]
         if sum(ways) > 1:
             raise ValueError("give weeks, a from/to range or a relative week, not several")
+        if self.count is not None and self.relative not in ("this_week", "next_week"):
+            raise ValueError("count goes with this_week or next_week")
         return self
 
     @property
@@ -274,6 +288,7 @@ class ClubBooking(_Base):
     attendees: int | None = Field(None, ge=1)
     cohorts: list[str] = Field(default_factory=list, description="programmes the members come from, as named")
     room: str | None = Field(None, description="the room as the message names it")
+    room_kind: str | None = Field(None, description="a kind of room asked for ('a seminar room'), not a named one")
     justification: JustificationLit = JUSTIFICATION
 
 
@@ -399,7 +414,10 @@ def weeks(instance: Instance, period: Period, current_week: int | None = None) -
     if period.relative is not None:
         if current_week is None:
             raise Unresolved("Which week do you mean?", "weeks")
-        out = [current_week + (period.relative == "next_week")]
+        start = current_week + (period.relative == "next_week")
+        # "the next three weeks" near the end of term: the weeks of it the semester has
+        end = n if period.relative == "rest_of_semester" else min(n, start + (period.count or 1) - 1)
+        out = list(range(start, end + 1))
     elif period.weeks is not None:
         out = sorted(set(period.weeks))
     elif period.from_week is not None or period.to_week is not None:
@@ -615,6 +633,7 @@ class ClubRef:
     attendees: int
     cohorts: list[str]
     room: str | None
+    room_kind: str | None = None  # a kind of room asked for: the desk picks one that fits
 
 
 @dataclass
@@ -704,7 +723,7 @@ def club_ref(intent: ClubBooking, current_week: int | None, instance: Instance) 
         raise Unresolved("How many people will come?", "attendees")
     wk = None if intent.date else weeks(instance, intent.period, current_week)
     return ClubRef(intent.club, intent.activity, intent.date, intent.day, wk, intent.start, intent.end,
-                   intent.attendees, list(intent.cohorts), intent.room)
+                   intent.attendees, list(intent.cohorts), intent.room, intent.room_kind)
 
 
 def clash_ref(intent: ClashReport, instance: Instance) -> ClashRef:

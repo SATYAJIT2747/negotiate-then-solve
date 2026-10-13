@@ -148,7 +148,7 @@ def main() -> None:
         policy_client = local_client("policy", base_url=args.local_url, timeout=600, server_model=args.local_model,
                                      adapter=args.adapter, reg=reg)
         reader = local_client("compile", base_url=args.local_url, timeout=600, server_model=args.local_model,
-                              reg=reg) if reg else policy_client
+                              reg=reg, schema=args.schema) if reg else policy_client
         # NTS_INTENTS=1: the model reads intents (language.intent_compiler), as in the web app
         parser = (IntentCompilerParser if os.environ.get("NTS_INTENTS") == "1" else CompilerParser)(instance, reader)
     else:

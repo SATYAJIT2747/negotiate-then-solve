@@ -152,7 +152,9 @@ def move(ctx: _Ctx, t: int):
              f"Is it possible to move the {title} {k} I teach on {D} at {h} to {to_words}?",
              f"My {D} {h} {k} clashes with a committee meeting; could it go to {to_words} instead?",
              f"If possible, I'd like my {h} {D} {k} moved to {to_words}."]
-    intent = Move(which=_ref(s, ctx, k, course=named), to=to, hard=t != 4,
+    # the labelling rule (``lexicon.placement_is_hard``): a plain request for a time is a wish; the committee
+    # meeting rules out the time the class is at, so that one must be met
+    intent = Move(which=_ref(s, ctx, k, course=named), to=to, hard=t == 3,
                   justification="stated" if t == 3 else "none")
     return texts[t], IntentOutput(action="compile", intents=[intent]), {"move": s.id}, False
 

@@ -117,3 +117,21 @@ def necessary(text: str) -> bool:
     """The text says it must be so ("must", "can't", "no other time works"), outside its hedges
     ("no problem if it can't" is a hedge, not a requirement)."""
     return _NEEDS.search(_HEDGES.sub(" ", normalise(text))) is not None
+
+
+# a conflict that rules out the time a class is at now ("it clashes with a committee meeting")
+_CONFLICT = re.compile(r"\b(clash(es|ing)?|conflicts? with|overlaps? with|committee|meeting|exam duty|duty|"
+                       r"appointment|conference|on leave|can't make|cannot make)\b", re.IGNORECASE)
+
+
+def firmness(text: str) -> str:
+    """How strongly a message asks for a time: "firm" (it says it must be so), "hedged" (it softens what
+    it asks) or "neutral" (a plain request: "please move my class to Friday")."""
+    return "firm" if necessary(text) else "hedged" if hedged(text) else "neutral"
+
+
+def placement_is_hard(text: str) -> bool:
+    """The labelling rule for a request to put a class at a time (``language.intents.Move``), from the
+    project brief's tiers: a preferred time is a preference (Tier 5), so a move is a requirement only when the
+    message says it must be so, or names a conflict that rules out the time the class is at now."""
+    return firmness(text) == "firm" or (_CONFLICT.search(normalise(text)) is not None and not hedged(text))

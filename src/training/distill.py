@@ -696,14 +696,20 @@ def _corpus_index(paths: list[Path], instance: Instance) -> dict[str, CorpusExam
 
 
 def export(out_dir: Path, *, compiler_dir: Path, max_per_task: int, seed: int = 0,
-           held: dict[str, set[str]] | None = None, explain: str = "explain") -> dict:
+           held: dict[str, set[str]] | None = None, explain: str = "explain",
+           caps: dict[str, int] | None = None) -> dict:
     """Merge the tasks into one train/val set; each task is capped at
     ``max_per_task`` training examples so none dominates. With ``held`` (the
     corpus's val and test texts), a row whose message repeats a request of a
     later split is dropped. ``explain`` names the explanation file
     (``explain-readable`` for the readable model). Rows mined from the
     model's mistakes (``training.mine``: ``mined.jsonl`` beside the compiler
-    data, ``mined-policy.jsonl`` here) are added to train past the cap."""
+    data, ``mined-policy.jsonl`` here) are added to train past the cap. ``caps``
+    overrides the cap per task (``compile=4000``). When the compiler data was
+    built by ``training.dataset`` (a ``manifest.json`` beside it), its rows
+    already include the mined ones, and the manifest is copied beside the
+    export, so an adapter trained on it can be traced to the data it read."""
+    built = (compiler_dir / "manifest.json").exists()
     rng = random.Random(seed)
     by_task: dict[str, list[dict]] = {}
     for split in ("train", "val"):
@@ -719,7 +725,7 @@ def export(out_dir: Path, *, compiler_dir: Path, max_per_task: int, seed: int = 
                     {**r, "messages": _current_prompt(task, r["messages"])} for r in _read(DIR / f"{name}.jsonl"))
     mined: dict[str, list[dict]] = {}
     for task, path in (("compile", compiler_dir / "mined.jsonl"), ("policy", DIR / "mined-policy.jsonl")):
-        if path.exists():
+        if path.exists() and not (built and task == "compile"):
             mined[task] = [{**r, "task": task, "split": "train"} for r in _read(path)]
     splits: dict[str, list[dict]] = {"train": [], "val": []}
     counts: dict[str, dict[str, int]] = {}
@@ -734,7 +740,7 @@ def export(out_dir: Path, *, compiler_dir: Path, max_per_task: int, seed: int = 
                 part = keep
             rng.shuffle(part)
             if split == "train":
-                part = part[:max_per_task]
+                part = part[:(caps or {}).get(task, max_per_task)]
                 if task in mined:
                     counts.setdefault(task, {})["train_mined"] = len(mined[task])
                     part += mined[task]
@@ -745,6 +751,10 @@ def export(out_dir: Path, *, compiler_dir: Path, max_per_task: int, seed: int = 
         _write(out_dir / f"{split}.jsonl",
                ({"id": r["id"], "task": r["task"], "messages": r["messages"]} for r in rows))
     longest = max((sum(len(m["content"]) for m in r["messages"]), r["task"]) for r in splits["train"])
+    if built:
+        import shutil
+
+        shutil.copyfile(compiler_dir / "manifest.json", out_dir / "compile-manifest.json")
     return {"counts": counts, "longest_train_chars": longest}
 
 
@@ -785,6 +795,8 @@ def main() -> None:
     ap.add_argument("--compiler-dir", type=Path, default=Path("data/compiler"))
     ap.add_argument("--out", type=Path, default=Path("data/multitask"))
     ap.add_argument("--max-per-task", type=int, default=900)
+    ap.add_argument("--cap", action="append", default=[], metavar="TASK=N",
+                    help="export: another cap for one task (compile=4000); repeatable")
     ap.add_argument("--extra-denials", type=int, default=150,
                     help="denials: generated requests (as language.compiler --extra-denials; same seed, same requests)")
     ap.add_argument("--files", type=Path, nargs="+", default=None,
@@ -842,9 +854,10 @@ def main() -> None:
             _write(DIR / f"{task}{'-readable' if path.stem.endswith('-readable') else ''}.jsonl", rows)
     else:
         instance = Instance.model_validate_json(args.instance.read_text(encoding="utf-8"))
+        caps = {k: int(v) for k, v in (c.split("=", 1) for c in args.cap)}
         report = export(args.out, compiler_dir=args.compiler_dir, max_per_task=args.max_per_task,
                         held=held_out(load_jsonl(p, instance) for p in args.corpus),
-                        explain="explain-readable" if args.readable else "explain")
+                        explain="explain-readable" if args.readable else "explain", caps=caps)
         print(json.dumps(report, indent=1))
         print(f"upload {args.out}/ as a Kaggle dataset and train with notebooks/train_compiler_kaggle.ipynb")
 
