@@ -9,7 +9,6 @@ import { Button, Card, Skeleton } from "../components/ui";
 import { api } from "../lib/api";
 import { useAuth } from "../lib/auth";
 import { useApi } from "../lib/hooks";
-import { mentionInto } from "../lib/mention";
 import type { TimetableEntry } from "../lib/types";
 
 /** Faculty and class representatives: their week's timetable first, their requests as conversations
@@ -47,11 +46,27 @@ export default function Home() {
     () => (tt?.entries ?? []).filter((e) => (teaching ? e.faculty === user?.id : group ? e.groups.includes(group) : false)),
     [tt, teaching, group, user],
   );
-  // the classes the open request touches; otherwise what moved in the latest change
+  // classes clicked on the grid: shown as chips in the composer and named in the message when it is sent
+  const [picks, setPicks] = useState<TimetableEntry[]>([]);
+  // the classes picked, else those the open request touches, else what moved in the latest change
   const outlined = useMemo(() => {
+    if (picks.length) return new Set(picks.map((e) => e.session));
     const own = new Set<string>([...(shown?.proposal?.diff ?? []).map((d) => d.session), ...(shown?.extra?.session ? [shown.extra.session] : [])]);
     return own.size ? own : new Set(tt?.changed ?? []);
-  }, [shown, tt]);
+  }, [picks, shown, tt]);
+  // each day's date in the week shown, for the grid's headings
+  const dates = useMemo(() => {
+    const w = week ? cal?.weeks[week - 1] : null;
+    if (!w || !cal) return undefined;
+    const today = new Date().toDateString();
+    return Object.fromEntries(
+      cal.days.map((d, i) => {
+        const at = new Date(`${w.monday}T00:00:00`);
+        at.setDate(at.getDate() + i);
+        return [d, { label: at.toLocaleDateString(undefined, { day: "numeric", month: "short" }), today: at.toDateString() === today }];
+      }),
+    );
+  }, [cal, week]);
   const cancelled = (tt?.cancelled ?? []).filter((c) => mine.some((e) => e.session === c.session) || (group && c.groups.includes(group)));
 
   // the composer answers the open thread's question, or starts a new request
@@ -63,9 +78,23 @@ export default function Home() {
   const answering = !fresh && shown?.status === "clarification_requested" && shown.sender === user?.id;
   useEffect(() => setFresh(false), [selected]);
 
+  const dayName = (d: string) => inst?.day_names[d] ?? d;
+  const label = (slot: number) => inst?.slots.find((s) => s.slot === slot)?.label ?? `slot ${slot}`;
+  const phrase = (e: TimetableEntry) => `${teaching ? "my" : "the"} ${e.title} ${e.kind} on ${dayName(e.day)} at ${label(e.slot)}`;
+  /** A click attaches that one class (or takes it off again); Ctrl or Shift + click adds it to the others. */
+  const toggle = (e: TimetableEntry, ev?: { ctrlKey: boolean; metaKey: boolean; shiftKey: boolean }) =>
+    setPicks((p) => {
+      const has = p.some((x) => x.session === e.session);
+      if (ev && (ev.ctrlKey || ev.metaKey || ev.shiftKey)) return has ? p.filter((x) => x.session !== e.session) : [...p, e];
+      return has && p.length === 1 ? [] : [e];
+    });
+  /** "a", "a and b", "a, b and c" */
+  const listed = (xs: string[]) => (xs.length < 2 ? xs.join("") : `${xs.slice(0, -1).join(", ")} and ${xs[xs.length - 1]}`);
+
   const send = async () => {
-    const t = text.trim();
-    if (!t) return;
+    const typed = text.trim();
+    if (!typed) return;
+    const t = picks.length ? `${typed.replace(/[.!?]$/, "")} (${listed(picks.map(phrase))}).` : typed;
     setSending(true);
     setError(null);
     try {
@@ -78,6 +107,7 @@ export default function Home() {
         setSelected(id);
       }
       setText("");
+      setPicks([]);
       void refreshCases();
     } catch (e) {
       setError((e as Error).message);
@@ -86,17 +116,13 @@ export default function Home() {
     }
   };
 
-  const dayName = (d: string) => inst?.day_names[d] ?? d;
-  const label = (slot: number) => inst?.slots.find((s) => s.slot === slot)?.label ?? `slot ${slot}`;
-  const mention = (e: TimetableEntry) =>
-    mentionInto(box.current, text, `${teaching ? "my" : "the"} ${e.title} ${e.kind} on ${dayName(e.day)} at ${label(e.slot)}`, setText);
 
   return (
     <div className="grid gap-4 lg:h-full lg:grid-cols-[minmax(0,1fr)_minmax(300px,27%)]">
       <div className="flex min-h-0 min-w-0 flex-col gap-3">
         <div className="flex flex-wrap items-center justify-between gap-3">
           <h1 className="font-serif text-[22px] font-semibold">{week ? `Week ${week}` : "Timetable"}</h1>
-          {cal && <WeekStepper cal={cal} week={week} onChange={setWeek} />}
+          {cal && <WeekStepper cal={cal} week={week} onChange={setWeek} compact />}
         </div>
         {cancelled.length > 0 && (
           <p className="rounded-lg border border-bad/40 bg-bad/5 px-4 py-2.5 text-[13px]">
@@ -109,10 +135,10 @@ export default function Home() {
           ) : !mine.length ? (
             <p className="px-3 py-16 text-center text-[13.5px] text-ink-3">No classes in the published timetable for this week.</p>
           ) : (
-            <TimetableGrid instance={inst} entries={mine} changed={outlined} onPick={mention} fill />
+            <TimetableGrid instance={inst} entries={mine} changed={outlined} onPick={toggle} fill dates={dates} />
           )}
         </Card>
-        <p className="text-[12px] text-ink-3">Click a class to mention it in a request. Outlined classes are the ones the open request changes.</p>
+        <p className="text-[12px] text-ink-3">Click a class to attach it to a request (Ctrl or Shift + click for more than one). Outlined: the classes attached, or the ones the open request changes.</p>
       </div>
 
       <Card className="flex h-[560px] min-h-0 flex-col lg:h-full">
@@ -165,6 +191,18 @@ export default function Home() {
               </button>
             </p>
           )}
+          {picks.length > 0 && (
+            <div className="mb-2 flex flex-wrap gap-1">
+              {picks.map((e) => (
+                <span key={e.session} className="flex items-center gap-1 rounded border border-brand/40 bg-brand/10 py-0.5 pl-1.5 pr-1 text-[11.5px]">
+                  {e.title} {e.kind} · {dayName(e.day)} {label(e.slot)}
+                  <button onClick={() => toggle(e)} className="text-ink-3 hover:text-ink" aria-label={`Remove ${e.title}`}>
+                    <X size={11} />
+                  </button>
+                </span>
+              ))}
+            </div>
+          )}
           <div className="flex items-end gap-2 rounded-lg border border-line bg-panel px-3 py-2 focus-within:border-brand/60">
             <textarea
               ref={box}
@@ -177,7 +215,7 @@ export default function Home() {
                 }
               }}
               rows={2}
-              placeholder={answering ? "Your answer…" : "Ask or request something…"}
+              placeholder={answering ? "Your answer…" : picks.length ? "What should happen to these classes?" : "Ask or request something…"}
               className="max-h-40 flex-1 resize-none bg-transparent text-[13.5px] leading-relaxed outline-none placeholder:text-ink-3"
             />
             <Button variant="primary" size="sm" icon={Send} loading={sending} disabled={!text.trim()} onClick={send} aria-label="Send" />

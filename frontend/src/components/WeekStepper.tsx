@@ -12,7 +12,14 @@ const fmt = (d: Date, month = true) => d.toLocaleDateString(undefined, month ? {
 
 /** Moving between the semester's weeks: arrows (and the arrow keys), a strip of week numbers to
  * jump with, back to this week, and the semester timetable (``week`` null). */
-export function WeekStepper({ cal, week, onChange }: { cal: CalendarView; week: number | null; onChange: (w: number | null) => void }) {
+export function WeekStepper({ cal, week, onChange, compact = false }: {
+  cal: CalendarView;
+  week: number | null;
+  onChange: (w: number | null) => void;
+  /** Just the week number and no "This week" button: the dates are in the grid's day headings and the
+   * current week is marked in the strip, and the bar keeps its width whichever week is shown. */
+  compact?: boolean;
+}) {
   const n = cal.weeks.length;
   useEffect(() => {
     const key = (e: KeyboardEvent) => {
@@ -40,8 +47,10 @@ export function WeekStepper({ cal, week, onChange }: { cal: CalendarView; week: 
         >
           <ChevronLeft size={15} />
         </button>
-        <div className="min-w-[132px] px-1 text-center leading-tight">
-          {w ? (
+        <div className={clsx("px-1 text-center leading-tight", compact ? "min-w-[72px]" : "min-w-[132px]")}>
+          {w && compact ? (
+            <p className="text-[13px] font-medium">Week {w.week}</p>
+          ) : w ? (
             <>
               <p className="text-[13px] font-medium">Week {w.week}</p>
               <p className="text-[11px] text-ink-3">
@@ -88,7 +97,7 @@ export function WeekStepper({ cal, week, onChange }: { cal: CalendarView; week: 
         })}
       </div>
 
-      {week !== cal.current_week && (
+      {!compact && week !== cal.current_week && (
         <button onClick={() => onChange(cal.current_week)} className="h-7 rounded-md border border-line px-2.5 text-[12px] hover:bg-panel-2">
           This week
         </button>

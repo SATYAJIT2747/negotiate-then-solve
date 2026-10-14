@@ -1,6 +1,6 @@
 import clsx from "clsx";
 import { FlaskConical, GraduationCap, MapPin } from "lucide-react";
-import type { ReactNode } from "react";
+import type { MouseEvent, ReactNode } from "react";
 import { colorFor } from "../lib/meta";
 import type { InstanceView, TimetableEntry } from "../lib/types";
 
@@ -10,13 +10,16 @@ export function TimetableGrid({
   changed,
   onPick,
   fill = false,
+  dates,
 }: {
   instance: InstanceView;
   entries: TimetableEntry[];
   changed: Set<string>;
-  onPick?: (e: TimetableEntry) => void;
+  onPick?: (e: TimetableEntry, ev: MouseEvent) => void;
   /** Stretch to the parent's size (rows share the height, no minimum width), so it keeps its proportions at any zoom. */
   fill?: boolean;
+  /** Each day's date ("12 Oct"), shown above its name; ``today`` is highlighted. */
+  dates?: Record<string, { label: string; today: boolean }>;
 }) {
   const { days, slots_per_day, lunch_slot } = instance.calendar;
   const cell = new Map<string, TimetableEntry[]>();
@@ -38,7 +41,8 @@ export function TimetableGrid({
       >
         <div />
         {days.map((d) => (
-          <div key={d} className="px-2 pb-3 text-center text-[12px] font-semibold text-ink-3">
+          <div key={d} className={clsx("px-2 pb-3 text-center text-[12px] font-semibold", dates?.[d]?.today ? "text-brand" : "text-ink-3")}>
+            {dates?.[d] && <span className="block text-[11px] font-normal">{dates[d].label}</span>}
             {instance.day_names[d] ?? d}
           </div>
         ))}
@@ -78,13 +82,13 @@ function Row({ children }: { children: ReactNode }) {
   return <>{children}</>;
 }
 
-function Entry({ e, changed, index, onPick }: { e: TimetableEntry; changed: boolean; index: number; onPick?: (e: TimetableEntry) => void }) {
+function Entry({ e, changed, index, onPick }: { e: TimetableEntry; changed: boolean; index: number; onPick?: (e: TimetableEntry, ev: MouseEvent) => void }) {
   const c = colorFor(e.course);
   const Icon = e.kind === "practical" ? FlaskConical : GraduationCap;
   return (
     <button
       data-index={index}
-      onClick={() => onPick?.(e)}
+      onClick={(ev) => onPick?.(e, ev)}
       className={clsx(
         "relative w-full overflow-hidden rounded border-l-[3px] px-2 py-1.5 text-left transition-colors",
         changed && "outline-2 outline-offset-1 outline-brand",
