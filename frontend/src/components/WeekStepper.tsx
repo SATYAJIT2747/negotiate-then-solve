@@ -16,8 +16,9 @@ export function WeekStepper({ cal, week, onChange, compact = false }: {
   cal: CalendarView;
   week: number | null;
   onChange: (w: number | null) => void;
-  /** Just the week number and no "This week" button: the dates are in the grid's day headings and the
-   * current week is marked in the strip, and the bar keeps its width whichever week is shown. */
+  /** Just the week number, without the "This week" and "Semester" buttons (the page offers the semester
+   * view itself): the dates are in the grid's day headings, the current week is marked in the strip, and
+   * the bar keeps its width whichever week is shown. */
   compact?: boolean;
 }) {
   const n = cal.weeks.length;
@@ -48,8 +49,8 @@ export function WeekStepper({ cal, week, onChange, compact = false }: {
           <ChevronLeft size={15} />
         </button>
         <div className={clsx("px-1 text-center leading-tight", compact ? "min-w-[72px]" : "min-w-[132px]")}>
-          {w && compact ? (
-            <p className="text-[13px] font-medium">Week {w.week}</p>
+          {compact ? (
+            <p className="text-[13px] font-medium">{w ? `Week ${w.week}` : "Semester"}</p>
           ) : w ? (
             <>
               <p className="text-[13px] font-medium">Week {w.week}</p>
@@ -102,6 +103,7 @@ export function WeekStepper({ cal, week, onChange, compact = false }: {
           This week
         </button>
       )}
+      {!compact && (
       <button
         onClick={() => onChange(week === null ? cal.current_week : null)}
         title="The semester timetable, without changes made for one week only"
@@ -109,6 +111,7 @@ export function WeekStepper({ cal, week, onChange, compact = false }: {
       >
         Semester
       </button>
+      )}
     </div>
   );
 }

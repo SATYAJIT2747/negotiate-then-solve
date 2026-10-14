@@ -11,6 +11,7 @@ export function TimetableGrid({
   onPick,
   fill = false,
   dates,
+  ghosts = [],
 }: {
   instance: InstanceView;
   entries: TimetableEntry[];
@@ -20,6 +21,8 @@ export function TimetableGrid({
   fill?: boolean;
   /** Each day's date ("12 Oct"), shown above its name; ``today`` is highlighted. */
   dates?: Record<string, { label: string; today: boolean }>;
+  /** Where classes would go if a pending change goes through: drawn as dashed placeholders. */
+  ghosts?: { session: string; day: string; slot: number; title: string; note: string }[];
 }) {
   const { days, slots_per_day, lunch_slot } = instance.calendar;
   const cell = new Map<string, TimetableEntry[]>();
@@ -51,6 +54,7 @@ export function TimetableGrid({
             <div className="pr-3 pt-2 text-right font-mono text-[11px] text-ink-3">{instance.slots[s]?.label}</div>
             {days.map((d) => {
               const list = cell.get(`${d}:${s}`) ?? [];
+              const ghost = ghosts.filter((g) => g.day === d && g.slot === s);
               const lunch = s === lunch_slot;
               return (
                 <div
@@ -62,10 +66,16 @@ export function TimetableGrid({
                     covered.has(`${d}:${s}`) && !list.length && "bg-panel-2/40",
                   )}
                 >
-                  {lunch && !list.length && <span className="absolute inset-0 grid place-items-center text-[11px] text-ink-3">Lunch</span>}
+                  {lunch && !list.length && !ghost.length && <span className="absolute inset-0 grid place-items-center text-[11px] text-ink-3">Lunch</span>}
                   <div className="space-y-1">
                       {list.map((e, i) => (
                         <Entry key={e.session} e={e} changed={changed.has(e.session)} index={i} onPick={onPick} />
+                      ))}
+                      {ghost.map((g) => (
+                        <div key={g.session} className="rounded border border-dashed border-brand/70 bg-brand/5 px-2 py-1.5" title={`${g.title}: ${g.note}`}>
+                          <p className="truncate text-[11.5px] font-semibold text-brand">→ {g.title}</p>
+                          <p className="truncate text-[10.5px] text-ink-3">{g.note}</p>
+                        </div>
                       ))}
                   </div>
                 </div>

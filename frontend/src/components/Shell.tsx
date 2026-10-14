@@ -71,8 +71,9 @@ export const NAV: NavItem[] = [
 
 const COLLAPSED_KEY = "nts.sidebar.collapsed";
 
-/** What the timetable-home roles keep in view; the rest of their pages sit under "More". */
-const ESSENTIAL = ["/", "/inbox", "/policy"];
+/** What the timetable-home roles keep in view; the rest of their pages (the Inbox among them: the home
+ * panel shows its messages) sit under "More". */
+const ESSENTIAL = ["/", "/policy"];
 
 const GROUPS: { id: NavItem["group"]; label?: string }[] = [
   { id: "main" },

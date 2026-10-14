@@ -153,7 +153,7 @@ function Withdraw({ id, onDone }: { id: string; onDone: () => void }) {
 /** Options the negotiator sent this person (a time to choose for their own request, or a way to resolve a
  * clash): chosen here, through the same reply the Inbox sends. A counter-offer or a reply in their own
  * words stays on the Inbox page. */
-function Options({ item, onDone }: { item: InboxItem; onDone: () => void }) {
+export function Options({ item, onDone }: { item: InboxItem; onDone: () => void }) {
   const [choice, setChoice] = useState<string | null>(null);
   const [busy, setBusy] = useState<"accept" | "reject" | null>(null);
   const [error, setError] = useState<string | null>(null);
