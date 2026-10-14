@@ -1,6 +1,8 @@
+import { Info } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { ConversationPane, useConversation } from "../components/ConversationPane";
 import { ConversationSwitcher, groupOf, useConversations } from "../components/Conversations";
+import { DetailsDrawer } from "../components/DetailsDrawer";
 import { TimetableGrid } from "../components/TimetableGrid";
 import { WeekStepper } from "../components/WeekStepper";
 import { Card, Skeleton } from "../components/ui";
@@ -31,6 +33,7 @@ export default function Home() {
   const { convs, refresh } = useConversations();
   const s = useConversation(convs, refresh);
   const { conv, shown } = s;
+  const [details, setDetails] = useState<string | null>(null); // the request whose details are open
 
   const mine = useMemo(
     () => (tt?.entries ?? []).filter((e) => (teaching ? e.faculty === user?.id : group ? e.groups.includes(group) : false)),
@@ -133,6 +136,16 @@ export default function Home() {
       <Card className="flex h-[560px] min-h-0 flex-col lg:h-full">
         <div className="flex items-center gap-2 border-b border-line px-2 py-1.5">
           <ConversationSwitcher items={convs} selected={s.selected} onSelect={s.open} />
+          {s.caseId && (
+            <button
+              onClick={() => setDetails(s.caseId)}
+              title="Details: how the system handled this request"
+              aria-label="Details"
+              className="grid size-8 shrink-0 place-items-center rounded-md text-ink-3 hover:bg-panel-2 hover:text-ink"
+            >
+              <Info size={16} />
+            </button>
+          )}
         </div>
         <ConversationPane
           s={s}
@@ -145,6 +158,7 @@ export default function Home() {
           }}
         />
       </Card>
+      <DetailsDrawer id={details} onClose={() => setDetails(null)} />
     </div>
   );
 }

@@ -1,7 +1,6 @@
 import clsx from "clsx";
-import { ArrowUpRight, Check, Clock3, HelpCircle, Undo2, X } from "lucide-react";
+import { Check, Clock3, HelpCircle, Undo2, X } from "lucide-react";
 import { useState } from "react";
-import { Link } from "react-router-dom";
 import { api } from "../lib/api";
 import { useAuth } from "../lib/auth";
 import { ago, EVENT_LABEL } from "../lib/meta";
@@ -110,9 +109,6 @@ export function RequestThread({ c, onChanged }: { c: CaseDetail; onChanged: () =
 
       <div className="flex items-center gap-2 pt-1">
         {c.can_withdraw && <Withdraw id={c.id} onDone={onChanged} />}
-        <Link to={`/requests/${c.id}?details=1`} className="ml-auto flex items-center gap-1 text-[12px] text-ink-3 hover:text-brand" title="How the system handled it: parse, rules, solver, fairness">
-          Technical details <ArrowUpRight size={12} />
-        </Link>
       </div>
     </div>
   );
@@ -188,12 +184,14 @@ export function Options({ item, onDone }: { item: InboxItem; onDone: () => void 
     return (
       <p className="flex items-center gap-2 pl-1 text-[12.5px] text-ink-2">
         <Check size={14} className="text-ok" />
-        {item.reply.decision === "accept" && item.reply.choice
-          ? `You chose option ${item.reply.choice}`
-          : item.reply.decision === "reject"
-            ? "You declined these options"
-            : `You answered: ${item.reply.decision}`}
-        {item.answered_by === "deadline" ? " (deadline passed)" : item.answered_by === "simulator" ? " (simulated)" : ""}
+        {item.answered_by === "deadline" || item.reply.decision === "no_reply"
+          ? "No answer before the deadline, so the first option was used"
+          : item.reply.decision === "accept" && item.reply.choice
+            ? `You chose option ${item.reply.choice}`
+            : item.reply.decision === "reject"
+              ? "You declined these options"
+              : `You answered: ${item.reply.decision}`}
+        {item.answered_by === "simulator" ? " (simulated)" : ""}
       </p>
     );
 
