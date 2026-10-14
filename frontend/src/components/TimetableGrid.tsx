@@ -9,11 +9,14 @@ export function TimetableGrid({
   entries,
   changed,
   onPick,
+  fill = false,
 }: {
   instance: InstanceView;
   entries: TimetableEntry[];
   changed: Set<string>;
   onPick?: (e: TimetableEntry) => void;
+  /** Stretch to the parent's size (rows share the height, no minimum width), so it keeps its proportions at any zoom. */
+  fill?: boolean;
 }) {
   const { days, slots_per_day, lunch_slot } = instance.calendar;
   const cell = new Map<string, TimetableEntry[]>();
@@ -25,8 +28,14 @@ export function TimetableGrid({
   for (const e of entries) for (let q = e.slot + 1; q < e.slot + e.duration; q++) covered.add(`${e.day}:${q}`);
 
   return (
-    <div className="overflow-x-auto">
-      <div className="grid min-w-[860px]" style={{ gridTemplateColumns: `72px repeat(${days.length}, minmax(0, 1fr))` }}>
+    <div className={fill ? "h-full" : "overflow-x-auto"}>
+      <div
+        className={clsx("grid", fill ? "h-full" : "min-w-[860px]")}
+        style={{
+          gridTemplateColumns: `${fill ? "56px" : "72px"} repeat(${days.length}, minmax(0, 1fr))`,
+          gridTemplateRows: fill ? `auto repeat(${slots_per_day}, minmax(0, 1fr))` : undefined,
+        }}
+      >
         <div />
         {days.map((d) => (
           <div key={d} className="px-2 pb-3 text-center text-[12px] font-semibold text-ink-3">
@@ -43,7 +52,8 @@ export function TimetableGrid({
                 <div
                   key={d}
                   className={clsx(
-                    "relative min-h-[64px] border-l border-t border-line p-1",
+                    "relative border-l border-t border-line p-1",
+                    fill ? "min-h-0 overflow-hidden" : "min-h-[64px]",
                     lunch && "hatch",
                     covered.has(`${d}:${s}`) && !list.length && "bg-panel-2/40",
                   )}

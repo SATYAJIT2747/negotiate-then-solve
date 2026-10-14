@@ -4,11 +4,13 @@ import { BrowserRouter, Navigate, Route, Routes, useLocation } from "react-route
 import { Shell } from "./components/Shell";
 import { EmptyState, Mark, Skeleton } from "./components/ui";
 import { AuthProvider, useAuth } from "./lib/auth";
+import { TIMETABLE_HOME } from "./lib/meta";
 import { ThemeProvider } from "./lib/theme";
-import type { View } from "./lib/types";
+import type { Role, View } from "./lib/types";
 
 const Login = lazy(() => import("./pages/Login"));
 const Dashboard = lazy(() => import("./pages/Dashboard"));
+const Home = lazy(() => import("./pages/Home"));
 const NewRequest = lazy(() => import("./pages/NewRequest"));
 const Requests = lazy(() => import("./pages/Requests"));
 const CaseDetail = lazy(() => import("./pages/CaseDetail"));
@@ -51,6 +53,11 @@ function Guard({ view, children }: { view: View; children: ReactNode }) {
   return <>{children}</>;
 }
 
+function HomePage() {
+  const { user } = useAuth();
+  return TIMETABLE_HOME.includes(user?.role as Role) ? <Home /> : <Dashboard />;
+}
+
 function Routed() {
   const { user, ready } = useAuth();
   const { pathname } = useLocation();
@@ -72,7 +79,7 @@ function Routed() {
     <Shell>
       <Suspense fallback={<PageFallback />}>
         <Routes>
-          <Route path="/" element={<Dashboard />} />
+          <Route path="/" element={<HomePage />} />
           <Route path="/new" element={<Guard view="new"><NewRequest /></Guard>} />
           <Route path="/requests" element={<Requests />} />
           <Route path="/requests/:id" element={<CaseDetail />} />

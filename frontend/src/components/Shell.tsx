@@ -34,7 +34,7 @@ import { NavLink, useLocation, useNavigate } from "react-router-dom";
 import { api } from "../lib/api";
 import { useAuth } from "../lib/auth";
 import { useApi, useHotkey } from "../lib/hooks";
-import { ROLE_LABEL, STATUS } from "../lib/meta";
+import { ROLE_LABEL, STATUS, TIMETABLE_HOME } from "../lib/meta";
 import { useTheme } from "../lib/theme";
 import type { Overview, View } from "../lib/types";
 import { StudyBanner } from "./StudyBanner";
@@ -71,6 +71,9 @@ export const NAV: NavItem[] = [
 
 const COLLAPSED_KEY = "nts.sidebar.collapsed";
 
+/** What the timetable-home roles keep in view; the rest of their pages sit under "More". */
+const ESSENTIAL = ["/", "/inbox", "/policy"];
+
 const GROUPS: { id: NavItem["group"]; label?: string }[] = [
   { id: "main" },
   { id: "semester", label: "Semester" },
@@ -106,6 +109,8 @@ export function Shell({ children }: { children: ReactNode }) {
     });
 
   const items = NAV.filter((n) => sees(n.view));
+  // the timetable home fills the window, so the grid and the request panel keep their proportions at any zoom
+  const fullscreen = location.pathname === "/" && !!user && TIMETABLE_HOME.includes(user.role);
   const onSearch = () => setPalette(true);
 
   return (
@@ -153,8 +158,8 @@ export function Shell({ children }: { children: ReactNode }) {
           <Mark size={20} />
           <span className="font-serif text-[15px] font-semibold">Negotiate, Then Solve</span>
         </header>
-        <main className="flex-1 overflow-y-auto">
-          <div className="mx-auto max-w-[1280px] px-4 py-7 sm:px-8">
+        <main className={clsx("flex-1", fullscreen ? "overflow-y-auto lg:overflow-hidden" : "overflow-y-auto")}>
+          <div className={fullscreen ? "px-4 py-4 sm:px-6 lg:h-full" : "mx-auto max-w-[1280px] px-4 py-7 sm:px-8"}>
             <StudyBanner />
             {children}
           </div>
@@ -176,10 +181,38 @@ function Sidebar({
   onSearch: () => void;
   collapsed?: boolean;
 }) {
-  const { sees, can } = useAuth();
+  const { user, sees, can } = useAuth();
   const navigate = useNavigate();
   const location = useLocation();
+  const minimal = !!user && TIMETABLE_HOME.includes(user.role); // the home page has the request box
+  const [more, setMore] = useState(false);
   const badge = (b?: NavItem["badge"]) => (b === "inbox" ? ov?.my_inbox : b === "approvals" ? (ov?.pending_approvals ?? 0) + (ov?.my_decisions ?? 0) + (ov?.my_forwarded ?? 0) : 0) ?? 0;
+  const navLink = (n: NavItem) => {
+    const active = n.to === "/" ? location.pathname === "/" : location.pathname.startsWith(n.to);
+    const count = badge(n.badge);
+    return (
+      <NavLink
+        key={n.to}
+        to={n.to}
+        title={collapsed ? (count > 0 ? `${n.label} (${count})` : n.label) : undefined}
+        aria-label={collapsed ? n.label : undefined}
+        className={clsx(
+          "relative flex h-8 items-center gap-2.5 rounded-md text-[13.5px]",
+          collapsed ? "justify-center" : "px-2.5",
+          active ? "bg-panel-2 font-medium text-ink" : "text-ink-2 hover:bg-panel-2/60 hover:text-ink",
+        )}
+      >
+        <n.icon size={16} className={clsx("shrink-0", active ? "text-brand" : "text-ink-3")} />
+        {!collapsed && <span className="flex-1 truncate">{n.label}</span>}
+        {count > 0 &&
+          (collapsed ? (
+            <span className="absolute right-1.5 top-1.5 size-1.5 rounded-full bg-brand" />
+          ) : (
+            <span className="rounded bg-brand px-1.5 text-[11px] font-semibold tabular-nums text-panel">{count}</span>
+          ))}
+      </NavLink>
+    );
+  };
   const status = ov?.seeding ? "Loading demo history…" : ov?.published_version != null ? `Timetable v${ov.published_version} published` : "Connecting…";
 
   return (
@@ -195,7 +228,7 @@ function Sidebar({
       </div>
 
       <div className={clsx("space-y-1.5", collapsed ? "px-2" : "px-3")}>
-        {sees("new") && (
+        {sees("new") && !minimal && (
           <button
             onClick={() => navigate("/new")}
             title={collapsed ? "New request" : undefined}
@@ -225,41 +258,37 @@ function Sidebar({
       </div>
 
       <nav className={clsx("mt-4 flex-1 space-y-4 overflow-x-hidden overflow-y-auto", collapsed ? "px-2 [scrollbar-width:none]" : "px-3")}>
-        {GROUPS.map((g) => {
-          const list = items.filter((i) => i.group === g.id);
-          if (!list.length) return null;
-          return (
-            <div key={g.id}>
-              {g.label && (collapsed ? <div className="mx-2 mb-2 border-t border-line" /> : <p className="mb-1 px-2.5 text-[11px] font-medium text-ink-3">{g.label}</p>)}
-              {list.map((n) => {
-                const active = n.to === "/" ? location.pathname === "/" : location.pathname.startsWith(n.to);
-                const count = badge(n.badge);
-                return (
-                  <NavLink
-                    key={n.to}
-                    to={n.to}
-                    title={collapsed ? (count > 0 ? `${n.label} (${count})` : n.label) : undefined}
-                    aria-label={collapsed ? n.label : undefined}
-                    className={clsx(
-                      "relative flex h-8 items-center gap-2.5 rounded-md text-[13.5px]",
-                      collapsed ? "justify-center" : "px-2.5",
-                      active ? "bg-panel-2 font-medium text-ink" : "text-ink-2 hover:bg-panel-2/60 hover:text-ink",
-                    )}
-                  >
-                    <n.icon size={16} className={clsx("shrink-0", active ? "text-brand" : "text-ink-3")} />
-                    {!collapsed && <span className="flex-1 truncate">{n.label}</span>}
-                    {count > 0 &&
-                      (collapsed ? (
-                        <span className="absolute right-1.5 top-1.5 size-1.5 rounded-full bg-brand" />
-                      ) : (
-                        <span className="rounded bg-brand px-1.5 text-[11px] font-semibold tabular-nums text-panel">{count}</span>
-                      ))}
-                  </NavLink>
-                );
-              })}
+        {minimal ? (
+          <>
+            <div>{items.filter((i) => ESSENTIAL.includes(i.to)).map(navLink)}</div>
+            <div>
+              {collapsed ? (
+                <div className="mx-2 mb-2 border-t border-line" />
+              ) : (
+                <button
+                  onClick={() => setMore(!more)}
+                  aria-expanded={more}
+                  className="mb-1 flex w-full items-center gap-1 px-2.5 text-[11px] font-medium text-ink-3 hover:text-ink"
+                >
+                  <ChevronRight size={12} className={clsx("transition-transform", more && "rotate-90")} /> More
+                </button>
+              )}
+              {(more || collapsed || items.some((i) => !ESSENTIAL.includes(i.to) && location.pathname.startsWith(i.to))) &&
+                items.filter((i) => !ESSENTIAL.includes(i.to)).map(navLink)}
             </div>
-          );
-        })}
+          </>
+        ) : (
+          GROUPS.map((g) => {
+            const list = items.filter((i) => i.group === g.id);
+            if (!list.length) return null;
+            return (
+              <div key={g.id}>
+                {g.label && (collapsed ? <div className="mx-2 mb-2 border-t border-line" /> : <p className="mb-1 px-2.5 text-[11px] font-medium text-ink-3">{g.label}</p>)}
+                {list.map(navLink)}
+              </div>
+            );
+          })
+        )}
       </nav>
 
       <div className={clsx("border-t border-line py-3", collapsed ? "px-2" : "px-3")}>
