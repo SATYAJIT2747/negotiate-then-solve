@@ -3,6 +3,8 @@ import { AnimatePresence, motion } from "framer-motion";
 import { ArrowRight, CalendarClock, ChevronDown, MessagesSquare, Search } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Link } from "react-router-dom";
+import { api } from "../lib/api";
+import { useApi } from "../lib/hooks";
 import { ago, STATUS, TONE_CLASS } from "../lib/meta";
 import type { CaseSummary, FeedItem, Status } from "../lib/types";
 import { Options } from "./RequestThread";
@@ -84,6 +86,71 @@ export function buildConversations(cases: CaseSummary[], feed: FeedItem[]): Conv
   return out.sort((a, b) => b.at.localeCompare(a.at));
 }
 
+/** This person's conversations, kept fresh. */
+export function useConversations() {
+  const { data: cases, refresh: refreshCases } = useApi(() => api.cases("mine"), [], 3000);
+  const { data: feed, refresh: refreshFeed } = useApi(() => api.feed(), [], 3000);
+  const convs = useMemo(() => buildConversations(cases ?? [], feed ?? []), [cases, feed]);
+  return {
+    convs,
+    loaded: !!cases && !!feed,
+    refresh: () => {
+      void refreshCases();
+      void refreshFeed();
+    },
+  };
+}
+
+/** Conversations grouped by what they wait on, filtered by ``q``; ``short`` caps the long groups (the dropdown). */
+export function ConversationList({ items, selected, onSelect, q = "", short = false }: {
+  items: Conversation[];
+  selected: string | null;
+  onSelect: (key: string) => void;
+  q?: string;
+  short?: boolean;
+}) {
+  const groups = useMemo(() => {
+    const ql = q.trim().toLowerCase();
+    const out: Record<Group, Conversation[]> = { needs: [], progress: [], updates: [], done: [] };
+    for (const c of items) if (!ql || `${c.case ?? ""} ${c.title} ${c.latest}`.toLowerCase().includes(ql)) out[groupOf(c)].push(c);
+    return out;
+  }, [items, q]);
+  return (
+    <>
+      {(["needs", "progress", "updates", "done"] as Group[]).map(
+        (g) =>
+          groups[g].length > 0 && (
+            <div key={g}>
+              <p className="px-3 pb-1 pt-2 text-[11px] font-medium uppercase tracking-wide text-ink-3">{GROUP_LABEL[g]}</p>
+              {(short ? groups[g].slice(0, g === "done" || g === "updates" ? 8 : 20) : groups[g]).map((c) => {
+                const s = c.status ? STATUS[c.status] : null;
+                const Icon = s ? s.icon : c.feed.some((f) => f.kind === "negotiation") ? MessagesSquare : CalendarClock;
+                return (
+                  <button
+                    key={c.key}
+                    onClick={() => onSelect(c.key)}
+                    className={clsx("flex w-full items-start gap-2.5 px-3 py-2 text-left hover:bg-panel-2", c.key === selected && "bg-panel-2")}
+                  >
+                    <Icon size={14} className={clsx("mt-0.5 shrink-0", s ? TONE_CLASS[s.tone].text : c.needs ? "text-warn" : "text-info")} />
+                    <span className="min-w-0 flex-1">
+                      <span className={clsx("block truncate text-[13px]", c.unread && "font-semibold")}>{c.title}</span>
+                      <span className="block truncate text-[11.5px] text-ink-3">
+                        {c.latest} · {ago(c.at)}
+                      </span>
+                    </span>
+                    {c.unread && <span className="mt-1.5 size-1.5 shrink-0 rounded-full bg-brand" />}
+                  </button>
+                );
+              })}
+            </div>
+          ),
+      )}
+      {!items.length && <p className="px-3 py-6 text-center text-[13px] text-ink-3">Nothing yet. Write a request below.</p>}
+      {items.length > 0 && !Object.values(groups).some((g) => g.length) && <p className="px-3 py-6 text-center text-[13px] text-ink-3">Nothing matches “{q}”.</p>}
+    </>
+  );
+}
+
 /** The conversations in a dropdown, grouped by what they wait on; picking one opens it. */
 export function ConversationSwitcher({ items, selected, onSelect }: { items: Conversation[]; selected: string | null; onSelect: (key: string | null) => void }) {
   const [open, setOpen] = useState(false);
@@ -101,12 +168,6 @@ export function ConversationSwitcher({ items, selected, onSelect }: { items: Con
     };
   }, [open]);
 
-  const groups = useMemo(() => {
-    const ql = q.trim().toLowerCase();
-    const out: Record<Group, Conversation[]> = { needs: [], progress: [], updates: [], done: [] };
-    for (const c of items) if (!ql || `${c.case ?? ""} ${c.title} ${c.latest}`.toLowerCase().includes(ql)) out[groupOf(c)].push(c);
-    return out;
-  }, [items, q]);
   const needs = items.filter((c) => c.needs).length;
   const unread = items.filter((c) => c.unread && !c.needs).length;
   const current = items.find((c) => c.key === selected);
@@ -136,39 +197,16 @@ export function ConversationSwitcher({ items, selected, onSelect }: { items: Con
               <input autoFocus value={q} onChange={(e) => setQ(e.target.value)} placeholder="Find a request or message" className="h-9 flex-1 bg-transparent text-[13px] outline-none placeholder:text-ink-3" />
             </div>
             <div className="max-h-[400px] overflow-y-auto py-1">
-              {(["needs", "progress", "updates", "done"] as Group[]).map(
-                (g) =>
-                  groups[g].length > 0 && (
-                    <div key={g}>
-                      <p className="px-3 pb-1 pt-2 text-[11px] font-medium uppercase tracking-wide text-ink-3">{GROUP_LABEL[g]}</p>
-                      {groups[g].slice(0, g === "done" || g === "updates" ? 8 : 20).map((c) => {
-                        const s = c.status ? STATUS[c.status] : null;
-                        const Icon = s ? s.icon : c.feed.some((f) => f.kind === "negotiation") ? MessagesSquare : CalendarClock;
-                        return (
-                          <button
-                            key={c.key}
-                            onClick={() => {
-                              onSelect(c.key);
-                              setOpen(false);
-                            }}
-                            className={clsx("flex w-full items-start gap-2.5 px-3 py-2 text-left hover:bg-panel-2", c.key === selected && "bg-panel-2")}
-                          >
-                            <Icon size={14} className={clsx("mt-0.5 shrink-0", s ? TONE_CLASS[s.tone].text : c.needs ? "text-warn" : "text-info")} />
-                            <span className="min-w-0 flex-1">
-                              <span className={clsx("block truncate text-[13px]", c.unread && "font-semibold")}>{c.title}</span>
-                              <span className="block truncate text-[11.5px] text-ink-3">
-                                {c.latest} · {ago(c.at)}
-                              </span>
-                            </span>
-                            {c.unread && <span className="mt-1.5 size-1.5 shrink-0 rounded-full bg-brand" />}
-                          </button>
-                        );
-                      })}
-                    </div>
-                  ),
-              )}
-              {!items.length && <p className="px-3 py-6 text-center text-[13px] text-ink-3">Nothing yet. Write a request below.</p>}
-              {items.length > 0 && !Object.values(groups).some((g) => g.length) && <p className="px-3 py-6 text-center text-[13px] text-ink-3">Nothing matches “{q}”.</p>}
+              <ConversationList
+                items={items}
+                selected={selected}
+                q={q}
+                short
+                onSelect={(key) => {
+                  onSelect(key);
+                  setOpen(false);
+                }}
+              />
             </div>
             <div className="flex items-center justify-between border-t border-line px-3 py-2 text-[12.5px]">
               <button

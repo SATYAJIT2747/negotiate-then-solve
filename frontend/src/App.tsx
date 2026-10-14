@@ -1,6 +1,6 @@
 import { Lock } from "lucide-react";
 import { lazy, Suspense, type ReactNode } from "react";
-import { BrowserRouter, Navigate, Route, Routes, useLocation } from "react-router-dom";
+import { BrowserRouter, Navigate, Route, Routes, useLocation, useSearchParams } from "react-router-dom";
 import { Shell } from "./components/Shell";
 import { EmptyState, Mark, Skeleton } from "./components/ui";
 import { AuthProvider, useAuth } from "./lib/auth";
@@ -13,6 +13,7 @@ const Dashboard = lazy(() => import("./pages/Dashboard"));
 const Home = lazy(() => import("./pages/Home"));
 const NewRequest = lazy(() => import("./pages/NewRequest"));
 const Requests = lazy(() => import("./pages/Requests"));
+const RequestChat = lazy(() => import("./pages/RequestChat"));
 const CaseDetail = lazy(() => import("./pages/CaseDetail"));
 const Inbox = lazy(() => import("./pages/Inbox"));
 const Approvals = lazy(() => import("./pages/Approvals"));
@@ -58,6 +59,16 @@ function HomePage() {
   return TIMETABLE_HOME.includes(user?.role as Role) ? <Home /> : <Dashboard />;
 }
 
+/** For faculty and class representatives, requests are conversations (their own screen, read as a chat);
+ * the pipeline view of one (parse, policy, solver, fairness) is behind "Technical details" (?details=1).
+ * Everyone else gets the request list and the detailed page. */
+function RequestsPage({ one = false }: { one?: boolean }) {
+  const { user } = useAuth();
+  const [params] = useSearchParams();
+  if (TIMETABLE_HOME.includes(user?.role as Role) && !params.has("details")) return <RequestChat />;
+  return one ? <CaseDetail /> : <Requests />;
+}
+
 function Routed() {
   const { user, ready } = useAuth();
   const { pathname } = useLocation();
@@ -81,8 +92,8 @@ function Routed() {
         <Routes>
           <Route path="/" element={<HomePage />} />
           <Route path="/new" element={<Guard view="new"><NewRequest /></Guard>} />
-          <Route path="/requests" element={<Requests />} />
-          <Route path="/requests/:id" element={<CaseDetail />} />
+          <Route path="/requests" element={<RequestsPage />} />
+          <Route path="/requests/:id" element={<RequestsPage one />} />
           <Route path="/inbox" element={<Guard view="inbox"><Inbox /></Guard>} />
           <Route path="/approvals" element={<Guard view="approvals"><Approvals /></Guard>} />
           <Route path="/timetable" element={<Timetable />} />

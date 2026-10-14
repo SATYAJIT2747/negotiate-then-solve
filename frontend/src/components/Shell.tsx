@@ -71,9 +71,9 @@ export const NAV: NavItem[] = [
 
 const COLLAPSED_KEY = "nts.sidebar.collapsed";
 
-/** What the timetable-home roles keep in view; the rest of their pages (the Inbox among them: the home
- * panel shows its messages) sit under "More". */
-const ESSENTIAL = ["/", "/policy"];
+/** What the timetable-home roles keep in view (their timetable, their requests as chats, the handbook);
+ * the rest of their pages sit under "More". */
+const ESSENTIAL = ["/", "/requests", "/policy"];
 
 const GROUPS: { id: NavItem["group"]; label?: string }[] = [
   { id: "main" },
@@ -109,9 +109,13 @@ export function Shell({ children }: { children: ReactNode }) {
       return !c;
     });
 
-  const items = NAV.filter((n) => sees(n.view));
-  // the timetable home fills the window, so the grid and the request panel keep their proportions at any zoom
-  const fullscreen = location.pathname === "/" && !!user && TIMETABLE_HOME.includes(user.role);
+  // the timetable-home roles read and answer everything in the home panel, so the Inbox is not in their menu
+  const items = NAV.filter((n) => sees(n.view) && !(n.to === "/inbox" && user && TIMETABLE_HOME.includes(user.role)));
+  // the timetable home and the requests chat fill the window, so their panels keep their proportions at any zoom
+  const fullscreen =
+    !!user &&
+    TIMETABLE_HOME.includes(user.role) &&
+    (location.pathname === "/" || (location.pathname.startsWith("/requests") && !new URLSearchParams(location.search).has("details")));
   const onSearch = () => setPalette(true);
 
   return (

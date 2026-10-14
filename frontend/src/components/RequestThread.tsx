@@ -46,6 +46,7 @@ export function RequestThread({ c, onChanged }: { c: CaseDetail; onChanged: () =
   const steps = (c.events ?? []).filter((e) => SHOWN.has(e.kind)).filter((e, i, all) => i === 0 || all[i - 1].kind !== e.kind);
   const asking = c.status === "clarification_requested" && c.sender === user?.id;
   const forMe = (c.inbox ?? []).filter((i) => i.to === user?.id);
+  const waitingOnMe = forMe.some((i) => !i.reply);
   const rules = [...(c.policy?.cited ?? []).map((r) => r.cite), ...(c.policy?.obligations ?? []).map((id) => `${id} (applies)`)];
 
   return (
@@ -70,7 +71,15 @@ export function RequestThread({ c, onChanged }: { c: CaseDetail; onChanged: () =
 
       {c.running ? (
         <p className="flex items-center gap-2 pl-1 text-[12.5px] text-ink-2">
-          <LiveDot tone="warn" pulse /> {c.status === "negotiating" ? "Waiting for a colleague's reply…" : "Working on it…"}
+          {waitingOnMe ? (
+            <>
+              <LiveDot tone="brand" pulse={false} /> Waiting for your choice
+            </>
+          ) : (
+            <>
+              <LiveDot tone="warn" pulse /> {c.status === "negotiating" ? "Waiting for a colleague's reply…" : "Working on it…"}
+            </>
+          )}
         </p>
       ) : (
         c.reply && (
@@ -101,8 +110,8 @@ export function RequestThread({ c, onChanged }: { c: CaseDetail; onChanged: () =
 
       <div className="flex items-center gap-2 pt-1">
         {c.can_withdraw && <Withdraw id={c.id} onDone={onChanged} />}
-        <Link to={`/requests/${c.id}`} className="ml-auto flex items-center gap-1 text-[12px] text-ink-3 hover:text-brand">
-          Details <ArrowUpRight size={12} />
+        <Link to={`/requests/${c.id}?details=1`} className="ml-auto flex items-center gap-1 text-[12px] text-ink-3 hover:text-brand" title="How the system handled it: parse, rules, solver, fairness">
+          Technical details <ArrowUpRight size={12} />
         </Link>
       </div>
     </div>
@@ -151,8 +160,8 @@ function Withdraw({ id, onDone }: { id: string; onDone: () => void }) {
 }
 
 /** Options the negotiator sent this person (a time to choose for their own request, or a way to resolve a
- * clash): chosen here, through the same reply the Inbox sends. A counter-offer or a reply in their own
- * words stays on the Inbox page. */
+ * clash): chosen here, through the same reply the Inbox sends. A reply in their own words (another time,
+ * a question) goes through the composer under the thread. */
 export function Options({ item, onDone }: { item: InboxItem; onDone: () => void }) {
   const [choice, setChoice] = useState<string | null>(null);
   const [busy, setBusy] = useState<"accept" | "reject" | null>(null);
@@ -211,9 +220,7 @@ export function Options({ item, onDone }: { item: InboxItem; onDone: () => void 
             Decline
           </Button>
         )}
-        <Link to="/inbox" className="ml-auto flex items-center gap-1 text-[12px] text-ink-3 hover:text-brand">
-          {choosing ? "Reply in your own words" : "Another time or your own words"} <ArrowUpRight size={12} />
-        </Link>
+        <span className="ml-auto text-[11.5px] text-ink-3">or reply in your own words below</span>
       </div>
       {error && <p className="text-[12.5px] text-bad">{error}</p>}
     </div>
