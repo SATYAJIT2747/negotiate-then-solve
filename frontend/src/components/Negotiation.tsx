@@ -146,8 +146,9 @@ export function OfferCard({
         ))}
       </div>
       <p className="mt-2.5 border-t border-line pt-2 text-[11.5px] text-ink-3">
-        Moves {offer.moved} class{offer.moved === 1 ? "" : "es"}
-        {offer.drop.length > 0 && ` · cost ${offer.cost.toFixed(2)}`}
+        {offer.moved === 0
+          ? "Nothing else moves"
+          : `${offer.moved} other class${offer.moved === 1 ? " moves" : "es move"}`}
       </p>
     </button>
   );

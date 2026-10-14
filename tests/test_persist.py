@@ -75,3 +75,30 @@ def test_a_request_caught_mid_way_starts_again(state_dir):
         t.join(timeout=120)
     assert again.orch.cases[r.id].status in (RequestStatus.AWAITING_APPROVAL, RequestStatus.PUBLISHED)
     assert any(e["kind"] == "restarted" for e in again.store.events(r.id))
+
+
+@pytest.mark.parametrize("table", ["seen", "events", "versions"])
+def test_a_state_whose_table_was_added_later_reads_the_right_tables(table):
+    """A table an earlier run added to a saved state sits after the data, not where a new store
+    has it, and the store's statements were prepared before the state was loaded."""
+    import sqlite3
+
+    from pipeline.store import SCHEMA, Store
+
+    old = sqlite3.connect(":memory:")
+    for statement in SCHEMA.split(";"):
+        if statement.strip() and f"EXISTS {table} " not in statement:
+            old.execute(statement)
+    old.executemany("INSERT INTO requests VALUES (?,?,?,?,?)",
+                    [(f"R-{i}", "x" * 400, "received", None, None) for i in range(300)])
+    old.commit()
+    old.executescript(SCHEMA)  # the earlier run adding the table: as many schema changes as a new store
+
+    store = Store()
+    assert store.seen("F-101") == {} and store.events() == [] and store.versions() == []
+    store.load(old.serialize())
+    assert store.seen("F-101") == {} and store.events() == [] and store.versions() == []
+    store.mark_seen("F-101", {"C-1": 3})
+    store.log(None, "resumed")
+    assert store.seen("F-101") == {"C-1": 3} and [e["kind"] for e in store.events()] == ["resumed"]
+    assert store._exec("SELECT COUNT(*) FROM requests").fetchone() == (300,)

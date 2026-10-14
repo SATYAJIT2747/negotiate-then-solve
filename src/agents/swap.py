@@ -83,7 +83,7 @@ def looks_like_swap(instance: Instance, request: Request) -> bool:
         request.raw_text, request.sender_id))
 
 
-def _check(instance: Instance, request: Request, mine: str | None, theirs: str | None,
+def check_swap(instance: Instance, request: Request, mine: str | None, theirs: str | None,
            timetable: Mapping[str, Placement], weeks: list[int] | None) -> SwapReading:
     """The deterministic half: ownership, distinct people, both placed."""
     if request.role not in SWAPPERS:
@@ -184,12 +184,12 @@ class RuleSwapReader:
         mine = self._candidates(sender, self._clues(before), timetable)
         theirs = self._candidates(other, self._clues(after), timetable)
         if len(mine) != 1:
-            return self._ambiguous(mine, "your", timetable) if mine else _check(
+            return self._ambiguous(mine, "your", timetable) if mine else check_swap(
                 self.instance, request, None, None, timetable, weeks)
         if len(theirs) != 1:
             return self._ambiguous(theirs, f"{name}'s", timetable) if theirs else SwapReading(
                 question=f"Which of {name}'s classes should it swap with?", missing=["session"])
-        return _check(self.instance, request, mine[0].id, theirs[0].id, timetable, weeks)
+        return check_swap(self.instance, request, mine[0].id, theirs[0].id, timetable, weeks)
 
     def _ambiguous(self, sessions: list[Session], whose: str, timetable) -> SwapReading:
         listed = "; ".join(f"{session_name(self.instance, s.id)} on {placement_text(self.instance, timetable[s.id])}"
@@ -237,7 +237,7 @@ class LLMSwapReader:
     def read(self, request: Request, timetable: Mapping[str, Placement]) -> SwapReading:
         got = self.client.generate(SWAP_PROMPT, self.build_prompt(request, timetable), _SwapDraft)
         weeks = sorted(set(got.weeks)) if got.weeks else None
-        return _check(self.instance, request, got.my_session, got.other_session, timetable, weeks)
+        return check_swap(self.instance, request, got.my_session, got.other_session, timetable, weeks)
 
 
 # ---------------------------------------------------------------------------
