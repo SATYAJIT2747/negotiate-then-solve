@@ -52,8 +52,8 @@ interface NavItem {
 
 export const NAV: NavItem[] = [
   { to: "/", label: "Home", icon: Home, group: "main", view: "home" },
-  { to: "/requests", label: "Requests", icon: ListChecks, group: "main", view: "requests" },
   { to: "/inbox", label: "Inbox", icon: Inbox, group: "main", view: "inbox", badge: "inbox" },
+  { to: "/requests", label: "Requests", icon: ListChecks, group: "main", view: "requests" },
   { to: "/approvals", label: "Approvals", icon: BadgeCheck, group: "main", view: "approvals", badge: "approvals" },
   { to: "/documents", label: "Policy documents", icon: FileUp, group: "main", view: "documents" },
   { to: "/semester", label: "Semester plan", icon: Hammer, group: "semester", view: "semester" },

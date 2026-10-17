@@ -92,12 +92,12 @@ class Intake:
     def _make(self, channel: Channel, ident: Identity, text: str, when: datetime,
               thread: str | None) -> Request | None:
         text = normalise(text)
-        rid = self.store.next_request_id()
-        r = Request(id=rid, channel=channel, sender_id=ident.person, role=ident.role, raw_text=text,
-                    thread_id=thread or rid, received_at=when)
-        if not self.store.add_request(r, dedupe_key(ident.person, text)):
+        r = self.store.add_new_request(
+            lambda rid: Request(id=rid, channel=channel, sender_id=ident.person, role=ident.role, raw_text=text,
+                                thread_id=thread or rid, received_at=when),
+            dedupe_key(ident.person, text))
+        if r is None:
             self.store.log(None, "duplicate_dropped", sender=ident.person, channel=channel.value)
-            return None
         return r
 
     def from_email(self, raw: bytes | str) -> Request | None:

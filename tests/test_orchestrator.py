@@ -1,6 +1,7 @@
 """The request lifecycle end to end, intake, and the portal API. Parsing is
 stubbed with the gold constraints, so these test everything around the LLM."""
 
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
 
 import pytest
@@ -141,6 +142,16 @@ def test_email_intake_identity_dedupe_and_threads(world):
         intake.from_email(msg.replace(addr, "spoof@evil.example"))
     m = intake.from_messaging({"user": {"email": addr}, "text": "Friday morning is fine", "ts": "1757000000"})
     assert m.channel == Channel.MESSAGING and m.sender_id == who.id
+
+
+def test_requests_arriving_together_get_their_own_ids(world):
+    """Two users submitting at once (or one while a world seeds) must not be given the same id."""
+    sc, _, store, _ = world
+    intake = Intake(Directory.from_instance(sc.instance), store)
+    who = sc.instance.faculty[0].id
+    with ThreadPoolExecutor(8) as pool:
+        made = list(pool.map(lambda i: intake.from_portal(who, f"Request number {i}"), range(40)))
+    assert all(made) and len({r.id for r in made}) == 40
 
 
 def test_portal_api(world):
@@ -383,3 +394,71 @@ def test_the_extra_reader_asks_which_class():
     assert named.question is None and named.template.id == "S-X" and named.week == 3
     answered = r.read("An extra class in week 3 please Robotics, actually week 4", "F-303")
     assert answered.template.id == "S-X" and answered.week == 4  # the last week named wins
+
+
+class Picker:
+    """A sender who answers a choice of times with ``answer``, recording what they were offered."""
+
+    def __init__(self, answer) -> None:
+        self.answer, self.seen = answer, []
+
+    def respond(self, message):
+        self.seen.append(message)
+        return self.answer
+
+
+def _move_to_another_day(sc, orch, owner, key):
+    """A request that moves one of ``owner``'s sessions to another day, any time but lunch: it fits
+    in more than one way."""
+    base = orch.store.current_version().assignment
+    s = next(x for x in sc.instance.sessions if x.faculty == owner and x.id in base)
+    day = next(d for d in sc.instance.calendar.days if d != base[s.id].day)
+    lunch = sc.instance.calendar.lunch_slot
+    slots = [t for t in range(sc.instance.calendar.slots_per_day - s.duration + 1) if t != lunch]
+    orch.parser.outputs[key] = ParseOutput(request_type="preference", action="compile", constraints=[
+        DraftConstraint(type="prefer", hard=True, scope_kind="session", scope_id=s.id, days=[day], slots=slots)])
+    return s.id, day
+
+
+def test_a_request_that_fits_several_ways_lets_the_sender_choose(world):
+    from agents.negotiation import Reply
+
+    sc, orch, store, owners = world
+    who = owners["R-A"]
+    sid, day = _move_to_another_day(sc, orch, who, "MOVE-ANY")
+    picker = Picker(Reply(decision="accept", choice="B"))
+    orch.responders[who], orch.offer_choices = picker, lambda: True
+    c = orch.submit(req("R-30", who, "MOVE-ANY"))
+    assert c.status == S.AWAITING_APPROVAL, c.reply
+    (m,) = picker.seen
+    assert m.explanation_mode == "choice" and m.to == who and 2 <= len(m.offers) <= 3
+    times = [(o.placements[sid].day, o.placements[sid].slot) for o in m.offers]
+    assert len(set(times)) == len(times) and all(d == day for d, _ in times)  # different times, all as asked
+    assert c.proposal.assignment[sid] == m.offers[1].placements[sid] and "option B" in c.reply
+    assert [e["choice"] for e in store.events("R-30", kind="choice_made")] == ["B"]
+
+
+def test_no_choice_by_the_deadline_takes_option_a(world):
+    from agents.negotiation import Reply
+
+    sc, orch, _store, owners = world
+    who = owners["R-A"]
+    sid, _ = _move_to_another_day(sc, orch, who, "MOVE-ANY")
+    picker = Picker(Reply(decision="no_reply"))
+    orch.responders[who], orch.offer_choices = picker, lambda: True
+    c = orch.submit(req("R-31", who, "MOVE-ANY"))
+    (m,) = picker.seen
+    assert c.status == S.AWAITING_APPROVAL and c.proposal.assignment[sid] == m.offers[0].placements[sid]
+    assert "option A" in c.reply
+
+
+def test_without_choices_switched_on_nobody_is_asked(world):
+    from agents.negotiation import Reply
+
+    sc, orch, _store, owners = world
+    who = owners["R-A"]
+    _move_to_another_day(sc, orch, who, "MOVE-ANY")
+    picker = Picker(Reply(decision="accept", choice="B"))
+    orch.responders[who] = picker
+    c = orch.submit(req("R-32", who, "MOVE-ANY"))
+    assert c.status == S.AWAITING_APPROVAL and not picker.seen

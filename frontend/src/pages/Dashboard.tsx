@@ -76,7 +76,7 @@ export default function Dashboard() {
   if (ov?.my_forwarded)
     todos.push({ key: "forwarded", icon: Mail, text: `${ov.my_forwarded} message${ov.my_forwarded > 1 ? "s" : ""} passed to you for a reply`, to: "/approvals", action: "Reply" });
   if (sees("inbox") && ov?.my_inbox)
-    todos.push({ key: "inbox", icon: Inbox, text: `${ov.my_inbox} negotiation message${ov.my_inbox > 1 ? "s" : ""} waiting for your reply`, to: "/inbox", action: "Answer" });
+    todos.push({ key: "inbox", icon: Inbox, text: `${ov.my_inbox} new message${ov.my_inbox > 1 ? "s" : ""} in your inbox`, to: "/inbox", action: "Open" });
   for (const c of own.filter((c) => c.status === "clarification_requested").slice(0, 3))
     todos.push({ key: c.id, icon: HelpCircle, text: `We need more detail on “${c.text}”`, to: sees("inbox") ? "/inbox" : `/requests/${c.id}`, action: "Answer" });
   const mineToDecide = (cases ?? []).filter((c) => c.status === "escalated" && escalatedToMe(c));

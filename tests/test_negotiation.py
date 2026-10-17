@@ -71,8 +71,10 @@ def test_facts_name_constraints_not_reasons():
         OptionView("A", {}, ("C-KHAN-TIME",))], {"F-202": 1})
     ids = {f.id for f in facts}
     assert {"C-KHAN-TIME", "C-DAS-ROOM", "RES-routers", "OPT-A", "LED-F-202"} <= ids
+    assert all("Tier 4" in f.text for f in facts if f.id.startswith("C-"))  # what the model is given
     text = Explainer(inst).explain(facts).text
-    assert "Tier 4" in text and not leaks(text)
+    assert not leaks(text) and "Tier" not in text and "(" not in text  # what people read: no tiers, no IDs
+    assert "Dr. Khan needs the ML practical" in text and "A: the timetable stays as it is." in text
 
 
 def test_option_mismatches_count_invented_and_omitted_times():

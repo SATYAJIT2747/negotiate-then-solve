@@ -4,6 +4,7 @@ import type {
   ClubDecision,
   ClubRequest,
   EventRow,
+  FeedItem,
   Experiment,
   GraphData,
   InboxItem,
@@ -124,6 +125,9 @@ export const api = {
   events: (after = 0, caseId?: string) =>
     call<EventRow[]>(`/events?after=${after}${caseId ? `&case=${caseId}` : ""}&limit=300`),
   inbox: () => call<InboxItem[]>("/inbox"),
+  /** Everything addressed to you, newest first. */
+  feed: () => call<FeedItem[]>("/feed"),
+  feedSeen: (items: Record<string, number>) => post<{ ok: boolean }>("/feed/seen", { items }),
   reply: (id: string, reply: Omit<ReplyView, "decision"> & { decision: "accept" | "reject" | "counter" }) =>
     post<InboxItem>(`/inbox/${id}/reply`, reply),
   /** A reply in the person's own words, read by the reply parser; preview shows the reading without sending. */
@@ -139,6 +143,7 @@ export const api = {
   decide: (id: string, grant: boolean, note: string) => post<{ status: string }>(`/cases/${id}/decide`, { grant, note }),
   /** The coordinator answers a message forwarded to them; the answer becomes the sender's reply. */
   handle: (id: string, note: string) => post<CaseDetail>(`/cases/${id}/handle`, { note }),
+  act: (id: string, text: string) => post<{ id: string; case: CaseDetail }>(`/cases/${id}/act`, { text }),
   /** The sender takes a request back; everything it set in motion is undone. */
   withdraw: (id: string) => post<CaseDetail>(`/cases/${id}/withdraw`, {}),
   versions: () => call<VersionRow[]>("/versions"),

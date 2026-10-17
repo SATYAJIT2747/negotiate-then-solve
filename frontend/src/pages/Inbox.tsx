@@ -1,82 +1,93 @@
 import clsx from "clsx";
 import { AnimatePresence, motion } from "framer-motion";
-import { Bot, Check, Clock3, Inbox as InboxIcon, MessageSquareDashed, Undo2, X } from "lucide-react";
+import { ArrowRight, BellRing, Bot, CalendarClock, CalendarDays, Check, CheckCheck, Clock3, FileText, Inbox as InboxIcon, MessageSquareDashed, MessagesSquare, Undo2, X } from "lucide-react";
 import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { ClarifyForm } from "../components/Clarify";
 import { GroundedExplanation, OfferCard } from "../components/Negotiation";
-import { Avatar, Button, Card, CardHeader, Collapse, EmptyState, LiveDot, PageHeader, Tabs, Toast } from "../components/ui";
+import { Badge, Button, Card, CardHeader, Collapse, EmptyState, LiveDot, PageHeader, Tabs, Toast } from "../components/ui";
 import { api } from "../lib/api";
 import { useAuth } from "../lib/auth";
 import { useApi } from "../lib/hooks";
 import { ago } from "../lib/meta";
 import { study as studyApi } from "../lib/study";
-import type { InboxItem } from "../lib/types";
+import type { FeedItem, InboxItem } from "../lib/types";
 import { useStudySession } from "../components/StudyBanner";
 import { RatingForm } from "../components/Rating";
 
+const KIND_ICON = { negotiation: MessagesSquare, change: CalendarClock, request: FileText, action: BellRing } as const;
+const KIND_LABEL = { negotiation: "Negotiation", change: "Timetable change", request: "Your request", action: "Waiting on you" } as const;
+const ACTION_LINK = { approve: ["/approvals", "Review on Approvals"], reply: ["/approvals", "Reply on Approvals"], decide: [null, "Decide"] } as const;
+
 export default function Inbox() {
   const { user } = useAuth();
-  const { data, refresh } = useApi(() => api.inbox(), [], 2000);
-  const { data: mineCases, refresh: refreshMine } = useApi(() => api.cases("mine"), [], 4000);
-  const questions = (mineCases ?? []).filter((c) => c.status === "clarification_requested");
+  const { data, refresh } = useApi(() => api.feed(), [], 2000);
   const { data: inst } = useApi(() => api.instance(), []);
   const { data: auto, refresh: refreshAuto } = useApi(() => api.autopilot(), []);
   const [sel, setSel] = useState<string | null>(null);
-  const [view, setView] = useState<"open" | "answered">("open");
+  const [view, setView] = useState<"all" | "needs" | "unread">("all");
   const [toast, setToast] = useState<string | null>(null);
+  const teaches = ["hod", "faculty", "guest_faculty"].includes(user?.role ?? "");
 
-  const items = (data ?? []).filter((i) => (view === "open" ? !i.reply : !!i.reply));
+  const all = data ?? [];
+  const items = all.filter((i) => (view === "needs" ? i.needs_you : view === "unread" ? i.unread : true));
   useEffect(() => {
     if (!sel && items.length) setSel(items[0].id);
   }, [items, sel]);
-  const current = (data ?? []).find((i) => i.id === sel) ?? null;
-  const mine = user && current?.to === user.id;
+  const current = all.find((i) => i.id === sel) ?? null;
+
+  // opening an item reads it
+  useEffect(() => {
+    if (current && current.unread && !current.needs_you) void api.feedSeen({ [current.id]: current.n }).then(refresh);
+  }, [current?.id, current?.n]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const readAll = async () => {
+    await api.feedSeen(Object.fromEntries(all.filter((i) => i.unread && !i.needs_you).map((i) => [i.id, i.n])));
+    await refresh();
+  };
+  const done = async (msg: string) => {
+    setToast(msg);
+    await refresh();
+  };
 
   return (
     <>
       <PageHeader
         title="Inbox"
-        subtitle="Messages from the negotiator when a request clashes with yours."
+        subtitle="Everything the timetable office sends you: changes to your timetable, news of your requests, and messages that need your answer."
         actions={
-          user?.role !== "coordinator" &&
-          auto && (
-            <button
-              onClick={async () => {
-                await api.setAutopilot(user!.id, !auto[user!.id]);
-                await refreshAuto();
-              }}
-              title="Let the simulator answer your messages automatically"
-              className="flex items-center gap-2.5 text-[13px] text-ink-2"
-            >
-              <Bot size={15} className="text-ink-3" /> Answer automatically
-              <span className={clsx("relative h-[18px] w-8 rounded-full transition-colors", auto[user!.id] ? "bg-ok" : "bg-line")}>
-                <span className="absolute top-[3px] size-3 rounded-full bg-panel transition-[left]" style={{ left: auto[user!.id] ? 17 : 3 }} />
-              </span>
-            </button>
-          )
+          <div className="flex items-center gap-4">
+            {all.some((i) => i.unread && !i.needs_you) && (
+              <Button size="sm" variant="ghost" icon={CheckCheck} onClick={readAll}>
+                Mark all read
+              </Button>
+            )}
+            {teaches && auto && (
+              <button
+                onClick={async () => {
+                  await api.setAutopilot(user!.id, !auto[user!.id]);
+                  await refreshAuto();
+                }}
+                title="Let the simulator answer your messages automatically"
+                className="flex items-center gap-2.5 text-[13px] text-ink-2"
+              >
+                <Bot size={15} className="text-ink-3" /> Answer automatically
+                <span className={clsx("relative h-[18px] w-8 rounded-full transition-colors", auto[user!.id] ? "bg-ok" : "bg-line")}>
+                  <span className="absolute top-[3px] size-3 rounded-full bg-panel transition-[left]" style={{ left: auto[user!.id] ? 17 : 3 }} />
+                </span>
+              </button>
+            )}
+          </div>
         }
       />
-      {questions.length > 0 && (
-        <Card className="mb-6">
-          <CardHeader title="Questions about your requests" subtitle="The timetable office needs more detail before it can act on these." />
-          <div className="space-y-4 px-5 pb-5">
-            {questions.map((q) => (
-              <div key={q.id}>
-                <p className="text-[13px] text-ink-2">“{q.text}” <span className="text-ink-3">· {ago(q.received_at)}</span></p>
-                <QuestionFor id={q.id} onSent={() => void refreshMine().then(() => setToast("Answer sent; your request is being looked at again."))} />
-              </div>
-            ))}
-          </div>
-        </Card>
-      )}
-      <div className="grid gap-6 lg:grid-cols-[340px_minmax(0,1fr)]">
+      <div className="grid gap-6 lg:grid-cols-[360px_minmax(0,1fr)]">
         <Card className="overflow-hidden">
           <div className="border-b border-line p-3">
             <Tabs
               tabs={[
-                { id: "open", label: "Waiting", count: (data ?? []).filter((i) => !i.reply).length },
-                { id: "answered", label: "Answered" },
+                { id: "all", label: "All" },
+                { id: "needs", label: "Needs you", count: all.filter((i) => i.needs_you).length },
+                { id: "unread", label: "Unread", count: all.filter((i) => i.unread && !i.needs_you).length },
               ]}
               value={view}
               onChange={(v) => {
@@ -86,47 +97,63 @@ export default function Inbox() {
             />
           </div>
           <div className="max-h-[680px] divide-y divide-line overflow-y-auto">
-            {items.map((i) => (
+            {items.map((i) => {
+              const Icon = KIND_ICON[i.kind];
+              return (
                 <button
                   key={i.id}
                   onClick={() => setSel(i.id)}
                   className={clsx("relative flex w-full gap-3 px-4 py-3 text-left", sel === i.id ? "bg-panel-2" : "hover:bg-panel-2/50")}
                 >
                   {sel === i.id && <span className="absolute inset-y-0 left-0 w-0.5 bg-brand" />}
-                  <Avatar name={i.to_name} id={i.to} size={30} />
+                  <span
+                    className={clsx(
+                      "grid size-[30px] shrink-0 place-items-center rounded-full",
+                      i.needs_you ? "bg-warn/15 text-warn" : i.kind === "change" ? "bg-info/15 text-info" : "bg-panel-2 text-ink-3",
+                    )}
+                  >
+                    <Icon size={15} />
+                  </span>
                   <div className="min-w-0 flex-1">
                     <div className="flex items-center gap-2">
-                      <p className="truncate text-[13.5px] font-medium">{user?.role === "coordinator" ? `To ${i.to_name}` : "Timetable office"}</p>
-                      {!i.reply && <LiveDot tone="warn" />}
-                      <span className="ml-auto shrink-0 text-[11px] text-ink-3">{ago(i.created)}</span>
+                      <p className={clsx("truncate text-[13.5px]", i.unread ? "font-semibold" : "font-medium text-ink-2")}>{i.title}</p>
+                      {i.needs_you ? <LiveDot tone="warn" /> : i.unread && <span className="size-2 shrink-0 rounded-full bg-brand" />}
+                      <span className="ml-auto shrink-0 text-[11px] text-ink-3">{ago(i.at)}</span>
                     </div>
-                    <p className="mt-0.5 line-clamp-2 text-[12.5px] text-ink-3">{i.message.text.split("\n")[0]}</p>
+                    <p className="mt-0.5 line-clamp-2 text-[12.5px] text-ink-3">{i.text || i.request}</p>
                     <p className="mt-1 text-[12px] text-ink-3">
-                      {i.message.offers.length} option{i.message.offers.length === 1 ? "" : "s"}
-                      {i.message.round > 1 ? ` · round ${i.message.round}` : ""}
-                      {i.reply && <span className={i.reply.decision === "accept" ? "text-ok" : "text-warn"}> · {i.reply.decision}</span>}
+                      {KIND_LABEL[i.kind]}
+                      {i.from_name ? ` · ${i.from_name}` : ""}
                     </p>
                   </div>
                 </button>
-              ))}
-            {!items.length && <EmptyState icon={InboxIcon} title={view === "open" ? "Nothing waiting" : "No answered messages"} text="Messages arrive here when a request clashes with your timetable." />}
+              );
+            })}
+            {!items.length && (
+              <EmptyState
+                icon={InboxIcon}
+                title={view === "needs" ? "Nothing waiting on you" : view === "unread" ? "All read" : "Your inbox is empty"}
+                text="Changes to your timetable, replies to your requests and messages that need your answer arrive here."
+              />
+            )}
           </div>
         </Card>
 
         <AnimatePresence mode="wait">
           {current && inst ? (
             <motion.div key={current.id} initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} transition={{ duration: 0.12 }}>
-              <Thread
-                item={current}
-                mine={!!mine}
-                canSimulate={!!mine || user?.role === "coordinator"}
-                days={inst.calendar.days}
-                slots={inst.slots}
-                onDone={async (msg) => {
-                  setToast(msg);
-                  await refresh();
-                }}
-              />
+              {current.kind === "negotiation" && current.message ? (
+                <Thread
+                  item={current.message}
+                  mine={current.message.to === user?.id}
+                  canSimulate={current.message.to === user?.id || user?.role === "coordinator"}
+                  days={inst.calendar.days}
+                  slots={inst.slots}
+                  onDone={done}
+                />
+              ) : (
+                <Notice item={current} onDone={done} />
+              )}
             </motion.div>
           ) : (
             <Card className="hidden place-items-center lg:grid">
@@ -137,6 +164,59 @@ export default function Inbox() {
       </div>
       <Toast message={toast} onDone={() => setToast(null)} />
     </>
+  );
+}
+
+/** A notice, a request update or something to act on: what it says, and where to go from it. */
+function Notice({ item, onDone }: { item: FeedItem; onDone: (msg: string) => Promise<void> }) {
+  const link = item.action ? ACTION_LINK[item.action] : null;
+  return (
+    <Card>
+      <CardHeader
+        title={item.title}
+        subtitle={
+          <span className="flex flex-wrap items-center gap-2">
+            <Badge tone={item.needs_you ? "warn" : item.kind === "change" ? "info" : "muted"}>{KIND_LABEL[item.kind]}</Badge>
+            {item.from_name && <span>from {item.from_name}</span>}
+            <span>· {ago(item.at)}</span>
+            {item.version != null && <span>· timetable version {item.version}</span>}
+          </span>
+        }
+      />
+      <div className="space-y-5 p-5">
+        {item.text && <p className="whitespace-pre-line text-[14px] leading-relaxed">{item.text}</p>}
+        {item.request && (
+          <div className="rounded-md border border-line bg-panel-2 px-4 py-3 text-[13.5px]">
+            <p className="text-[12px] text-ink-3">{item.kind === "request" ? "You wrote" : "The request behind it"}</p>
+            <p className="mt-1">“{item.request}”</p>
+          </div>
+        )}
+        {item.status === "clarification_requested" && item.case && item.kind === "request" && (
+          <QuestionFor id={item.case} onSent={() => void onDone("Answer sent; your request is being looked at again.")} />
+        )}
+        <div className="flex flex-wrap gap-2">
+          {link && (
+            <Link to={link[0] ?? `/requests/${item.case}`}>
+              <Button variant="primary" icon={ArrowRight}>
+                {link[1]}
+              </Button>
+            </Link>
+          )}
+          {item.case && (
+            <Link to={`/requests/${item.case}`}>
+              <Button variant="ghost">Open request {item.case}</Button>
+            </Link>
+          )}
+          {item.kind === "change" && (
+            <Link to="/timetable">
+              <Button variant="ghost" icon={CalendarDays}>
+                See the timetable
+              </Button>
+            </Link>
+          )}
+        </div>
+      </div>
+    </Card>
   );
 }
 
@@ -164,6 +244,8 @@ function Thread({
   const [error, setError] = useState<string | null>(null);
   const m = item.message;
   const answered = !!item.reply;
+  // the sender's own request fits in more than one way: they pick a time, there is nothing to give up
+  const choosing = m.explanation_mode === "choice";
 
   const act = async (label: string, fn: () => Promise<unknown>, msg: string) => {
     setBusy(label);
@@ -182,7 +264,11 @@ function Thread({
     <div className="space-y-6">
       <Card>
         <CardHeader
-          title={mine ? "A clash with your timetable" : `A clash for ${item.to_name}`}
+          title={
+            choosing
+              ? mine ? "Choose a time for your request" : `A time for ${item.to_name} to choose`
+              : mine ? "A clash with your timetable" : `A clash for ${item.to_name}`
+          }
           subtitle={
             <span className="flex flex-wrap items-center gap-2">
               {item.case && (
@@ -272,11 +358,17 @@ function Thread({
                       icon={Check}
                       disabled={!choice || mode !== "pick"}
                       loading={busy === "accept"}
-                      onClick={() => act("accept", () => api.reply(item.id, { decision: "accept", choice: choice!, text: `Option ${choice} works for me.` }), `Accepted option ${choice}. The solver re-solves now.`)}
+                      onClick={() =>
+                        act(
+                          "accept",
+                          () => api.reply(item.id, { decision: "accept", choice: choice!, text: `Option ${choice} works for me.` }),
+                          choosing ? `Chose option ${choice}. It goes to the timetable office for approval.` : `Accepted option ${choice}. The solver re-solves now.`,
+                        )
+                      }
                     >
-                      {choice ? `Accept option ${choice}` : "Pick an option"}
+                      {choice ? `${choosing ? "Choose" : "Accept"} option ${choice}` : "Pick an option"}
                     </Button>
-                    {mode === "counter" ? (
+                    {choosing ? null : mode === "counter" ? (
                       <Button
                         icon={Undo2}
                         disabled={!cDays.length || to < from}
@@ -302,14 +394,16 @@ function Thread({
                         Suggest another time
                       </Button>
                     )}
-                    <Button
-                      variant="danger"
-                      icon={X}
-                      loading={busy === "reject"}
-                      onClick={() => act("reject", () => api.reply(item.id, { decision: "reject", text: "None of these work for me." }), "Declined. The negotiator will ask again or move on.")}
-                    >
-                      Decline
-                    </Button>
+                    {!choosing && (
+                      <Button
+                        variant="danger"
+                        icon={X}
+                        loading={busy === "reject"}
+                        onClick={() => act("reject", () => api.reply(item.id, { decision: "reject", text: "None of these work for me." }), "Declined. The negotiator will ask again or move on.")}
+                      >
+                        Decline
+                      </Button>
+                    )}
                   </>
                 )}
                 {canSimulate && (
@@ -325,9 +419,11 @@ function Thread({
         </div>
       </Card>
       {mine && <RateMessage item={item} />}
-      <Collapse title="Why these options (the facts behind the message)">
+      {!choosing && (
+        <Collapse title="Why these options (the facts behind the message)">
           <GroundedExplanation m={m} />
         </Collapse>
+      )}
     </div>
   );
 }

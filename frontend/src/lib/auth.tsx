@@ -27,7 +27,7 @@ const TEACHING: Role[] = ["hod", "faculty", "guest_faculty"];
 const FALLBACK_VIEWS: Record<View, Role[]> = {
   home: [], requests: [], timetable: [], handbook: [], how: [], // everyone
   new: ["coordinator", "hod", "faculty", "guest_faculty", "lab_incharge", "exam_cell", "student"],
-  inbox: ["coordinator", ...TEACHING],
+  inbox: [],
   approvals: ["coordinator"],
   history: ["coordinator"],
   documents: ["coordinator"],

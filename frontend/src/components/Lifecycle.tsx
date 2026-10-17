@@ -68,7 +68,7 @@ export function Lifecycle({ events, status, live }: { events: EventRow[]; status
   );
 }
 
-const DETAIL_KEYS = ["route", "action", "verdict", "reason", "to", "version", "approver", "rounds", "constraints", "superseded", "moved", "cited", "obligations", "seconds", "solver_seconds", "gini_after"];
+const DETAIL_KEYS = ["route", "action", "verdict", "reason", "to", "version", "approver", "rounds", "choice", "constraints", "superseded", "moved", "cited", "obligations", "seconds", "solver_seconds", "gini_after"];
 
 function detail(e: EventRow): string {
   const parts: string[] = [];

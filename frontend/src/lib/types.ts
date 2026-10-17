@@ -134,6 +134,28 @@ export interface InboxItem {
   answered_by: string | null;
 }
 
+/** One entry in a person's inbox: a negotiation message, a change to their timetable, news of a request
+ * they sent, or something waiting on them. */
+export interface FeedItem {
+  id: string;
+  /** The last event of it; read once the person has opened it at this event. */
+  n: number;
+  kind: "negotiation" | "change" | "request" | "action";
+  case: string | null;
+  title: string;
+  text: string;
+  at: string;
+  from: string | null;
+  from_name: string | null;
+  status: string | null;
+  request: string | null;
+  needs_you: boolean;
+  unread: boolean;
+  version?: number | null;
+  action?: "approve" | "decide" | "reply";
+  message?: InboxItem;
+}
+
 export interface DiffRow {
   session: string;
   session_name: string;
@@ -205,7 +227,7 @@ export interface CaseDetail extends CaseSummary {
   /** This viewer is the one the escalation was sent to, and it is still open. */
   can_decide?: boolean;
   /** The coordinator's answer to a forwarded message. */
-  answer?: null | { by: string; by_name: string; note: string; at: string };
+  answer?: null | { by: string; by_name: string; note: string; at: string; acting?: string };
   /** This viewer is the coordinator and the forwarded message is still unanswered. */
   can_handle?: boolean;
   /** This viewer sent it, and nothing it asked for is in the published timetable yet. */

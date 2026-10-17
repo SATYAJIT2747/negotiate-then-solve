@@ -1,9 +1,11 @@
 """Offline parser: a rule-based stand-in for System Two, so the portal runs
-without an API key. It returns the same ``ParseOutput`` and goes through the
-same deterministic post-processing (tiers, authority, validation), so every
-downstream layer behaves as it would with the LLM. It covers the common
-request shapes of the corpus; anything it cannot read becomes a
-clarification rather than a guess.
+without an API key. It reads a message into the same intents a model
+returns (``read_intents``) and goes through the same deterministic
+resolution and post-processing (``intents.compile_intents``: times, weeks,
+classes, tiers, authority, validation), so every downstream layer behaves
+as it would with the LLM. ``read`` and ``parse`` give the older
+``ParseOutput`` format. It covers the common request shapes of the corpus;
+anything it cannot read becomes a clarification rather than a guess.
 """
 
 from __future__ import annotations
@@ -13,8 +15,25 @@ import re
 from core.instance import Instance, SessionKind
 from core.schemas import Request
 
+from . import intents
 from .corpus import INJECTIONS
-from .parsing import DraftConstraint, ParseOutput, ParseResult, postprocess
+from .intents import (
+    Avoid,
+    ClassRef,
+    ExtraClass,
+    IntentOutput,
+    Move,
+    NeedsRoom,
+    Only,
+    Period,
+    RoomClosed,
+    Swap,
+    TimeSpec,
+    Unavailable,
+    Who,
+    compile_intents,
+)
+from .parsing import ParseOutput, ParseResult
 
 DAY_WORDS = {"mon": "Mon", "tue": "Tue", "wed": "Wed", "thu": "Thu", "fri": "Fri", "sat": "Sat", "sun": "Sun"}
 _DAY = re.compile(r"\b(mon|tue|tues|wed|wednes|thu|thur|thurs|fri|sat|satur|sun)(?:day)?s?\b", re.IGNORECASE)
@@ -57,6 +76,10 @@ def _slot(hour: int, ampm: str) -> int:
     return h - 9
 
 
+def _clock(hour: int, ampm: str) -> str:
+    return f"{hour % 12 + (12 if ampm.lower() == 'pm' else 0):02d}:00"
+
+
 class RuleParser:
     def __init__(self, instance: Instance) -> None:
         self.instance = instance
@@ -84,20 +107,28 @@ class RuleParser:
             return list(range(min(a, b), max(a, b) + 1))
         return None
 
-    def slots(self, text: str) -> list[int] | None:
+    def times(self, text: str) -> TimeSpec:
+        """The times of day the text names, days aside."""
         low = text.lower()
-        spd = self.instance.calendar.slots_per_day
         if m := re.search(r"before\s+(\d{1,2})(?::\d\d)?\s*(am|pm)", low):
-            return list(range(max(1, _slot(int(m[1]), m[2]))))
+            return TimeSpec(before=_clock(int(m[1]), m[2]))
         if m := re.search(r"after\s+(\d{1,2})(?::\d\d)?\s*(am|pm)", low):
-            return list(range(min(spd - 1, _slot(int(m[1]), m[2])), spd))
-        if re.search(r"after lunch|afternoon", low):
-            return self.afternoon
-        if "morning" in low:
-            return self.morning
-        times = [_slot(int(h), ap) for h, ap in _TIME.findall(low)]
-        times = [t for t in times if 0 <= t < spd]
-        return sorted(set(times)) or None
+            return TimeSpec(after=_clock(int(m[1]), m[2]))
+        # "move it before lunch as I won't be available after lunch": the first one is the ask, the rest the reason
+        if m := re.search(r"\b(?:before (?:lunch|noon)|pre-lunch|morning)|\b(?:after lunch|afternoon)", low):
+            return TimeSpec(part="afternoon" if m[0].startswith(("after", "afternoon")) else "morning")
+        spd = self.instance.calendar.slots_per_day
+        at = sorted({_clock(int(h), ap) for h, ap in _TIME.findall(low) if 0 <= _slot(int(h), ap) < spd})
+        return TimeSpec(at=at) if at else TimeSpec()
+
+    def slots(self, text: str) -> list[int] | None:
+        try:
+            return intents.slots(self.instance, self.times(text))
+        except intents.Unresolved:
+            return None
+
+    def period(self, text: str) -> Period:
+        return Period(weeks=self.weeks(text))
 
     def sessions_named(self, text: str, faculty: str | None) -> list[str]:
         low = text.lower()
@@ -133,9 +164,13 @@ class RuleParser:
     # -- parsing -----------------------------------------------------------------------
 
     def parse(self, request: Request) -> ParseResult:
-        return postprocess(self.instance, request, self.read(request))
+        return compile_intents(self.instance, request, self.read_intents(request)).result
 
     def read(self, request: Request) -> ParseOutput:
+        """The ``ParseOutput`` a model would return for ``request`` (before post-processing)."""
+        return self.parse(request).output
+
+    def read_intents(self, request: Request) -> IntentOutput:
         text = _INJECTION.sub("", request.raw_text)
         for inj in INJECTIONS:
             text = text.replace(inj, "")
@@ -144,32 +179,37 @@ class RuleParser:
         role = request.role.value
 
         if OUT_OF_SCOPE.search(low):
-            return ParseOutput(request_type="out_of_scope", action="out_of_scope")
+            return IntentOutput(action="out_of_scope")
         if role == "student" and re.search(r"\bclash|overlap|same time\b", low):
-            return ParseOutput(request_type="clash_report", action="investigate")
+            return IntentOutput(action="investigate")
         if "?" in text and QUESTION.search(low) and not re.search(r"\b(could you|can you|please)\b", low):
-            return ParseOutput(request_type="policy_question", action="answer")
+            return IntentOutput(action="answer")
+
+        days, period, times = self.days(text), self.period(text), self.times(text)
+        weeks, slots = period.weeks, self.slots(text)
+
+        def when(d: list[str] | None = days, t: TimeSpec = times) -> TimeSpec:
+            return t.model_copy(update={"days": d})
 
         if role != "student" and EXTRA.search(low) and not UNAVAILABLE.search(low):
-            return ParseOutput(request_type="preference", action="investigate")
+            return self._compile(ExtraClass(which=self._class(text, sender), period=period, time=when()))
 
-        if role != "student" and SWAP.search(low) and self.mentioned(text, sender):
+        if role != "student" and SWAP.search(low) and (people := self.mentioned(text, sender)):
             # which two sessions is decided against the timetable (agents.swap), not here
-            return ParseOutput(request_type="swap", action="compile")
+            theirs = ClassRef(owner=people[0]) if len(people) == 1 else ClassRef()
+            return self._compile(Swap(mine=ClassRef(), theirs=theirs, period=period))
 
-        days, weeks, slots = self.days(text), self.weeks(text), self.slots(text)
         other = self.other_faculty(text, sender)
-        scope_kind, scope_id = ("faculty", other) if other else ("faculty", sender)
+        who = Who(kind="faculty", id=other) if other else None
 
         # rooms: a lab in-charge reporting an outage, or the exam cell taking a room for exams
         if role in ("lab_incharge", "exam_cell") and (role == "lab_incharge" or self._names_room(low)):
             lab = next((r for r in self.instance.rooms if r.name.lower() in low or r.id.lower() in low), None)
             if lab is None:
-                return self._clarify("room_issue", ["room"], "Which room is affected?")
+                return self._clarify("room_closed", ["room"], "Which room is affected?")
             if weeks is None and days is None:
-                return self._clarify("room_issue", ["weeks"], f"Which weeks is {lab.name} unavailable?")
-            return self._compile("room_issue", [DraftConstraint(
-                type="unavailable", hard=True, scope_kind="room", scope_id=lab.id, days=days, weeks=weeks)])
+                return self._clarify("room_closed", ["weeks"], f"Which weeks is {lab.name} unavailable?")
+            return self._compile(RoomClosed(room=lab.id, time=TimeSpec(days=days), period=period))
 
         # equipment a session needs
         needs = sorted({v for k, v in EQUIPMENT.items() if k in low})
@@ -179,17 +219,16 @@ class RuleParser:
                 sessions = [s.id for s in self.instance.sessions if s.faculty == other and
                             s.kind == SessionKind.PRACTICAL] or sessions
             if not sessions:
-                return self._clarify("room_issue", ["session"], "Which of your classes needs this equipment?")
-            drafts = [DraftConstraint(type="require_room", hard=True, scope_kind="session", scope_id=sessions[0],
-                                      equipment=needs, justification="stated")]
+                return self._clarify("needs_room", ["session"], "Which of your classes needs this equipment?")
+            which = ClassRef(session=sessions[0])
+            found = [NeedsRoom(which=which, equipment=needs, justification="stated")]
             if days or slots:
-                drafts.append(DraftConstraint(type="prefer", hard=True, scope_kind="session", scope_id=sessions[0],
-                                              days=days, slots=slots, weeks=weeks))
-            return self._compile("room_issue", drafts)
+                found.append(Move(which=which, to=when(), period=period))
+            return self._compile(*found)
 
         if (VAGUE.search(low) and not days and not weeks) or (UNAVAILABLE.search(low) and not days and not weeks):
             missing = [m for m, v in (("days", days), ("weeks", weeks), ("slots", slots)) if v is None][:2]
-            return self._clarify("unavailability" if UNAVAILABLE.search(low) else "preference", missing or ["days"],
+            return self._clarify("unavailable" if UNAVAILABLE.search(low) else "avoid", missing or ["days"],
                                  "Could you tell me which " + " and ".join(missing or ["days"]) + " you mean?")
 
         if UNAVAILABLE.search(low):
@@ -199,46 +238,46 @@ class RuleParser:
             off = [c for c in clauses if UNAVAILABLE.search(c)]
             if any(ONLY.search(c) and not UNAVAILABLE.search(c) for c in clauses) and (d := self.days(" ".join(off))):
                 days = d
-            return self._compile("unavailability", [DraftConstraint(
-                type="unavailable", hard=True, scope_kind=scope_kind, scope_id=scope_id, days=days,
-                slots=slots, weeks=weeks, justification="stated" if re.search(r"\b(because|due to|conference|"
-                                                                              r"appointment|duty)\b", low) else "none")])
+            stated = re.search(r"\b(because|due to|conference|appointment|duty)\b", low)
+            return self._compile(Unavailable(who=who, time=when(days), period=period,
+                                             justification="stated" if stated else "none"))
 
         # a specific placement ("schedule my lecture at 1 pm on Friday", "4 lectures back-to-back")
         if re.search(r"\b(schedule|move|put|shift|stack)\b", low) and (days or slots):
-            sessions = self.sessions_named(text, scope_id if scope_kind == "faculty" else None)
+            sessions = self.sessions_named(text, other or sender)
             if re.search(r"back.to.back|in a row|straight|consecutive|without (any )?breaks?", low):
-                return self._compile("preference", [DraftConstraint(
-                    type="prefer", hard=True, scope_kind=scope_kind, scope_id=scope_id, days=days,
-                    slots=slots or self.morning)])
-            target = ("session", sessions[0]) if sessions else (scope_kind, scope_id)
-            return self._compile("preference", [DraftConstraint(
-                type="prefer", hard=True, scope_kind=target[0], scope_id=target[1], days=days, slots=slots,
-                weeks=weeks)])
+                t = times if slots else TimeSpec(part="morning")
+                return self._compile(Only(who=who, time=when(t=t), hard=True))
+            if sessions:
+                return self._compile(Move(which=ClassRef(session=sessions[0]), to=when(), period=period))
+            return self._compile(Only(who=who, time=when(), period=period, hard=True))
 
         if days or slots:
             hard = not WISH.search(low) and bool(re.search(r"\b(must|need|has to|have to|cannot)\b", low))
             if PLACE.search(low) and not AVOID.search(low):
-                sessions = self.sessions_named(text, scope_id)
-                target = ("session", sessions[0]) if sessions else (scope_kind, scope_id)
-                return self._compile("preference", [DraftConstraint(
-                    type="prefer", hard=hard, scope_kind=target[0], scope_id=target[1], days=days, slots=slots,
-                    weeks=weeks)])
+                sessions = self.sessions_named(text, other or sender)
+                if sessions:
+                    return self._compile(Move(which=ClassRef(session=sessions[0]), to=when(), period=period,
+                                              hard=hard))
+                return self._compile(Only(who=who, time=when(), period=period, hard=hard))
             if (ONLY.search(low) or WANT.search(low)) and days and not AVOID.search(low):
-                return self._compile("preference", [DraftConstraint(
-                    type="prefer", hard=hard, scope_kind=scope_kind, scope_id=scope_id, days=days, slots=slots,
-                    weeks=weeks)])
-            return self._compile("preference", [DraftConstraint(
-                type="avoid", hard=hard, scope_kind=scope_kind, scope_id=scope_id, days=days, slots=slots,
-                weeks=weeks)])
+                return self._compile(Only(who=who, time=when(), period=period, hard=hard))
+            return self._compile(Avoid(who=who, time=when(), period=period, hard=hard))
 
-        return self._clarify("preference", ["days", "slots"],
-                             "Could you tell me which days and times you mean?")
+        return self._clarify("avoid", ["days", "slots"], "Could you tell me which days and times you mean?")
+
+    def _class(self, text: str, sender: str) -> ClassRef:
+        """The sender's class a message names: course and kind, when it names them."""
+        low = text.lower()
+        named = {self.instance.session_by_id[s].course for s in self.sessions_named(text, sender)}
+        kind = next((k for k, pat in (("practical", r"\b(practical|lab session|lab)\b"), ("tutorial", r"\btutorials?\b"))
+                     if re.search(pat, low)), "lecture")
+        return ClassRef(course=named.pop() if len(named) == 1 else None, kind=kind)
 
     @staticmethod
-    def _compile(kind: str, drafts: list[DraftConstraint]) -> ParseOutput:
-        return ParseOutput(request_type=kind, action="compile", constraints=drafts)
+    def _compile(*found) -> IntentOutput:
+        return IntentOutput(action="compile", intents=list(found))
 
     @staticmethod
-    def _clarify(kind: str, missing: list[str], question: str) -> ParseOutput:
-        return ParseOutput(request_type=kind, action="clarify", missing=missing, clarifying_question=question)
+    def _clarify(topic: str, missing: list[str], question: str) -> IntentOutput:
+        return IntentOutput(action="clarify", topic=topic, missing=missing, question=question)

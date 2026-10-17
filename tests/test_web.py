@@ -54,6 +54,24 @@ def test_request_to_publication(client):
     kinds = [e["kind"] for e in c.get(f"/api/events?case={rid}", headers=as_(COORDINATOR)).json()]
     assert kinds[0] == "received" and kinds[-1] == "published"
 
+    # the inbox tells the sender it was approved, and everyone whose classes moved what changed
+    feed = c.get("/api/feed", headers=as_("F-104")).json()
+    mine = next(i for i in feed if i["id"] == f"req:{rid}")
+    assert mine["title"] == "Your request was approved" and f"version {v}" in mine["text"] and mine["unread"]
+    told = [p for p in world_notices(_world, rid) if p != "F-104"]
+    assert told, "someone else's classes moved"
+    for person in told:
+        change = next(i for i in c.get("/api/feed", headers=as_(person)).json() if i["id"] == f"change:{rid}")
+        assert change["kind"] == "change" and change["unread"] and change["version"] == v
+    unread = c.get("/api/overview", headers=as_(told[0])).json()["my_inbox"]
+    c.post("/api/feed/seen", json={"items": {change["id"]: change["n"]}}, headers=as_(told[0]))
+    assert c.get("/api/overview", headers=as_(told[0])).json()["my_inbox"] == unread - 1
+    assert not next(i for i in c.get("/api/feed", headers=as_(told[0])).json() if i["id"] == f"change:{rid}")["unread"]
+
+
+def world_notices(world, case_id):
+    return sorted(world.orch.cases[case_id].notices)
+
 
 def test_interactive_negotiation_through_the_inbox(client):
     c, world = client
@@ -111,7 +129,7 @@ def test_views_are_scoped_by_role(client):
     views = {role: set(c.post("/api/login", json={"person": pid}).json()["views"]) for role, pid in people.items()}
     assert {"approvals", "graph", "health", "experiments"} <= views["coordinator"]
     assert "inbox" in views["faculty"] and "approvals" not in views["faculty"] and "health" not in views["faculty"]
-    assert "inbox" not in views["student"] and "fairness" not in views["student"] and "new" in views["student"]
+    assert "inbox" in views["student"] and "fairness" not in views["student"] and "new" in views["student"]
     assert "new" not in views_for("dean") and "fairness" in views_for("dean")  # no Dean in the demo directory
     student = as_(people["student"])
     for path in ("/api/ledger", "/api/graph", "/api/observability", "/api/experiments"):

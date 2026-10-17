@@ -165,3 +165,16 @@ def test_rule_parser_keeps_the_week_of_a_preference(instance):
 
     out = RuleParser(instance).read(request(instance.faculty[0].id, text="No classes on Wednesday in week 10, please"))
     assert out.action == "compile" and out.constraints[0].weeks == [10] and out.constraints[0].days == ["Wed"]
+
+
+@pytest.mark.parametrize("text, part", [
+    ("move my class before lunch as i wont be available after lunch", "morning"),  # the reason comes second
+    ("move my class after lunch since I'm busy before lunch", "afternoon"),
+    ("move my class to the morning", "morning"),
+    ("I'd like Friday afternoon free", "afternoon"),
+])
+def test_rule_parser_reads_lunch_words(instance, text, part):
+    from language.rule_parser import RuleParser
+
+    p = RuleParser(instance)
+    assert p.slots(text) == getattr(p, part)

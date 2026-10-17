@@ -81,7 +81,7 @@ def test_every_kind_is_present(corpus):
     variants = Counter(ex.variant for ex in corpus)
     actions = Counter(ex.expected_action for ex in corpus)
     assert set(variants) == set(Variant)
-    assert set(actions) == set(ExpectedAction)
+    assert set(actions) == set(ExpectedAction) - {ExpectedAction.WITHDRAW, ExpectedAction.CLUB_BOOKING}  # an intent parser's action only
     assert variants[Variant.CLEAN] > 300
 
 

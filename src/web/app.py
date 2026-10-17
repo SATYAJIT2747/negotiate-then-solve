@@ -207,6 +207,113 @@ def _inbox_item(w: World, i: InboxItem) -> dict:
             "answered_by": i.answered_by}
 
 
+# ---------------------------------------------------------------------------
+# The inbox: everything addressed to one person, in one list
+# ---------------------------------------------------------------------------
+
+S = RequestStatus
+_REQUEST_TITLE = {
+    S.AWAITING_APPROVAL: "Your request is waiting for approval",
+    S.CLARIFICATION: "A question about your request",
+    S.DENIED: "Your request was declined",
+    S.REFUSED: "Your request could not be accepted",
+    S.ESCALATED: "Your request was sent up for a decision",
+    S.ANSWERED: "An answer to your question",
+    S.WITHDRAWN: "You withdrew your request",
+}
+
+
+def _event_time(at: str) -> str:
+    """Events are logged in local time; inbox items are compared in UTC."""
+    return datetime.fromisoformat(at).astimezone(UTC).isoformat()
+
+
+def _feed(w: World, u: dict, decides, handles) -> list[dict]:
+    """What ``u`` is told, newest first: negotiation messages, changes to their timetable, news of
+    their own requests, and requests waiting on them. ``unread`` items have an event the person has not
+    opened yet; ``needs_you`` ones wait for an answer or a decision."""
+    me = u["id"]
+    seen = w.store.seen(me)
+    last: dict[str, dict] = {}
+    settled: dict[str, dict] = {}  # case -> its last "published" or "withdrawn" event
+    for e in w.store.events(limit=None):
+        if e["case"]:
+            last[e["case"]] = e
+            if e["kind"] in (S.PUBLISHED.value, S.WITHDRAWN.value):
+                settled[e["case"]] = e
+    out: list[dict] = []
+
+    def add(key: str, n: int, kind: str, case: Case | None, title: str, text: str, at: str, *,
+            sender: str | None = None, needs_you: bool = False, **more) -> None:
+        out.append({"id": key, "n": n, "kind": kind, "case": case.id if case else None, "title": title,
+                    "text": plain(text), "at": at, "from": sender, "from_name": w.name_of(sender) if sender else None,
+                    "status": case.status.value if case else None, "request": case.request.raw_text if case else None,
+                    "needs_you": needs_you, "unread": needs_you or seen.get(key, 0) < n, **more})
+
+    for i in w.inbox.items.values():
+        if i.to != me and me != COORDINATOR:
+            continue
+        mine, n = i.to == me, 2 if i.reply else 1
+        case = w.orch.cases.get(i.case_id) if i.case_id else None
+        item = _inbox_item(w, i)
+        choice = i.message.explanation_mode == "choice"
+        add(f"msg:{i.id}", n, "negotiation", case,
+            ("Choose a time for your request" if choice else "A clash with your timetable") if mine else
+            (f"A time for {w.name_of(i.to)} to choose" if choice else f"Negotiation with {w.name_of(i.to)}"),
+            i.message.text.split("\n")[0], item["created"], sender=COORDINATOR, needs_you=mine and i.reply is None,
+            message=item)
+        if not mine:
+            out[-1]["unread"] = False  # the office follows these; they are not addressed to it
+
+    for case in w.orch.cases.values():
+        ev = last.get(case.id)
+        if ev is None:
+            continue
+        at, n = _event_time(ev["at"]), ev["n"]
+        own = case.request.sender_id == me
+        done = settled.get(case.id)
+        # someone else's request changed my timetable (or what I gave way for was withdrawn)
+        if not own and me in case.notices and done is not None:
+            withdrawn = done["kind"] == S.WITHDRAWN.value
+            add(f"change:{case.id}", done["n"], "change", case,
+                "A change you agreed to no longer applies" if withdrawn else "Your timetable has changed",
+                case.notices[me], _event_time(done["at"]),
+                sender=case.request.sender_id if withdrawn else done.get("approver") or COORDINATOR,
+                version=done.get("version"))
+        if own:
+            status = case.status
+            if status == S.PUBLISHED:
+                version = done.get("version") if done else None
+                if version is None:
+                    title, text = "Your request already fits the timetable", case.reply
+                else:
+                    who = w.name_of(done.get("approver") or COORDINATOR)
+                    title = "Your request was approved"
+                    text = f"Approved by {who}; the timetable now includes it (version {version})."
+                    if me in case.notices:
+                        text += " " + case.notices[me]
+                add(f"req:{case.id}", n, "request", case, title, text, at, sender=COORDINATOR, version=version)
+            elif status == S.FORWARDED:
+                answer = case.handled
+                add(f"req:{case.id}", n, "request", case,
+                    f"A reply from {w.name_of(answer['by'])}" if answer else "Your message was passed to the timetable office",
+                    case.reply, at, sender=answer["by"] if answer else COORDINATOR)
+            elif status in _REQUEST_TITLE and case.reply:
+                add(f"req:{case.id}", n, "request", case, _REQUEST_TITLE[status], case.reply, at,
+                    sender=(case.decision or {}).get("by") or COORDINATOR, needs_you=status == S.CLARIFICATION)
+        # waiting on me
+        if me == COORDINATOR and case.status == S.AWAITING_APPROVAL:
+            add(f"approve:{case.id}", n, "action", case, "A change is waiting for your approval", case.request.raw_text,
+                at, sender=case.request.sender_id, needs_you=True, action="approve")
+        if case.status == S.ESCALATED and decides(u, case):
+            add(f"decide:{case.id}", n, "action", case, "Escalated to you for a decision", case.request.raw_text, at,
+                sender=case.request.sender_id, needs_you=True, action="decide")
+        if handles(u, case):
+            add(f"forward:{case.id}", n, "action", case, "A message passed to you for a reply", case.request.raw_text,
+                at, sender=case.request.sender_id, needs_you=True, action="reply")
+    return sorted(out, key=lambda x: x["at"], reverse=True)
+
+
 def _reading(w: World, m: Message, r: Reply) -> str:
     """A typed reply in plain words, for the sender to confirm."""
     days = ", ".join(FULL_DAY.get(d, d) for d in r.counter_days or [])
@@ -408,6 +515,14 @@ class HandleBody(BaseModel):
     note: str
 
 
+class ActBody(BaseModel):
+    text: str = ""  # the request the office makes of it; the forwarded message itself when empty
+
+
+class SeenBody(BaseModel):
+    items: dict[str, int]  # inbox item -> the event of it now read
+
+
 class AutopilotBody(BaseModel):
     person: str
     on: bool
@@ -535,7 +650,7 @@ def create_web_app(world: World | None = None, *, worlds_dir: Path | None = None
             "my_decisions": sum(1 for c in cases.values() if c.status == RequestStatus.ESCALATED and decides(u, c)),
             # messages forwarded to the office and not answered yet (listed on the Approvals page)
             "my_forwarded": sum(1 for c in cases.values() if handles(u, c)),
-            "my_inbox": sum(1 for i in w.inbox.items.values() if i.to == u["id"] and i.reply is None),
+            "my_inbox": sum(1 for i in _feed(w, u, decides, handles) if i["unread"]),
             "published_version": cur.version if cur else None,
             "gini": ledger.gini(teaching, SEMESTER),
             "negotiations": {"agreed": sum(o.status == "agreed" for o in outcomes),
@@ -722,6 +837,25 @@ def create_web_app(world: World | None = None, *, worlds_dir: Path | None = None
             raise HTTPException(409 if body.note.strip() else 422, str(e)) from None
         return _case_detail(w, c)
 
+    @app.post("/api/cases/{case_id}/act")
+    def act(case_id: str, body: ActBody, u: dict = Depends(user)) -> dict:
+        """The coordinator acts on a forwarded message: ``text`` (by default the message itself) becomes a
+        request of theirs, solved and negotiated like any other; the sender is told which request it is."""
+        w = W()
+        c = w.orch.cases.get(case_id)
+        if c is None:
+            raise HTTPException(404)
+        if u["id"] != COORDINATOR:
+            raise HTTPException(403, "only the timetable office acts on forwarded messages")
+        if c.forwarded_to != "coordinator" or c.handled is not None:
+            raise HTTPException(409, "this message is not waiting for the timetable office")
+        r = w.intake.from_portal(u["id"], (body.text or c.request.raw_text).strip())
+        if r is None:
+            raise HTTPException(409, "duplicate request")
+        w.orch.act_on(case_id, u["id"], r)
+        w.submit(r)
+        return {"id": r.id, "case": _case_detail(w, c)}
+
     @app.post("/api/cases/{case_id}/withdraw")
     def withdraw(case_id: str, u: dict = Depends(user)) -> dict:
         """The sender takes a request back; everything it set in motion is undone."""
@@ -756,6 +890,16 @@ def create_web_app(world: World | None = None, *, worlds_dir: Path | None = None
         w = W()
         items = [i for i in w.inbox.items.values() if i.to == u["id"] or u["id"] == COORDINATOR]
         return [_inbox_item(w, i) for i in sorted(items, key=lambda i: -i.created)]
+
+    @app.get("/api/feed")
+    def feed(u: dict = Depends(user)) -> list[dict]:
+        """Everything addressed to this person: the one place they hear from the timetable office."""
+        return _feed(W(), u, decides, handles)
+
+    @app.post("/api/feed/seen")
+    def feed_seen(body: SeenBody, u: dict = Depends(user)) -> dict:
+        W().store.mark_seen(u["id"], body.items)
+        return {"ok": True}
 
     @app.post("/api/inbox/{item_id}/reply")
     def reply(item_id: str, body: ReplyBody, u: dict = Depends(user)) -> dict:
@@ -1131,6 +1275,49 @@ def create_web_app(world: World | None = None, *, worlds_dir: Path | None = None
     return app
 
 
+def _newest(paths: list[Path]) -> float:
+    """Latest modification time among the given files and everything under the given folders."""
+    times = [0.0]
+    for p in paths:
+        if p.is_dir():
+            times += [f.stat().st_mtime for f in p.rglob("*") if f.is_file()]
+        elif p.exists():
+            times.append(p.stat().st_mtime)
+    return max(times)
+
+
+def build_frontend(force: bool = False) -> None:
+    """Build frontend/dist with npm when it is missing or older than the sources (npm install first if needed)."""
+    import shutil
+    import subprocess
+    import sys
+
+    fe = ROOT / "frontend"
+    if not (fe / "package.json").exists():
+        return
+    built = fe / "dist" / "index.html"
+    sources = [fe / "src", fe / "public", fe / "index.html", fe / "package.json", fe / "package-lock.json",
+               fe / "vite.config.ts", fe / "tsconfig.json"]
+    if not force and built.exists() and built.stat().st_mtime >= _newest(sources):
+        return
+    npm = shutil.which("npm")
+    if npm is None:
+        print("nts-web: npm not found, cannot build the front end (install Node.js, or pass --no-build)"
+              + ("; serving the existing build" if built.exists() else "; only /api will be served"), file=sys.stderr)
+        return
+    # npm writes node_modules/.package-lock.json on every install: older than package-lock.json means stale packages
+    installed = fe / "node_modules" / ".package-lock.json"
+    lock = fe / "package-lock.json"
+    steps = []
+    if not installed.exists() or (lock.exists() and lock.stat().st_mtime > installed.stat().st_mtime):
+        steps.append([npm, "install"])
+    steps.append([npm, "run", "build"])
+    for cmd in steps:
+        print(f"nts-web: {' '.join(cmd[1:])} in frontend/ ...", flush=True)
+        if subprocess.run(cmd, cwd=fe).returncode != 0:
+            sys.exit(f"nts-web: 'npm {' '.join(cmd[1:])}' failed (fix the error above, or pass --no-build)")
+
+
 def run() -> None:
     import argparse
 
@@ -1140,7 +1327,14 @@ def run() -> None:
     ap.add_argument("--parser", choices=["offline", "gemini", "local"], help="NTS_PARSER")
     ap.add_argument("--test-data", type=int, metavar="N", nargs="?", const=20,
                     help="benchmark department, replaying N held-out test requests (default 20) instead of the demo history")
+    build = ap.add_mutually_exclusive_group()
+    build.add_argument("--no-build", action="store_true",
+                       help="do not build the front end at start-up (NTS_BUILD=0); serve frontend/dist as it is")
+    build.add_argument("--rebuild", action="store_true", help="rebuild the front end even if it looks up to date")
     args = ap.parse_args()
+    # the UI is built only when its sources changed since the last build (npm install too when packages changed)
+    if not args.no_build and os.environ.get("NTS_BUILD") != "0":
+        build_frontend(force=args.rebuild)
     if args.parser:
         os.environ["NTS_PARSER"] = args.parser
     if args.test_data is not None:
