@@ -42,7 +42,7 @@ from agents.policy import RETRIEVERS, Rule, make_retriever, tokens
 from agents.priority import JUSTIFICATION, ROLE_AUTHORITY, Weights
 from core.graph import add_conflict, build_graph
 from core.instance import Session
-from core.schemas import Placement, Request, RequestStatus, Tier
+from core.schemas import DAYS, Placement, Request, RequestStatus, Tier
 from evaluation.stats import mean
 from language.corpus import FULL_DAY, hour
 from language.intents import IntentOutput, Unresolved
@@ -92,13 +92,34 @@ def _constraint(w: World, c) -> dict:
             "source": c.source.model_dump(), "valid": c.valid.model_dump()}
 
 
-def _message(w: World, m: Message | dict) -> dict:
+def _case_weeks(case: Case | None) -> list[int] | None:
+    """The teaching weeks a request is about; None when it holds every week (or nothing says)."""
+    if case is None or not case.constraints or any(c.when.weeks is None for c in case.constraints):
+        return None
+    return sorted({n for c in case.constraints for n in c.when.weeks})
+
+
+def _date_of(w: World, week: int, day: str) -> date:
+    start = date.fromisoformat(w.semester.state.semester_start)
+    return start - timedelta(days=start.weekday()) + timedelta(weeks=week - 1, days=DAYS.index(day))
+
+
+def _dated(w: World, p: dict, weeks: list[int] | None) -> dict:
+    """When a placement first happens: its date in the request's (first) week, and how many weeks it covers."""
+    if not weeks or p["day"] not in DAYS:
+        return p
+    return p | {"date": _date_of(w, weeks[0], p["day"]).isoformat(), "weeks": len(weeks), "week": weeks[0]}
+
+
+def _message(w: World, m: Message | dict, case: Case | None = None) -> dict:
     m = m if isinstance(m, dict) else m.model_dump()
+    weeks = _case_weeks(case)
     return {**m, "to_name": w.name_of(m["to"]), "text": plain(m["text"]),
             "facts": [{**f, "text": plain(f["text"])} for f in m.get("facts", [])],
             "claims": [{**c, "text": plain(c["text"])} for c in m.get("claims", [])],
             "offers": [{**o, "placements": [{"session": s, "session_name": session_name(w.instance, s),
-                                              **_placement(w, Placement(**p))} for s, p in o["placements"].items()]}
+                                              **_dated(w, _placement(w, Placement(**p)), weeks)}
+                                             for s, p in o["placements"].items()]}
                        for o in m["offers"]]}
 
 
@@ -143,7 +164,7 @@ def _case_detail(w: World, case: Case) -> dict:
             "status": o.status, "step": o.step, "rounds": o.rounds, "relaxed": o.relaxed,
             "mus_log": [[_constraint(w, all_cons[i]) if i in all_cons else {"id": i, "text": i} for i in mus]
                         for mus in o.mus_log],
-            "messages": [_message(w, m) for m in o.messages],
+            "messages": [_message(w, m, case) for m in o.messages],
             "replies": [r.model_dump(exclude_none=True) for r in o.replies],
             "concessions": [e.model_dump() | {"name": w.name_of(e.stakeholder)} for e in o.concessions],
             "notices": {k: [plain(t) for t in v] for k, v in o.notices.items()},
@@ -204,7 +225,7 @@ def _inbox_item(w: World, i: InboxItem) -> dict:
     return {"id": i.id, "case": i.case_id, "to": i.to, "to_name": w.name_of(i.to),
             "created": datetime.fromtimestamp(i.created, UTC).isoformat(),
             "deadline": datetime.fromtimestamp(i.created + w.deadline, UTC).isoformat(),
-            "message": _message(w, i.message),
+            "message": _message(w, i.message, w.orch.cases.get(i.case_id) if i.case_id else None),
             "reply": i.reply.model_dump(exclude_none=True) if i.reply else None,
             "answered_by": i.answered_by}
 

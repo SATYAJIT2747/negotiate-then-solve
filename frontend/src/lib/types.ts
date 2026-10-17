@@ -90,7 +90,8 @@ export interface OfferView {
   cost: number;
   moved: number;
   verified: boolean;
-  placements: (PlacementView & { session: string; session_name: string })[];
+  /** ``date`` (ISO) is the first day it happens, in week ``week``; ``weeks`` is how many weeks it covers. */
+  placements: (PlacementView & { session: string; session_name: string; date?: string; week?: number; weeks?: number })[];
 }
 
 export interface Claim {

@@ -136,8 +136,10 @@ export function OfferCard({
             <p className="text-[13px] font-medium">{p.session_name.replace(/^the /, "")}</p>
             <p className="mt-0.5 flex flex-wrap items-center gap-x-3 text-[12.5px] text-ink-2">
               <span className="flex items-center gap-1">
-                <Clock size={12} className="text-ink-3" /> {p.day} {p.time}
+                <Clock size={12} className="text-ink-3" /> {p.day}
+                {p.date && ` ${new Date(`${p.date}T00:00:00`).toLocaleDateString(undefined, { day: "numeric", month: "short" })}`} {p.time}
               </span>
+              {p.date && p.weeks && p.weeks > 1 && <span className="text-ink-3">from week {p.week}, {p.weeks} weeks</span>}
               <span className="flex items-center gap-1">
                 <MapPin size={12} className="text-ink-3" /> {p.room}
               </span>
