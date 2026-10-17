@@ -1,6 +1,6 @@
 import clsx from "clsx";
 import { AnimatePresence, motion } from "framer-motion";
-import { ArrowRight, BellRing, Bot, CalendarClock, CalendarDays, Check, CheckCheck, Clock3, FileText, Inbox as InboxIcon, MessageSquareDashed, MessagesSquare, Undo2, X } from "lucide-react";
+import { ArrowRight, BellRing, Bot, CalendarClock, CalendarDays, Check, CheckCheck, Clock3, FileText, Inbox as InboxIcon, MessageSquareDashed, MessagesSquare, ShieldAlert, Undo2, X } from "lucide-react";
 import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { ClarifyForm } from "../components/Clarify";
@@ -15,8 +15,8 @@ import type { FeedItem, InboxItem } from "../lib/types";
 import { useStudySession } from "../components/StudyBanner";
 import { RatingForm } from "../components/Rating";
 
-const KIND_ICON = { negotiation: MessagesSquare, change: CalendarClock, request: FileText, action: BellRing } as const;
-const KIND_LABEL = { negotiation: "Negotiation", change: "Timetable change", request: "Your request", action: "Waiting on you" } as const;
+const KIND_ICON = { negotiation: MessagesSquare, change: CalendarClock, request: FileText, action: BellRing, alert: ShieldAlert } as const;
+const KIND_LABEL = { negotiation: "Negotiation", change: "Timetable change", request: "Your request", action: "Waiting on you", alert: "Refused request" } as const;
 const ACTION_LINK = { approve: ["/approvals", "Review on Approvals"], reply: ["/approvals", "Reply on Approvals"], decide: [null, "Decide"] } as const;
 
 export default function Inbox() {

@@ -25,7 +25,14 @@ export default function Home() {
   const [week, setWeek] = useState<number | null>(null); // null until the calendar is in
   const [scope, setScope] = useState<"mine" | "all">("mine"); // this person's classes, or every teacher's
   useEffect(() => {
-    if (cal && week === null) setWeek(cal.current_week);
+    if (!cal || week !== null) return;
+    // at the weekend this week's classes are all over, so open on the next one (nothing can move into the past)
+    const w = cal.weeks[cal.current_week - 1];
+    const friday = w ? new Date(`${w.monday}T00:00:00`) : null;
+    friday?.setDate(friday.getDate() + cal.days.length - 1);
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    setWeek(friday && friday < today && cal.current_week < cal.weeks.length ? cal.current_week + 1 : cal.current_week);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [cal]);
   const { data: tt } = useApi(() => (week === null ? Promise.resolve(null) : api.timetable({ week })), [week], 5000);
@@ -81,6 +88,7 @@ export default function Home() {
     today.setHours(0, 0, 0, 0);
     return at < today;
   };
+  const weekOver = !!cal && cal.days.every(dayPassed);
   const slotState = (day: string, slot: number): "free" | "blocked" | null => {
     if (draft?.kind !== "move" || !inst) return null;
     const e = draft.cls;
@@ -218,7 +226,9 @@ export default function Home() {
         </Card>
         <p className="text-[12px] text-ink-3">
           {draft?.kind === "move"
-            ? "Click a green slot for the new time."
+            ? weekOver
+              ? `Week ${week} is over, so there is no free slot left in it: go to a later week to pick the new time.`
+              : "Click a green slot for the new time."
             : draft?.kind === "swap"
               ? "Click the colleague's class to swap with. Classes that cannot be swapped are faded."
               : "Click a class to cancel, reschedule or swap it."}

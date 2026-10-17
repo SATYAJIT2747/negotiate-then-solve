@@ -140,7 +140,7 @@ export interface FeedItem {
   id: string;
   /** The last event of it; read once the person has opened it at this event. */
   n: number;
-  kind: "negotiation" | "change" | "request" | "action";
+  kind: "negotiation" | "change" | "request" | "action" | "alert";
   case: string | null;
   title: string;
   text: string;

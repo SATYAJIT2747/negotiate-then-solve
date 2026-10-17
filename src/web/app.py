@@ -304,6 +304,11 @@ def _feed(w: World, u: dict, decides, handles) -> list[dict]:
             elif status in _REQUEST_TITLE and case.reply:
                 add(f"req:{case.id}", n, "request", case, _REQUEST_TITLE[status], case.reply, at,
                     sender=(case.decision or {}).get("by") or COORDINATOR, needs_you=status == S.CLARIFICATION)
+        # a refused request's reply says the coordinator has been informed: this is that notice
+        if me == COORDINATOR and not own and case.status == S.REFUSED:
+            add(f"refused:{case.id}", n, "alert", case, "A request was refused",
+                f"Stopped before it reached the timetable: {case.parse.refusal}." if case.parse and case.parse.refusal
+                else "Stopped before it reached the timetable.", at, sender=case.request.sender_id)
         # waiting on me
         if me == COORDINATOR and case.status == S.AWAITING_APPROVAL:
             add(f"approve:{case.id}", n, "action", case, "A change is waiting for your approval", case.request.raw_text,
