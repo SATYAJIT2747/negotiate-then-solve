@@ -287,14 +287,18 @@ def intents_from(instance: Instance, request: Request, targets: list[Constraint]
 
 
 def label_placements(out: IntentOutput, text: str) -> IntentOutput:
-    """``out`` with each move labelled by the project's rule (``lexicon.placement_is_hard``): the corpus
-    labels a plain request for a time a requirement, and the intents follow the brief's tiers instead."""
+    """``out`` with each placement labelled by the project's rule (``lexicon.placement_is_hard``): the corpus
+    labels a plain request for a time a requirement, and the intents follow the brief's tiers instead. A
+    placement is a move, or an ``only`` at a start time ("one of my classes into the 1 pm slot")."""
     from .lexicon import placement_is_hard
 
-    if not any(isinstance(i, Move) for i in out.intents):
+    def placement(i) -> bool:
+        return isinstance(i, Move) or (isinstance(i, Only) and bool(i.time.at))
+
+    if not any(placement(i) for i in out.intents):
         return out
     hard = placement_is_hard(text)
-    return out.model_copy(update={"intents": [i.model_copy(update={"hard": hard}) if isinstance(i, Move) else i
+    return out.model_copy(update={"intents": [i.model_copy(update={"hard": hard}) if placement(i) else i
                                               for i in out.intents]})
 
 

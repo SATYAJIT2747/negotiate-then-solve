@@ -1,8 +1,8 @@
 {
  "schema": 3,
- "recipe": "intents-v3",
- "recipe_sha": "5fcf4bae777fe91b",
- "code": "7010fc0+dirty",
+ "recipe": "intents-v5",
+ "recipe_sha": "21e1f64ef47cb7a3",
+ "code": "f3dcca7+dirty",
  "sources": {
   "base": {
    "test": 417,
@@ -11,36 +11,44 @@
   },
   "generators": {
    "clubs": 40,
+   "dated": 40,
+   "difficulty": 40,
    "firmness": 80,
    "moves": 40,
    "multi": 40,
    "periods": 40,
-   "train": 567,
+   "reasons": 40,
+   "terms": 40,
+   "train": 890,
    "vague": 40,
-   "val": 63
+   "val": 100
   },
   "mined": {
    "train": 122
   },
   "human": {},
   "augment": {
-   "train": 523,
+   "train": 621,
    "changed meaning": 2,
-   "unchanged": 35
+   "unchanged": 37
   }
  },
  "fingerprints": {
-  "train": "81946e548441ef9b",
-  "val": "528480d762779f45",
-  "test": "6efe890a35a784b2",
+  "train": "84a28925269d8a8f",
+  "val": "f0a9918d1d2324ef",
+  "test": "e402d9c4724c5843",
   "firmness": "a68e5ab1c9a82b70",
   "moves": "576612036711bbb3",
   "periods": "08eaa209d75b6176",
   "multi": "45d1d77018f8a5f3",
   "clubs": "ad01d315a87517c0",
   "vague": "267eb33b7da3226d",
-  "test-typo": "93a09b3783a2a3ac",
-  "test-noisy": "93833bea07eb39d9"
+  "reasons": "eb00edeef7a9a6e8",
+  "terms": "68092e7ede1b580c",
+  "difficulty": "de13859ae329253f",
+  "dated": "e435af0e0bcb4744",
+  "test-typo": "18574d862900dc0f",
+  "test-noisy": "415fd3dd7dceea9a"
  },
  "gates": {
   "schema": 0,
@@ -60,11 +68,11 @@
  },
  "report": {
   "train": {
-   "rows": 2297,
+   "rows": 2718,
    "origin": {
-    "augment": 523,
+    "augment": 621,
     "base": 1087,
-    "generators": 567,
+    "generators": 890,
     "mined": 120
    },
    "kind": {
@@ -73,6 +81,8 @@
     "clash_report": 138,
     "club_booking": 103,
     "club_more": 104,
+    "dated": 102,
+    "difficulty": 112,
     "extra_class": 84,
     "firmness": 107,
     "load_limit": 61,
@@ -82,9 +92,11 @@
     "out_of_scope": 58,
     "policy_question": 59,
     "preference": 226,
+    "reason_firmness": 105,
     "relative_span": 119,
     "room_issue": 100,
     "swap": 72,
+    "term_span": 102,
     "unavailability": 150,
     "unavailable_relative": 66,
     "vague": 104,
@@ -94,29 +106,29 @@
    "action": {
     "answer": 59,
     "clarify": 173,
-    "compile": 1805,
+    "compile": 2226,
     "investigate": 138,
     "out_of_scope": 58,
     "withdraw": 64
    },
    "firmness": {
-    "hard": 350,
-    "none": 1345,
-    "soft": 602
+    "hard": 450,
+    "none": 1525,
+    "soft": 743
    },
    "augment": {
-    "casual": 136,
-    "noisy": 140,
-    "none": 1774,
-    "shorthand": 104,
-    "typo": 143
+    "casual": 158,
+    "noisy": 165,
+    "none": 2097,
+    "shorthand": 130,
+    "typo": 168
    }
   },
   "val": {
-   "rows": 210,
+   "rows": 247,
    "origin": {
     "base": 147,
-    "generators": 63
+    "generators": 100
    },
    "kind": {
     "avoid_between": 9,
@@ -124,6 +136,8 @@
     "clash_report": 11,
     "club_booking": 9,
     "club_more": 9,
+    "dated": 15,
+    "difficulty": 6,
     "extra_class": 2,
     "firmness": 8,
     "load_limit": 6,
@@ -133,9 +147,11 @@
     "out_of_scope": 2,
     "policy_question": 3,
     "preference": 28,
+    "reason_firmness": 9,
     "relative_span": 5,
     "room_issue": 14,
     "swap": 5,
+    "term_span": 7,
     "unavailability": 27,
     "unavailable_relative": 9,
     "vague": 7,
@@ -145,18 +161,18 @@
    "action": {
     "answer": 3,
     "clarify": 12,
-    "compile": 174,
+    "compile": 211,
     "investigate": 11,
     "out_of_scope": 2,
     "withdraw": 8
    },
    "firmness": {
-    "hard": 19,
-    "none": 124,
-    "soft": 67
+    "hard": 25,
+    "none": 143,
+    "soft": 79
    },
    "augment": {
-    "none": 210
+    "none": 247
    }
   },
   "test": {
@@ -190,9 +206,9 @@
     "withdraw": 14
    },
    "firmness": {
-    "hard": 34,
+    "hard": 30,
     "none": 310,
-    "soft": 73
+    "soft": 77
    },
    "augment": {
     "none": 417
@@ -310,6 +326,81 @@
     "none": 40
    }
   },
+  "reasons": {
+   "rows": 40,
+   "origin": {
+    "generators": 40
+   },
+   "kind": {
+    "reason_firmness": 40
+   },
+   "action": {
+    "compile": 40
+   },
+   "firmness": {
+    "hard": 20,
+    "soft": 20
+   },
+   "augment": {
+    "none": 40
+   }
+  },
+  "terms": {
+   "rows": 40,
+   "origin": {
+    "generators": 40
+   },
+   "kind": {
+    "term_span": 40
+   },
+   "action": {
+    "compile": 40
+   },
+   "firmness": {
+    "none": 20,
+    "soft": 20
+   },
+   "augment": {
+    "none": 40
+   }
+  },
+  "difficulty": {
+   "rows": 40,
+   "origin": {
+    "generators": 40
+   },
+   "kind": {
+    "difficulty": 40
+   },
+   "action": {
+    "compile": 40
+   },
+   "firmness": {
+    "hard": 20,
+    "soft": 20
+   },
+   "augment": {
+    "none": 40
+   }
+  },
+  "dated": {
+   "rows": 40,
+   "origin": {
+    "generators": 40
+   },
+   "kind": {
+    "dated": 40
+   },
+   "action": {
+    "compile": 40
+   },
+   "firmness": {
+    "none": 40
+   },
+   "augment": {
+    "none": 40
+   }
+  },
   "test-typo": {
    "rows": 417,
    "origin": {
@@ -341,9 +432,9 @@
     "withdraw": 14
    },
    "firmness": {
-    "hard": 34,
+    "hard": 30,
     "none": 310,
-    "soft": 73
+    "soft": 77
    },
    "augment": {
     "typo": 417
@@ -380,9 +471,9 @@
     "withdraw": 14
    },
    "firmness": {
-    "hard": 34,
+    "hard": 30,
     "none": 310,
-    "soft": 73
+    "soft": 77
    },
    "augment": {
     "noisy": 417

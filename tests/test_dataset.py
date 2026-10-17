@@ -15,6 +15,7 @@ from training import quality
 from training.dataset import build, fingerprint, load_recipe
 
 ROOT = Path(__file__).resolve().parents[1]
+LATEST = ROOT / "data" / "recipes" / "intents-v5.toml"  # the newest recipe: its frozen test split is the current one
 
 
 @pytest.fixture(scope="module")
@@ -71,7 +72,7 @@ def test_adding_a_generator_leaves_the_others_rows_alone(instance):
 
 @pytest.fixture(scope="module")
 def built():
-    recipe = load_recipe(ROOT / "data" / "recipes" / "intents.toml")
+    recipe = load_recipe(LATEST)
     recipe["generators"] |= {"per_generator": 10, "held_per_generator": 4}
     recipe["augment"]["fraction"] = 0.1
     return build(recipe)
@@ -81,7 +82,7 @@ def test_the_build_passes_every_gate_and_keeps_the_test_split(built):
     splits, result = built
     assert not any(result["failures"].values()), quality.dump_failures(result["failures"])
     m = result["manifest"]
-    assert m["fingerprints"]["test"] == load_recipe(ROOT / "data" / "recipes" / "intents.toml")["frozen"]["test"]
+    assert m["fingerprints"]["test"] == load_recipe(LATEST)["frozen"]["test"]
     assert {"firmness", "moves", "periods", "multi", "clubs", "test-noisy"} <= set(splits)
     assert all(r["schema"] == SCHEMA_VERSION for rows in splits.values() for r in rows)
     twins = [r for r in splits["train"] if r.get("origin") == "augment"]
@@ -89,7 +90,7 @@ def test_the_build_passes_every_gate_and_keeps_the_test_split(built):
 
 
 def test_a_changed_test_split_stops_the_build():
-    recipe = load_recipe(ROOT / "data" / "recipes" / "intents.toml")
+    recipe = load_recipe(LATEST)
     recipe["frozen"]["test"] = "0" * 16
     recipe["generators"] |= {"per_generator": 2, "held_per_generator": 1, "names": ["firmness"]}
     recipe.pop("augment")

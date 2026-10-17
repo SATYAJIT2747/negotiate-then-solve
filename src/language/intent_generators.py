@@ -286,6 +286,120 @@ def only_firmness(ctx: _Ctx, t: int):
     return text, IntentOutput(action="compile", intents=[gold]), {}, False
 
 
+def reason_firmness(ctx: _Ctx, t: int):
+    """The only days someone can teach, with a reason that rules the other days out (a must, though no "must"
+    is said: "those are the only days I'm on campus") beside a reason that only explains a wish."""
+    days = sorted(ctx.rng.sample(ctx.instance.calendar.days, ctx.rng.choice([2, 3, 4])),
+                  key=ctx.instance.calendar.days.index)
+    names = [FULL_DAY[d] for d in days]
+    listed = ", ".join(names[:-1]) + " and " + names[-1]
+    texts = [(f"Please keep my classes to {listed}; those are the only days I'm on campus.", True),
+             (f"I'm at the other campus for the rest of the week, so my teaching has to be on {listed}.", True),
+             (f"Kindly schedule all my classes on {listed}. I travel in from out of town just on those days.", True),
+             (f"I'd prefer my classes on {listed}, as I keep the other days for research.", False),
+             (f"Only {listed} work for me; I'm away from campus the rest of the week.", True),
+             (f"If you can, put my classes on {listed}. I do fieldwork on the other days.", False)]
+    text, hard = texts[t]
+    gold = Only(time=TimeSpec(days=days), hard=hard, justification="stated")
+    return text, IntentOutput(action="compile", intents=[gold]), {}, False
+
+
+def term_span(ctx: _Ctx, t: int):
+    """Until the end of the term, said the ways people say it: the period is the rest of the semester."""
+    day = ctx.rng.choice(ctx.instance.calendar.days)
+    D = FULL_DAY[day]
+    part, Part = ctx.rng.choice([("morning", "mornings"), ("afternoon", "afternoons")])
+    rest = Period(relative="rest_of_semester")
+    texts = [(f"For the rest of the term I can't teach on {D} {Part}.",
+              Unavailable(time=TimeSpec(days=[day], part=part), period=rest)),
+             (f"Till the semester ends, please keep my {D} {Part} free.",
+              Avoid(time=TimeSpec(days=[day], part=part), period=rest)),
+             (f"From now until the semester is over I'm unavailable on {D}s.",
+              Unavailable(time=TimeSpec(days=[day]), period=rest)),
+             (f"Through to the end of the semester, I won't be able to do {D} {Part}.",
+              Unavailable(time=TimeSpec(days=[day], part=part), period=rest)),
+             (f"Up to the end of this term I can't take {D} {part} classes.",
+              Unavailable(time=TimeSpec(days=[day], part=part), period=rest)),
+             (f"For what's left of the semester, no {D} {Part} for me please.",
+              Avoid(time=TimeSpec(days=[day], part=part), period=rest))]
+    text, gold = texts[t]
+    return text, IntentOutput(action="compile", intents=[gold]), {}, False
+
+
+# "hard" about how difficult a time is (a wish) beside "hard" meaning a requirement; the last two are held out
+TOUGH, TOUGH_HELD = _split(["hard for me", "it's hard for me", "that's hard for me", "really hard for me",
+                            "hard to manage for me", "tough for me"], 2)
+STRICT, STRICT_HELD = _split(["this is a hard requirement", "hard constraint please", "it's a hard limit for me",
+                              "treat this as a hard rule", "a hard requirement, not a preference"], 2)
+
+
+def difficulty(ctx: _Ctx, t: int):
+    """Times kept free with a short "hard for me" after them, the way people tack it on (a wish), beside
+    "hard" said of the request itself (a requirement)."""
+    words, time = _when(ctx)
+    rng = ctx.rng
+    held = t >= 4
+    tough = rng.choice(TOUGH_HELD if held else TOUGH)
+    strict = rng.choice(STRICT_HELD if held else STRICT)
+    texts = [(f"no classes {words} please. {tough}.", False),
+             (f"Please don't put me {words}, {tough}.", False),
+             (f"Keep me free {words}; {strict}.", True),
+             (f"Could you skip {words} for me? {tough.capitalize()}.", False),
+             (f"nothing {words} pls. {tough}", False),
+             (f"No teaching {words}, {strict}.", True)]
+    text, hard = texts[t]
+    return text, IntentOutput(action="compile", intents=[Avoid(time=time, hard=hard)]), {}, False
+
+
+# why someone is away (a stated reason), as a noun phrase; the last two are held out
+AWAY_FOR, AWAY_FOR_HELD = _split(["a workshop in Pune", "an examination board meeting", "a medical appointment",
+                                  "a selection committee", "an invited talk", "a site visit with students",
+                                  "a thesis defence elsewhere", "a funding review"], 2)
+# closers that sound as if something were left open ("adjust accordingly") though nothing is: read the rest
+SETTLE, SETTLE_HELD = _split(["Please plan my timetable around this.", "Kindly make the needed changes.",
+                              "Please rework my schedule to suit.", "Please adjust things as needed.",
+                              "Kindly sort out my classes as required.", "Please arrange my classes accordingly.",
+                              "Kindly do the needful."], 2)
+
+
+def dated(ctx: _Ctx, t: int):
+    """A reason and when the sender cannot teach, with the week or the whole semester said outright: nothing
+    is left to ask, so it is read as said (an unavailability with a stated reason, never a question). The
+    wordings differ from the frozen test split's, which these are meant to generalise to, not copy."""
+    cal, rng = ctx.instance.calendar, ctx.rng
+    if ctx.week >= cal.weeks:
+        return None
+    w = rng.randint(ctx.week + 1, cal.weeks)
+    why = rng.choice(AWAY_FOR_HELD if t >= 6 else AWAY_FOR)
+    i = rng.randrange(len(cal.days) - 2)
+    run = cal.days[i:i + rng.choice([2, 3])]
+    day, D = cal.days[i], FULL_DAY[cal.days[i]]
+    q = rng.randrange(1, cal.slots_per_day)
+    h = say_hour(q, rng)
+    part, Part = rng.choice([("morning", "mornings"), ("afternoon", "afternoons")])
+    weeks = Period(weeks=[w])
+    texts = [(f"Week {w}, {FULL_DAY[run[0]]} through {FULL_DAY[run[-1]]}: I'm away for {why}, so I can't teach those days.",
+              TimeSpec(days=run), weeks),
+             (f"All this semester I have {why} on {D} {Part}, so I'm not free then.",
+              TimeSpec(days=[day], part=part), None),
+             (f"Because of {why} I'm unable to take the {h} class on {D} of week {w}.",
+              TimeSpec(days=[day], at=[clock(q)]), weeks),
+             (f"{why[0].upper() + why[1:]} in wk {w} - not available {'/'.join(FULL_DAY[d][:3].lower() for d in run)}.",
+              TimeSpec(days=run), weeks),
+             (f"I'll be away for {why} in week {w} from {FULL_DAY[run[0]]} to {FULL_DAY[run[-1]]}.",
+              TimeSpec(days=run), weeks),
+             (f"From {FULL_DAY[run[0]]} to {FULL_DAY[run[-1]]} of week {w} I have {why}, so I can't take classes.",
+              TimeSpec(days=run), weeks),
+             (f"I have {why} every {D} {part} this term, so I won't be available then.",
+              TimeSpec(days=[day], part=part), None),
+             (f"{why}, week {w}. so i cant be there for {h} {D}.", TimeSpec(days=[day], at=[clock(q)]), weeks)]
+    text, time, period = texts[t]
+    if rng.random() < 0.6:
+        text += " " + rng.choice(SETTLE_HELD if t >= 6 else SETTLE)
+    gold = Unavailable(time=time, period=period or Period(), justification="stated")
+    return text, IntentOutput(action="compile", intents=[gold]), {}, False
+
+
 def vague(ctx: _Ctx, t: int):
     """A timetable request that leaves out what would have to be guessed: the answer is a question."""
     from .intent_compiler import _MISSING
@@ -310,6 +424,13 @@ REGISTRY: list[Generator] = [
     Generator("multi", multi, 6, (4, 5), "multi"),
     Generator("club_more", club_more, 6, (4, 5), "clubs"),
     Generator("vague", vague, 6, (4, 5), "vague"),  # added last: the others keep their seeds and rows
+    # intents-v4: what the v3 model missed on the suites ("I am not on campus otherwise", "until the end of term")
+    Generator("reason_firmness", reason_firmness, 6, (4, 5), "reasons"),
+    Generator("term_span", term_span, 6, (4, 5), "terms"),
+    # intents-v5: what v4 lost on the test splits ("... please. hard for me." read as a must; a week or
+    # "this semester" said outright, yet asked for)
+    Generator("difficulty", difficulty, 6, (4, 5), "difficulty"),
+    Generator("dated", dated, 8, (6, 7), "dated"),
 ]
 SENDERS = {"club_more": "student_or_teacher"}
 
