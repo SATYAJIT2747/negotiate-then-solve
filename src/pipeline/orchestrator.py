@@ -67,7 +67,7 @@ from core.validator import validate_constraint, verify_timetable
 from language.corpus import FULL_DAY, ExpectedAction, RequestType, hour
 from language.intents import Cancel as CancelIntent
 from language.intents import ClubBooking as ClubIntent
-from language.intents import ClubRef, Compiled
+from language.intents import ClubRef, Compiled, IntentOutput, compile_intents
 from language.intents import ExtraClass as ExtraIntent
 from language.intents import Swap as SwapIntent
 from language.parsing import ParseResult
@@ -102,6 +102,7 @@ class Case:
     handled: dict | None = None  # the coordinator's answer to a message forwarded to them
     extra: dict | None = None  # an extra class: which class and week, and where it is held once found
     compiled: Compiled | None = None  # the resolved intents, when the parser reads intents
+    form: IntentOutput | None = None  # the request as made with clicks (a form): read without a parser
 
     def intents(self, kind: type) -> list:
         """The parsed intents of type ``kind`` (none for a parser without intents)."""
@@ -221,6 +222,13 @@ class Orchestrator:
 
     def _parse(self, case: Case) -> ParseResult:
         r = case.request
+        if case.form is not None:  # made with clicks: the intents are given, nothing to read or route
+            case.route = "form+intents"
+            base = self.store.current_version()
+            week = self.current_week() if self.current_week else None
+            case.compiled = compile_intents(self.instance, r, case.form,
+                                            timetable=_regular(base.assignment) if base else {}, current_week=week)
+            return case.compiled.result
         if self.system_one is not None:
             d = self.system_one.decide(r)
             # plain Python values: numpy scalars from System One cannot be sent as JSON
@@ -252,8 +260,11 @@ class Orchestrator:
                 return case.compiled.result
         return parser.parse(case.request)
 
-    def submit(self, request: Request) -> Case:
-        case = Case(request=request)
+    def submit(self, request: Request, form: IntentOutput | None = None) -> Case:
+        """Take a request through the pipeline. ``form``: the request made with clicks (cancel, move or
+        swap a class), its intents given instead of read from ``request.raw_text``, which is then only the
+        request in words for the people who see it."""
+        case = Case(request=request, form=form)
         self.cases[case.id] = case
         if self.store.request(request.id) is None:
             self.store.add_request(request)
@@ -734,11 +745,21 @@ class Orchestrator:
         if outcome.status == "feasible" and moved and not cancelled:
             assignment, chosen = self._let_sender_choose(case, assignment, baseline, week, neg)
             moved = moved_sessions(baseline or {}, assignment)
-        if not moved and not cancelled and not outcome.notices.get(case.request.sender_id):
+        unmet = outcome.notices.get(case.request.sender_id)
+        if not moved and not cancelled and not unmet:
             # the timetable already meets it: nothing to approve or publish, but it stays in force
             case.reply = ("Your request already fits the timetable, so nothing needed to move. "
                           "It is recorded, and later changes will keep to it.")
             self._advance(case, S.PUBLISHED, version=None, moved=[])
+            return case
+        if not moved and not cancelled:
+            # a wish the solver left unmet rather than move other classes: nothing changes, so there is
+            # nothing for the coordinator to approve; the wish stays in force for later changes
+            wanted = " ".join(n.removeprefix("Your preference could not be fully met: ") for n in unmet)
+            case.reply = (f"Nothing was changed. You asked: {wanted} It could not be met without moving other "
+                          "classes, so it stays recorded and later changes will try to meet it. If it has to "
+                          "happen, withdraw this and send it again as a requirement.")
+            self._advance(case, S.PUBLISHED, version=None, moved=[], unmet=True)
             return case
         case.proposal = self.store.propose_version(assignment, case.id, week=week, cancelled=sorted(cancelled))
         case.reply = ("Your request can be met. The change is waiting for the coordinator's approval."

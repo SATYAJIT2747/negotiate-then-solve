@@ -18,12 +18,17 @@ import { useStudySession } from "../components/StudyBanner";
 type Tab = "summary" | "negotiation" | "details";
 const OLD_TABS: Record<string, Tab> = { overview: "summary", change: "summary", parse: "details", policy: "details", trace: "details" };
 
-export default function CaseDetail() {
-  const { id = "" } = useParams();
+/** A request in full: lifecycle, reply, negotiation, parse, policy and solver. ``embedded``: shown in a
+ * panel beside its conversation (the requests chat), so without the back link and the title block, and
+ * with the tab kept locally instead of in the address. */
+export default function CaseDetail({ id: given, embedded = false }: { id?: string; embedded?: boolean } = {}) {
+  const { id: routed = "" } = useParams();
+  const id = given ?? routed;
   const [params, setParams] = useSearchParams();
-  const raw = params.get("tab") ?? "summary";
+  const [localTab, setLocalTab] = useState<Tab>("summary");
+  const raw = embedded ? localTab : (params.get("tab") ?? "summary");
   const tab: Tab = OLD_TABS[raw] ?? (raw as Tab);
-  const setTab = (t: Tab) => setParams(t === "summary" ? {} : { tab: t }, { replace: true });
+  const setTab = (t: Tab) => (embedded ? setLocalTab(t) : setParams(t === "summary" ? {} : { tab: t }, { replace: true }));
   const { data: c, error, refresh } = useApi(() => api.case(id), [id], 1500);
   const [toast, setToast] = useState<string | null>(null);
 
@@ -39,6 +44,8 @@ export default function CaseDetail() {
   const msgs = c.outcome?.messages ?? [];
   return (
     <>
+      {!embedded && (
+      <>
       <Link to="/requests" className="mb-4 inline-flex items-center gap-1.5 text-[13px] text-ink-3 hover:text-ink">
         <ArrowLeft size={14} /> Requests
       </Link>
@@ -68,6 +75,8 @@ export default function CaseDetail() {
           <StatusBadge status={c.status} live={c.running} />
         </div>
       </div>
+      </>
+      )}
 
       <Card className="mb-6 px-5 py-4">
         <Lifecycle events={c.events} status={c.status} live={c.running} />
