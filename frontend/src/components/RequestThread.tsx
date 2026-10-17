@@ -1,10 +1,10 @@
 import clsx from "clsx";
-import { Check, Clock3, HelpCircle, Undo2, X } from "lucide-react";
+import { ArrowRight, Check, Clock3, HelpCircle, Undo2, X } from "lucide-react";
 import { useState } from "react";
 import { api } from "../lib/api";
 import { useAuth } from "../lib/auth";
 import { ago, EVENT_LABEL } from "../lib/meta";
-import type { CaseDetail, EventRow, InboxItem } from "../lib/types";
+import type { CaseDetail, DiffRow, EventRow, InboxItem } from "../lib/types";
 import { OfferCard } from "./Negotiation";
 import { Button, LiveDot } from "./ui";
 
@@ -31,6 +31,7 @@ const SHOWN = new Set([
 const VERDICT: Record<string, string> = { allowed: "allowed", needs_approval: "needs approval", forbidden: "not allowed" };
 
 function stepText(e: EventRow, c: CaseDetail): string {
+  if (e.kind === "published" && e.unmet) return "Nothing changed";
   if (e.kind === "policy_checked") {
     const v = (e.verdict as string | undefined) ?? c.policy?.verdict;
     return v && VERDICT[v] ? `Rules checked: ${VERDICT[v]}` : EVENT_LABEL[e.kind];
@@ -107,9 +108,52 @@ export function RequestThread({ c, onChanged }: { c: CaseDetail; onChanged: () =
         <Options key={i.id} item={i} onDone={onChanged} />
       ))}
 
+      <Change c={c} me={user?.id} />
+
       <div className="flex items-center gap-2 pt-1">
         {c.can_withdraw && <Withdraw id={c.id} onDone={onChanged} />}
       </div>
+    </div>
+  );
+}
+
+/** The change a request makes to the timetable, as times: each class before and after, the weeks it is
+ * for, and how far it has got. Shown in the conversation, since a change for one week (or several) does
+ * not fit on a one-week timetable. */
+function Change({ c, me }: { c: CaseDetail; me?: string }) {
+  const rows = c.proposal?.diff ?? [];
+  if (!rows.length || ["denied", "refused", "withdrawn"].includes(c.status)) return null;
+  const state =
+    c.status === "published"
+      ? `In the timetable · version ${c.proposal!.version}`
+      : c.status === "awaiting_approval"
+        ? "Waiting for the coordinator's approval"
+        : c.status === "escalated"
+          ? "Waiting for a decision"
+          : "Proposed";
+  const where = (p: NonNullable<DiffRow["before"]>) => `${p.day} ${p.time} · ${p.room}`;
+  return (
+    <div className="max-w-[92%] rounded-lg border border-line">
+      <div className="flex items-baseline justify-between gap-3 border-b border-line px-3 py-2">
+        <p className="text-[12.5px] font-medium">Requested change</p>
+        <p className="text-[11.5px] text-ink-3">{c.proposal!.week ? `Week ${c.proposal!.week} only` : "Every week"}</p>
+      </div>
+      <ul className="divide-y divide-line/60">
+        {rows.map((r) => (
+          <li key={r.session} className="px-3 py-2">
+            <p className="truncate text-[13px] font-medium">
+              {r.session_name.replace(/^(the|my) /, "").replace(/\s*\([A-Z]-[\w-]+\)$/, "")}
+              {r.faculty && r.faculty !== me && <span className="font-normal text-ink-3"> · {r.faculty_name}</span>}
+            </p>
+            <p className="mt-0.5 flex flex-wrap items-center gap-1.5 text-[12.5px]">
+              <span className={clsx("text-ink-3", r.before && "line-through decoration-bad/50")}>{r.before ? where(r.before) : "new"}</span>
+              <ArrowRight size={12} className="shrink-0 text-ink-3" />
+              <span className={r.after ? "font-medium text-ok" : "font-medium text-bad"}>{r.after ? where(r.after) : "not held (make-up owed)"}</span>
+            </p>
+          </li>
+        ))}
+      </ul>
+      <p className="border-t border-line px-3 py-1.5 text-[11.5px] text-ink-3">{state}</p>
     </div>
   );
 }

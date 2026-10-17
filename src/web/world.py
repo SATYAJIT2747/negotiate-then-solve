@@ -338,7 +338,7 @@ class World:
             r = c.request.model_copy(deep=True)
             r.status = RequestStatus.RECEIVED  # from the start, as if just received
             self.store.log(c.id, "restarted", was=c.status.value)
-            self.submit(r)
+            self.submit(r, form=c.form)
         print(f"[state] {self.world_id}: resumed {len(self.orch.cases)} requests from {self.state_dir}", flush=True)
         return True
 
@@ -622,11 +622,13 @@ class World:
 
     # -- running requests ------------------------------------------------------------------
 
-    def submit(self, request: Request, wait: bool = False) -> None:
+    def submit(self, request: Request, wait: bool = False, form=None) -> None:
+        """``form``: the intents of a request made with clicks (``Orchestrator.submit``)."""
+
         def run() -> None:
             _local.case = request.id
             try:
-                self.orch.submit(request)
+                self.orch.submit(request, form)
             except Exception as e:  # noqa: BLE001 - surfaced to the UI through the event log
                 self.store.log(request.id, "error", error=f"{type(e).__name__}: {e}")
 

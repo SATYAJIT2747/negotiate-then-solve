@@ -32,7 +32,7 @@ from pathlib import Path
 
 from fastapi import Depends, FastAPI, Header, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel
+from pydantic import BaseModel, ValidationError
 
 from agents.documents import SUFFIXES, ingest
 from agents.explainer import TIER_NAME, describe, placement_text, session_name
@@ -45,6 +45,8 @@ from core.instance import Session
 from core.schemas import Placement, Request, RequestStatus, Tier
 from evaluation.stats import mean
 from language.corpus import FULL_DAY, hour
+from language.intents import IntentOutput, Unresolved
+from language.intents import weeks as period_weeks
 from language.llm import FREE_TIER, LLMError
 from pipeline.ingest import UnknownSender
 from pipeline.orchestrator import Case, NotAuthorised
@@ -285,7 +287,8 @@ def _feed(w: World, u: dict, decides, handles) -> list[dict]:
             if status == S.PUBLISHED:
                 version = done.get("version") if done else None
                 if version is None:
-                    title, text = "Your request already fits the timetable", case.reply
+                    title = "Nothing was changed" if done and done.get("unmet") else "Your request already fits the timetable"
+                    text = case.reply
                 else:
                     who = w.name_of(done.get("approver") or COORDINATOR)
                     title = "Your request was approved"
@@ -487,6 +490,14 @@ class LoginBody(BaseModel):
 
 class RequestBody(BaseModel):
     text: str
+
+
+class FormRequestBody(BaseModel):
+    """A request made with clicks: the request in words (what people read) and its one intent (what the
+    pipeline acts on), a cancellation, a move or a swap of one of the sender's classes."""
+
+    text: str
+    intent: dict
 
 
 class ReplyBody(BaseModel):
@@ -760,6 +771,38 @@ def create_web_app(world: World | None = None, *, worlds_dir: Path | None = None
         if r is None:
             raise HTTPException(409, "duplicate request")
         w.submit(r)
+        return {"id": r.id}
+
+    @app.post("/api/requests/form")
+    def submit_form(body: FormRequestBody, u: dict = Depends(user)) -> dict:
+        """A request made with clicks. Its intent is taken as given, so nothing is left to a parser:
+        it is checked here (one of the sender's own classes) and resolved like a parsed one."""
+        w = W()
+        try:
+            out = IntentOutput(action="compile", intents=[body.intent])
+        except ValidationError as e:
+            raise HTTPException(422, f"not a request this form can make: {e.errors()[0]['msg']}") from None
+        intent = out.intents[0]
+        if intent.kind not in ("cancel", "move", "swap"):
+            raise HTTPException(422, "the form makes cancellations, moves and swaps")
+        now = w.orch.current_week() if w.orch.current_week else None
+        try:
+            asked = period_weeks(w.instance, intent.period, now) or []
+        except Unresolved as e:
+            raise HTTPException(422, e.question) from None
+        if now is not None and asked and asked[0] < now:
+            raise HTTPException(422, f"Week {asked[0]} has passed; it is week {now} now.")
+        mine = intent.mine if intent.kind == "swap" else intent.which
+        session = w.instance.session_by_id.get(mine.session or "")
+        if session is None or session.faculty != u["id"]:
+            raise HTTPException(403, "only your own classes can be cancelled, moved or swapped")
+        try:
+            r = w.intake.from_portal(u["id"], body.text)
+        except UnknownSender:
+            raise HTTPException(403, "unknown user") from None
+        if r is None:
+            raise HTTPException(409, "duplicate request")
+        w.submit(r, form=out)
         return {"id": r.id}
 
     @app.get("/api/cases")
@@ -1157,7 +1200,7 @@ def create_web_app(world: World | None = None, *, worlds_dir: Path | None = None
                 {"step": 1, "name": "Auto-substitute", "text": "If the hard constraints fit, repair the timetable "
                  "moving as little as possible and notify those affected."},
                 {"step": 2, "name": "Auto-relax", "text": "Preferences that cannot be kept are dropped by the "
-                 "objective; their owners are told and may appeal."},
+                 "objective; their owners are told, and can send the request again as a requirement."},
                 {"step": 3, "name": "Negotiate", "text": "Find the minimal conflict, the cheapest minimal corrections "
                  "(Tier 3-4 only), and ask the owner of the cheapest with 2-3 solver-verified alternatives."},
                 {"step": 4, "name": "Escalate", "text": "On deadlock, no reply, or a Tier 0-2 conflict, brief the "

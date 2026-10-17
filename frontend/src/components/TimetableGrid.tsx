@@ -12,6 +12,9 @@ export function TimetableGrid({
   fill = false,
   dates,
   ghosts = [],
+  slotState,
+  onSlot,
+  dim,
 }: {
   instance: InstanceView;
   entries: TimetableEntry[];
@@ -23,6 +26,11 @@ export function TimetableGrid({
   dates?: Record<string, { label: string; today: boolean }>;
   /** Where classes would go if a pending change goes through: drawn as dashed placeholders. */
   ghosts?: { session: string; day: string; slot: number; title: string; note: string }[];
+  /** Picking a time: which empty slots are free (green, clickable with ``onSlot``) or blocked (greyed). */
+  slotState?: (day: string, slot: number) => "free" | "blocked" | null;
+  onSlot?: (day: string, slot: number) => void;
+  /** Classes that cannot be picked right now: faded and not clickable. */
+  dim?: Set<string>;
 }) {
   const { days, slots_per_day, lunch_slot } = instance.calendar;
   const cell = new Map<string, TimetableEntry[]>();
@@ -56,24 +64,31 @@ export function TimetableGrid({
               const list = cell.get(`${d}:${s}`) ?? [];
               const ghost = ghosts.filter((g) => g.day === d && g.slot === s);
               const lunch = s === lunch_slot;
+              const state = slotState?.(d, s) ?? null;
+              const pickable = state === "free" && !!onSlot;
               return (
                 <div
                   key={d}
+                  onClick={pickable ? () => onSlot!(d, s) : undefined}
+                  role={pickable ? "button" : undefined}
+                  title={pickable ? `${instance.day_names[d] ?? d} ${instance.slots[s]?.label}` : undefined}
                   className={clsx(
                     "relative border-l border-t border-line p-1",
                     fill ? "min-h-0 overflow-hidden" : "min-h-[64px]",
                     lunch && "hatch",
                     covered.has(`${d}:${s}`) && !list.length && "bg-panel-2/40",
+                    state === "free" && "cursor-pointer bg-ok/10 hover:bg-ok/20",
+                    state === "blocked" && !lunch && "bg-ink-3/10",
                   )}
                 >
                   {lunch && !list.length && !ghost.length && <span className="absolute inset-0 grid place-items-center text-[11px] text-ink-3">Lunch</span>}
                   <div className="space-y-1">
                       {list.map((e, i) => (
-                        <Entry key={e.session} e={e} changed={changed.has(e.session)} index={i} onPick={onPick} />
+                        <Entry key={e.session} e={e} changed={changed.has(e.session)} index={i} onPick={onPick} faded={dim?.has(e.session)} />
                       ))}
                       {ghost.map((g) => (
                         <div key={g.session} className="rounded border border-dashed border-brand/70 bg-brand/5 px-2 py-1.5" title={`${g.title}: ${g.note}`}>
-                          <p className="truncate text-[11.5px] font-semibold text-brand">→ {g.title}</p>
+                          <p className="truncate text-[11.5px] font-semibold text-brand">{g.title}</p>
                           <p className="truncate text-[10.5px] text-ink-3">{g.note}</p>
                         </div>
                       ))}
@@ -92,16 +107,21 @@ function Row({ children }: { children: ReactNode }) {
   return <>{children}</>;
 }
 
-function Entry({ e, changed, index, onPick }: { e: TimetableEntry; changed: boolean; index: number; onPick?: (e: TimetableEntry, ev: MouseEvent) => void }) {
+function Entry({ e, changed, index, onPick, faded }: { e: TimetableEntry; changed: boolean; index: number; onPick?: (e: TimetableEntry, ev: MouseEvent) => void; faded?: boolean }) {
   const c = colorFor(e.course);
   const Icon = e.kind === "practical" ? FlaskConical : GraduationCap;
   return (
     <button
       data-index={index}
-      onClick={(ev) => onPick?.(e, ev)}
+      onClick={(ev) => {
+        ev.stopPropagation();
+        onPick?.(e, ev);
+      }}
+      disabled={faded}
       className={clsx(
-        "relative w-full overflow-hidden rounded border-l-[3px] px-2 py-1.5 text-left transition-colors",
+        "relative w-full overflow-hidden rounded border-l-[3px] px-2 py-1.5 text-left transition-[colors,opacity]",
         changed && "outline-2 outline-offset-1 outline-brand",
+        faded && "opacity-30",
       )}
       style={{ borderColor: c, background: `color-mix(in oklab, ${c} 10%, var(--panel))` }}
       title={`${e.title} · ${e.faculty_name} · ${e.group_names.join(", ")} · ${e.room_name}`}

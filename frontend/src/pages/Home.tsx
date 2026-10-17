@@ -1,7 +1,8 @@
 import { Info } from "lucide-react";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState, type MouseEvent } from "react";
+import { ActionCard, ClassMenu, intent, sentence, type ActionKind, type Draft } from "../components/ClassActions";
 import { ConversationPane, useConversation } from "../components/ConversationPane";
-import { ConversationSwitcher, groupOf, useConversations } from "../components/Conversations";
+import { ConversationSwitcher, useConversations } from "../components/Conversations";
 import { DetailsDrawer } from "../components/DetailsDrawer";
 import { TimetableGrid } from "../components/TimetableGrid";
 import { WeekStepper } from "../components/WeekStepper";
@@ -31,8 +32,7 @@ export default function Home() {
   const shownWeek = week;
 
   const { convs, refresh } = useConversations();
-  const s = useConversation(convs, refresh);
-  const { conv, shown } = s;
+  const s = useConversation(convs, refresh, { autoOpen: false }); // opens on a new request
   const [details, setDetails] = useState<string | null>(null); // the request whose details are open
 
   const mine = useMemo(
@@ -41,24 +41,73 @@ export default function Home() {
   );
   // classes clicked on the grid: shown as chips in the composer and named in the message when it is sent
   const [picks, setPicks] = useState<TimetableEntry[]>([]);
-  // what the open request is changing, while it is still under way (once published the class is simply
-  // in its new place; declined or withdrawn, nothing changes)
-  const pending = !!shown && !!conv && (groupOf(conv) === "progress" || groupOf(conv) === "needs") && (shown.proposal?.week == null || shown.proposal.week === shownWeek);
-  const diff = pending ? (shown?.proposal?.diff ?? []) : [];
   // outlined: the classes attached to the message being written, else those the open request moves
+  // a request being put together by clicks (cancel, move or swap a class), and the menu that starts one
+  const [menu, setMenu] = useState<{ x: number; y: number; cls: TimetableEntry } | null>(null);
+  const [draft, setDraft] = useState<Draft | null>(null);
+  const [sending, setSending] = useState(false);
+  const [actionError, setActionError] = useState<string | null>(null);
   const outlined = useMemo(
-    () => new Set(picks.length ? picks.map((e) => e.session) : diff.filter((d) => d.before).map((d) => d.session)),
-    [picks, diff],
+    () =>
+      new Set(
+        draft
+          ? [draft.cls.session, ...(draft.theirs ? [draft.theirs.session] : [])]
+          : picks.map((e) => e.session),
+      ),
+    [draft, picks],
   );
-  const ghosts = diff
-    .filter((d) => d.after && (d.after.day !== d.before?.day || d.after.slot !== d.before?.slot))
-    .map((d) => ({
-      session: d.session,
-      day: d.after!.day,
-      slot: d.after!.slot,
-      title: d.session_name.replace(/^(the|my) /, "").replace(/\s*\([A-Z]-[\w-]+\)$/, ""), // "Data Structures lecture"
-      note: shown?.status === "awaiting_approval" ? "moving here · waiting for approval" : "proposed",
-    }));
+  const target = draft?.kind === "move" && draft.to?.slot != null && draft.to.day ? { day: draft.to.day, slot: draft.to.slot } : null;
+  // while a move is being put together, where it would go (a request's change is shown in its conversation)
+  const ghosts = target && draft ? [{ session: draft.cls.session, day: target.day, slot: target.slot, title: `${draft.cls.title} ${draft.cls.kind}`, note: "new time · not sent yet" }] : [];
+
+  // Where a class may go, and which classes it may be swapped with, judged on this week's published
+  // timetable: its teacher and its sections must be free, and the lunch hour stays free. Only a hint;
+  // the solver checks the rest (rooms, pending changes).
+  const all = useMemo(() => tt?.entries ?? [], [tt]);
+  const cellsOf = (day: string, slot: number, duration: number) => Array.from({ length: duration }, (_, i) => `${day}:${slot + i}`);
+  const busy = (who: (o: TimetableEntry) => boolean, except: string[]) =>
+    new Set(all.filter((o) => who(o) && !except.includes(o.session)).flatMap((o) => cellsOf(o.day, o.slot, o.duration)));
+  const freeFor = (e: TimetableEntry, cells: string[], except: string[]) => {
+    const taken = busy((o) => o.faculty === e.faculty || o.groups.some((g) => e.groups.includes(g)), except);
+    return !cells.some((c) => taken.has(c));
+  };
+  // a day of the shown week that is already over: nothing can be moved there any more
+  const dayPassed = (day: string) => {
+    const w = week && cal ? cal.weeks[week - 1] : null;
+    if (!w || !cal) return false;
+    const at = new Date(`${w.monday}T00:00:00`);
+    at.setDate(at.getDate() + cal.days.indexOf(day));
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    return at < today;
+  };
+  const slotState = (day: string, slot: number): "free" | "blocked" | null => {
+    if (draft?.kind !== "move" || !inst) return null;
+    const e = draft.cls;
+    if (day === e.day && slot === e.slot) return null; // where it is now
+    if (dayPassed(day)) return "blocked";
+    const lunch = inst.calendar.lunch_slot;
+    const cells = cellsOf(day, slot, e.duration);
+    if (slot + e.duration > inst.calendar.slots_per_day || (lunch != null && slot <= lunch && lunch < slot + e.duration)) return "blocked";
+    return freeFor(e, cells, [e.session]) ? "free" : "blocked";
+  };
+  const swappable = useMemo(() => {
+    if (draft?.kind !== "swap") return null;
+    const e = draft.cls;
+    return new Set(
+      all
+        .filter(
+          (o) =>
+            o.session !== e.session &&
+            o.faculty !== e.faculty &&
+            o.duration === e.duration &&
+            freeFor(e, cellsOf(o.day, o.slot, o.duration), [e.session, o.session]) &&
+            freeFor(o, cellsOf(e.day, e.slot, e.duration), [e.session, o.session]),
+        )
+        .map((o) => o.session),
+    );
+  }, [draft, all]); // eslint-disable-line react-hooks/exhaustive-deps
+  const dim = swappable ? new Set(all.filter((o) => o.session !== draft!.cls.session && !swappable.has(o.session)).map((o) => o.session)) : undefined;
   // each day's date in the week shown, for the grid's headings
   const dates = useMemo(() => {
     const w = shownWeek ? cal?.weeks[shownWeek - 1] : null;
@@ -90,6 +139,43 @@ export default function Home() {
       return has && p.length === 1 ? [] : [e];
     });
   };
+  // clicking a class: in a swap it is the colleague's class; with Ctrl or Shift it is attached; otherwise the menu
+  const pickClass = (e: TimetableEntry, ev: MouseEvent) => {
+    if (draft?.kind === "swap") {
+      if (swappable?.has(e.session)) setDraft({ ...draft, theirs: e });
+      return;
+    }
+    if (draft) return; // choosing a time: classes are not targets
+    if (ev.ctrlKey || ev.metaKey || ev.shiftKey) return toggle(e, ev);
+    setMenu({ x: ev.clientX, y: ev.clientY, cls: e });
+  };
+  const startAction = (kind: ActionKind | "write") => {
+    const cls = menu!.cls;
+    setMenu(null);
+    if (kind === "write") return toggle(cls);
+    setPicks([]);
+    setActionError(null);
+    const passed = !!cal && week !== null && week < cal.current_week; // a past week: pick the weeks instead
+    setDraft({ kind, cls, to: null, theirs: null, when: { mode: passed ? "pick" : "this", weeks: [] }, hard: true, reason: "" });
+    if (kind === "swap") setScope("all"); // a colleague's class is picked among everyone's
+  };
+  const sendAction = async () => {
+    if (!draft || !inst || week === null) return;
+    setSending(true);
+    setActionError(null);
+    try {
+      const { id } = await api.submitForm(sentence(draft, inst, week), intent(draft, week));
+      setDraft(null);
+      if (draft.kind === "swap") setScope("mine");
+      s.open(id);
+      s.changed();
+    } catch (e) {
+      setActionError((e as Error).message);
+    } finally {
+      setSending(false);
+    }
+  };
+
   /** "a", "a and b", "a, b and c" */
   const listed = (xs: string[]) => (xs.length < 2 ? xs.join("") : `${xs.slice(0, -1).join(", ")} and ${xs[xs.length - 1]}`);
 
@@ -122,15 +208,21 @@ export default function Home() {
             <Skeleton className="h-full" />
           ) : scope === "all" ? (
             <div className="h-full overflow-auto">
-              <TimetableGrid instance={inst} entries={tt.entries} changed={outlined} onPick={toggle} dates={dates} ghosts={ghosts} />
+              <TimetableGrid instance={inst} entries={tt.entries} changed={outlined} onPick={pickClass} dates={dates} ghosts={ghosts} slotState={slotState} onSlot={(day, slot) => draft && setDraft({ ...draft, to: { day, slot } })} dim={dim} />
             </div>
           ) : !mine.length ? (
             <p className="px-3 py-16 text-center text-[13.5px] text-ink-3">No classes in the published timetable for this week.</p>
           ) : (
-            <TimetableGrid instance={inst} entries={mine} changed={outlined} onPick={toggle} fill dates={dates} ghosts={ghosts} />
+            <TimetableGrid instance={inst} entries={mine} changed={outlined} onPick={pickClass} fill dates={dates} ghosts={ghosts} slotState={slotState} onSlot={(day, slot) => draft && setDraft({ ...draft, to: { day, slot } })} />
           )}
         </Card>
-        <p className="text-[12px] text-ink-3">Click a class to attach it to a request (Ctrl or Shift + click for more than one). Outlined: the classes attached, or the one the open request is moving; dashed: where it would go.</p>
+        <p className="text-[12px] text-ink-3">
+          {draft?.kind === "move"
+            ? "Click a green slot for the new time."
+            : draft?.kind === "swap"
+              ? "Click the colleague's class to swap with. Classes that cannot be swapped are faded."
+              : "Click a class to cancel, reschedule or swap it."}
+        </p>
       </div>
 
       <Card className="flex h-[560px] min-h-0 flex-col lg:h-full">
@@ -147,17 +239,38 @@ export default function Home() {
             </button>
           )}
         </div>
-        <ConversationPane
-          s={s}
-          convs={convs}
-          attachments={{
-            items: picks.map((e) => ({ key: e.session, label: `${e.title} ${e.kind} · ${dayName(e.day)} ${label(e.slot)}` })),
-            remove: (key) => setPicks((p) => p.filter((x) => x.session !== key)),
-            compose: (t) => (picks.length ? `${t.replace(/[.!?]$/, "")} (${listed(picks.map(phrase))}).` : t),
-            clear: () => setPicks([]),
-          }}
-        />
+        {draft && inst && week !== null ? (
+          <ActionCard
+            d={draft}
+            set={setDraft}
+            inst={inst}
+            week={week}
+            weeks={inst.calendar.weeks}
+            current={cal?.current_week ?? 1}
+            sending={sending}
+            error={actionError}
+            onCancel={() => {
+              if (draft.kind === "swap") setScope("mine");
+              setDraft(null);
+            }}
+            onSend={sendAction}
+          />
+        ) : (
+          <ConversationPane
+            s={s}
+            convs={convs}
+            attachments={{
+              items: picks.map((e) => ({ key: e.session, label: `${e.title} ${e.kind} · ${dayName(e.day)} ${label(e.slot)}` })),
+              remove: (key) => setPicks((p) => p.filter((x) => x.session !== key)),
+              compose: (t) => (picks.length ? `${t.replace(/[.!?]$/, "")} (${listed(picks.map(phrase))}).` : t),
+              clear: () => setPicks([]),
+            }}
+          />
+        )}
       </Card>
+      {menu && (
+        <ClassMenu at={menu} cls={menu.cls} own={teaching && menu.cls.faculty === user?.id} onPick={startAction} onClose={() => setMenu(null)} />
+      )}
       <DetailsDrawer id={details} onClose={() => setDetails(null)} />
     </div>
   );

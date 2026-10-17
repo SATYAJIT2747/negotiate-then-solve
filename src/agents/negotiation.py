@@ -3,7 +3,7 @@
 1. Auto-substitute: if the hard constraints are jointly feasible, repair the
    timetable (moving other classes) and notify. No one is asked.
 2. Auto-relax: soft preferences the repair could not keep are dropped by the
-   objective; their owners get a notice and may appeal.
+   objective; their owners get a notice (and can ask again with it as a requirement).
 3. Negotiate: on infeasibility, find the MUS and the minimal correction sets
    (MCS) within the relaxable tiers, rank them by cost, and ask the owner of
    the cheapest option, offering two or three solver-verified alternatives
@@ -481,8 +481,7 @@ class Negotiator:
             c = cons[cid]
             if c.owner:
                 out.setdefault(c.owner, []).append(
-                    f"Your preference could not be fully met: {describe(self.instance, c)} "
-                    "Reply to appeal.")
+                    f"Your preference could not be fully met: {describe(self.instance, c)}")
         return out
 
     def _finish(self, out: Outcome, cons: Mapping[str, Constraint], solver: TimetableSolver) -> Outcome:
