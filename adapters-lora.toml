@@ -1,0 +1,11 @@
+# The tasks on LoRA adapters of one base model (llama-server -m <base> --lora a.gguf --lora b.gguf,
+# all at scale 0 until a request switches one on; language.local finds them at /lora-adapters).
+# Used by scripts/host.ps1 (-Adapters adapters-lora.toml) and the evaluations (--adapters adapters-lora.toml).
+# The intents adapter (v4) is trained on reading requests only; the multi-task adapter (Read100) keeps
+# the policy agent, reading replies and explanations.
+
+base = "Qwen3.5-4B-Base-Q8_0"
+
+[adapters]
+nts-intents-v4 = ["compile"]
+nts-read100 = ["policy", "reply", "explain"]

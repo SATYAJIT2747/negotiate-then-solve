@@ -1,0 +1,11 @@
+# The tasks on whole fine-tuned models of a router-mode server (llama-server --models-dir), not on LoRA
+# adapters: each "adapter" name is a model id the router serves (language.local finds it among /models).
+# Used by scripts/host.ps1 (NTS_ADAPTERS) and the evaluations (--adapters adapters-router.toml).
+# The intents model is trained on reading requests only; the multi-task model trained on all of its data (Read100)
+# keeps the policy agent, reading replies and explanations.
+
+base = "Qwen3.5-4B-Finetune-NTS-Read100-Q8_0"
+
+[adapters]
+"Qwen3.5-4B-Finetune-NTS-Intents-v2-Q8_0" = ["compile"]
+"Qwen3.5-4B-Finetune-NTS-Read100-Q8_0" = ["policy", "reply", "explain"]

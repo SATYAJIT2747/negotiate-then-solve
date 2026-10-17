@@ -3,9 +3,15 @@
 #
 #   powershell -ExecutionPolicy Bypass -File scripts\host.ps1
 #   powershell -ExecutionPolicy Bypass -File scripts\host.ps1 -Offline     # never use the GPU
+#   powershell -ExecutionPolicy Bypass -File scripts\host.ps1 -Adapters "" # every task on -Model, as before
+#
+# By default each task goes to its own model on the router (adapters-router.toml): requests are read by the
+# intents model, which the app then asks for intents (NTS_INTENTS); policy, replies and explanations by the
+# multi-task model.
 param(
-    [string]$GpuUrl = "http://10.1.25.94:8080/v1",
-    [string]$Model = "Qwen3.5-4B-Finetune-NTS-Q8_0",
+    [string]$GpuUrl = "http://10.1.25.191:8080/v1",
+    [string]$Adapters = "adapters-router.toml",
+    [string]$Model = "Qwen3.5-4B-Finetune-NTS-Read100-Q8_0",
     [int]$Port = 8000,
     [switch]$Offline
 )
@@ -16,6 +22,14 @@ $env:NTS_HOST = "0.0.0.0"  # reachable from other machines, not only this one
 $env:NTS_PORT = "$Port"
 $env:NTS_LOCAL_URL = $GpuUrl
 $env:NTS_LOCAL_MODEL = $Model
+$needed = @($Model)
+if ($Adapters) {
+    $env:NTS_ADAPTERS = $Adapters
+    $env:NTS_INTENTS = "1"
+    $needed = Select-String -Path $Adapters -Pattern '^\s*"([^"]+)"\s*=' | ForEach-Object { $_.Matches[0].Groups[1].Value }
+} else {
+    Remove-Item Env:NTS_ADAPTERS, Env:NTS_INTENTS -ErrorAction SilentlyContinue
+}
 
 # The app uses the model whenever it answers and the rule-based stand-ins whenever it does not, switching
 # back by itself (src/web/fallback.py), so it starts on the model even when the GPU is down right now.
@@ -23,8 +37,10 @@ $parser = if ($Offline) { "offline" } else { "local" }
 if (-not $Offline) {
     try {
         $models = Invoke-RestMethod -Uri "$GpuUrl/models" -TimeoutSec 5
-        if (-not ($models.data.id -contains $Model)) {
-            Write-Host "GPU server is up but does not serve $Model; it serves: $($models.data.id -join ', ')"
+        foreach ($m in $needed) {
+            if (-not ($models.data.id -contains $m)) {
+                Write-Host "GPU server is up but does not serve $m; it serves: $($models.data.id -join ', ')"
+            }
         }
     } catch {
         Write-Host "GPU server not reachable at $GpuUrl right now; the rule-based stand-ins answer until it is back."
