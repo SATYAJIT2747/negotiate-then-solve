@@ -1,8 +1,8 @@
 {
- "schema": 3,
- "recipe": "intents-v5",
- "recipe_sha": "21e1f64ef47cb7a3",
- "code": "f3dcca7+dirty",
+ "schema": 4,
+ "recipe": "intents-v6",
+ "recipe_sha": "d4555e323402638c",
+ "code": "cb4aa13+dirty",
  "sources": {
   "base": {
    "test": 417,
@@ -28,27 +28,27 @@
   },
   "human": {},
   "augment": {
-   "train": 621,
-   "changed meaning": 2,
+   "train": 622,
+   "changed meaning": 1,
    "unchanged": 37
   }
  },
  "fingerprints": {
-  "train": "84a28925269d8a8f",
-  "val": "f0a9918d1d2324ef",
-  "test": "e402d9c4724c5843",
-  "firmness": "a68e5ab1c9a82b70",
-  "moves": "576612036711bbb3",
-  "periods": "08eaa209d75b6176",
-  "multi": "45d1d77018f8a5f3",
-  "clubs": "ad01d315a87517c0",
-  "vague": "267eb33b7da3226d",
-  "reasons": "eb00edeef7a9a6e8",
-  "terms": "68092e7ede1b580c",
-  "difficulty": "de13859ae329253f",
-  "dated": "e435af0e0bcb4744",
-  "test-typo": "18574d862900dc0f",
-  "test-noisy": "415fd3dd7dceea9a"
+  "train": "bf70d21722e91660",
+  "val": "72b43e4b2b0461d2",
+  "test": "0fb72ff322ff89a9",
+  "firmness": "4e2251768d1f7a3a",
+  "moves": "b314e127d2d7ace4",
+  "periods": "66226086b8350925",
+  "multi": "b07aea3306e8558e",
+  "clubs": "47c103b0c75a579c",
+  "vague": "1981eced8b92b1a2",
+  "reasons": "827c4dbbb4dbfcfd",
+  "terms": "8bc3f84c7df8802b",
+  "difficulty": "dac2935d3411b39f",
+  "dated": "cd33a518e57a70a9",
+  "test-typo": "710c97ca9762bc39",
+  "test-noisy": "c7fdcc1547db8aa9"
  },
  "gates": {
   "schema": 0,
@@ -68,9 +68,9 @@
  },
  "report": {
   "train": {
-   "rows": 2718,
+   "rows": 2719,
    "origin": {
-    "augment": 621,
+    "augment": 622,
     "base": 1087,
     "generators": 890,
     "mined": 120
@@ -78,7 +78,7 @@
    "kind": {
     "avoid_between": 197,
     "cancel": 65,
-    "clash_report": 138,
+    "clash_report": 139,
     "club_booking": 103,
     "club_more": 104,
     "dated": 102,
@@ -107,18 +107,18 @@
     "answer": 59,
     "clarify": 173,
     "compile": 2226,
-    "investigate": 138,
+    "investigate": 139,
     "out_of_scope": 58,
     "withdraw": 64
    },
    "firmness": {
     "hard": 450,
-    "none": 1525,
+    "none": 1526,
     "soft": 743
    },
    "augment": {
     "casual": 158,
-    "noisy": 165,
+    "noisy": 166,
     "none": 2097,
     "shorthand": 130,
     "typo": 168

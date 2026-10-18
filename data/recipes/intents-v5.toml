@@ -17,6 +17,8 @@ suites = "data/suites"          # held-out wordings and the noisy test split, fo
 # Refrozen for v5 (was 6efe890a35a784b2): 4 test rows ("move one of my classes into the 1 pm lunch slot")
 # had the corpus's hand label hard=True; an only at a start time is a placement, and placements follow
 # lexicon.placement_is_hard (intent_compiler.label_placements), which reads them as wishes. Nothing else changed.
+# Superseded: intents-v6 wrote the same split in schema 4's format (no directory, names for IDs), so this
+# recipe now builds only with --refreeze.
 test = "e402d9c4724c5843"
 
 [base]                          # intent_compiler.base_rows: the corpus and intent_corpus's generators
