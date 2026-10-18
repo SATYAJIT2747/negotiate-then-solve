@@ -314,22 +314,22 @@ def _said(sender, text, role=Role.FACULTY):
 
 
 def test_course_ids_are_checked_against_the_message(cse):
-    from language.intents import ClashReport, ground_courses
+    from language.intents import ClashReport, ground_references
 
     # a student in section 1 names Data Structures; the model picked Database Systems, of the same section
     req = _said("ST-G-01", "21 of us in Section 1 also take Computer Graphics with Section 9, and it clashes with "
                            "Data Structures on Tuesday at 2 pm.", Role.STUDENT)
     out = IntentOutput(action="investigate", intents=[ClashReport(courses=["C-095", "C-014"])])
-    assert ground_courses(cse, req, out).intents[0].courses == ["C-095", "C-011"]
+    assert ground_references(cse, req, out).intents[0].courses == ["C-095", "C-011"]
     # each course in the section the message ties it to, else the student's own (the model had them swapped)
     req = _said("ST-G-06", "We have Computer Graphics and Information Security of Section 9 at the same time on "
                            "Wednesday (10 am), please fix this.", Role.STUDENT)
     out = IntentOutput(action="investigate", intents=[ClashReport(courses=["C-064", "C-095"])])
-    assert sorted(ground_courses(cse, req, out).intents[0].courses) == ["C-063", "C-096"]
+    assert sorted(ground_references(cse, req, out).intents[0].courses) == ["C-063", "C-096"]
     # an abbreviation names no title: the course stays
     out = IntentOutput(action="compile", intents=[ExtraClass(which=ClassRef(course="C-031"),
                                                              period=Period(weeks=[5]))])
-    assert ground_courses(cse, _said("F-102", "An extra CG class in week 5."), out) == out
+    assert ground_references(cse, _said("F-102", "An extra CG class in week 5."), out) == out
 
 
 def test_a_course_taught_to_two_sections_asks_which(cse):
@@ -346,3 +346,48 @@ def test_a_course_taught_to_two_sections_asks_which(cse):
                                                              period=Period(weeks=[5]))])
     c = compile_intents(cse, req, out)
     assert c.question is None and cse.session_by_id[c.extras[0].template].course == "C-095"
+
+
+def test_names_are_looked_up_and_an_id_reads_as_itself(cse):
+    from language.names import course_id, faculty_id, room_id
+
+    assert course_id(cse, "Data Structures") == course_id(cse, "data structres") == "C-011"
+    assert course_id(cse, "C-043") == "C-043" and course_id(cse, "Underwater Basket Weaving") == "Underwater Basket Weaving"
+    sharma = next(f.id for f in cse.faculty if f.name == "Dr. Sharma")
+    assert faculty_id(cse, "Dr. Sharma") == faculty_id(cse, "sharma") == faculty_id(cse, "Prof Sharma") == sharma
+    assert faculty_id(cse, "Dr. Nobody") == "Dr. Nobody"
+    assert room_id(cse, "Room 101") == room_id(cse, "room 101") == "R-101"
+    assert room_id(cse, "Lab 5") != room_id(cse, "Room 105")
+
+
+def test_a_reading_with_names_compiles_as_the_one_with_ids(cse):
+    from language.intents import ClashReport, Swap
+    from language.names import to_names
+
+    req = _said("ST-G-04", "11 of us in Section 4 also take Information Security wiht Section 6, and it clashes "
+                           "with Data Structures on Tuesday at 9 am.", Role.STUDENT)
+    ids = IntentOutput(action="investigate", intents=[ClashReport(time=TimeSpec(days=["Tue"], at=["09:00"]),
+                                                                  courses=["C-043", "C-064"])])
+    names = to_names(cse, ids)
+    assert names.intents[0].courses == ["Data Structures", "Information Security"]
+    assert compile_intents(cse, req, names).clashes == compile_intents(cse, req, ids).clashes
+    # a colleague by name, and an unknown ID or the wrong colleague put right by what the message names
+    sharma = next(f.id for f in cse.faculty if f.name == "Dr. Sharma")
+    other = next(f.id for f in cse.faculty if f.id != sharma and f.id != "F-102")
+    swap = Swap(mine=ClassRef(kind="lecture", day="Tue", time="12:00"),
+                theirs=ClassRef(owner=other, day="Fri", time="14:00"))
+    from language.intents import ground_references
+
+    req = _said("F-102", "Requesting a swap with Dr. Sharma: my lecture at 12 pm on Tuesday for their class at 2 pm "
+                         "on Friday.")
+    got = ground_references(cse, req, IntentOutput(action="compile", intents=[swap]))
+    assert got.intents[0].theirs.owner == sharma
+
+
+def test_the_current_prompt_has_no_directory(cse):
+    from language.intent_compiler import intent_message
+
+    req = _said("F-102", "No classes before 10 on Monday please.")
+    short, full = intent_message(cse, req, current_week=5), intent_message(cse, req, current_week=5, schema=3)
+    assert "Faculty:" in full and "Faculty:" not in short and "F-102" not in short
+    assert "Current week: 5" in short and req.raw_text in short and len(short) * 5 < len(full)

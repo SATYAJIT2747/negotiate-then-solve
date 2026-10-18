@@ -12,10 +12,11 @@ those, deterministically:
   (against the current week);
 * ``ClassRef`` -> a session ID: by ID, or by owner, course, kind, group and
   where the class is now in the timetable ("my Thursday 10 am lecture");
-* course IDs are checked against the message (``ground_courses``): each
-  section has its own course of a title, and a parser that picks the right
-  title in the wrong section, or a look-alike title, is corrected by what
-  the message names and who sent it.
+* IDs are checked against the message (``ground_references``): an ID must
+  exist and name what the message names. Each section has its own course of
+  a title, and a parser that picks the right title in the wrong section, a
+  look-alike title, an ID that does not exist or the wrong colleague is
+  corrected by what the message names and who sent it.
 
 Anything that resolves to nothing, or to more than one thing where one is
 needed, becomes a clarifying question rather than a guess. Intents that
@@ -68,7 +69,9 @@ from .parsing import (
 #   1  the first intents
 #   2  a move without ``hard`` is a wish (it was a requirement)
 #   3  periods of several weeks from now (``count``, ``rest_of_semester``); a kind of room for a club
-SCHEMA_VERSION = 3
+#   4  courses, colleagues, sections and rooms by name as the message gives them (``language.names``), and
+#      no directory in the prompt; an ID still reads as itself
+SCHEMA_VERSION = 4
 
 Day = Literal["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
 Clock = Annotated[str, Field(pattern=r"^([01]\d|2[0-3]):[0-5]\d$", description="24-hour HH:MM")]
@@ -474,22 +477,72 @@ def _named(instance: Instance, course: str, text: str, sections: dict[str, set[s
     return hits.pop() if len(hits) == 1 else course
 
 
+# what ties a course to a section after its title: "(Section 9", "(with Section 7", "with Section 4" (a typo
+# allowed: "wiht", "witth"), "of Section 2", "for the Section 3"
+_TIE = r"\s*\(?\s*(?:(?:with|wiht|witth|wtih|wth|whit|wit|of|for|in)\s+)?(?:the\s+)?"
+
+
 def _section_of(instance: Instance, course: str, text: str, sender: str, sections: dict[str, set[str]]) -> str:
-    """In a student's clash report, the course of ``course``'s title in the section the message ties it to
-    ("Information Security (Section 9)", "... with Section 4", "... of Section 2"), else in the sender's own."""
+    """In a clash report, the course of ``course``'s title in the section the message ties it to ("Information
+    Security (Section 9)", "... with Section 4", "... of Section 2"), else in a student sender's own section,
+    else in the one section the message names ("19 students in Section 3 are enrolled in both ...")."""
     title = instance.course_title(course).lower()
+    named = [g.id for g in instance.groups if re.search(rf"\b{re.escape(g.name.lower())}\b", text)]
     group = next((g.id for g in instance.groups if re.search(
-        rf"\b{re.escape(title)}\b\s*(?:\(|with\s+|of\s+)(?:the\s+)?{re.escape(g.name.lower())}\b", text)),
-        sender[3:])
+        rf"\b{re.escape(title)}\b{_TIE}{re.escape(g.name.lower())}\b", text)),
+        sender[3:] if sender.startswith("ST-") else named[0] if len(named) == 1 else None)
     same = [c for c in sections if group in sections[c] and instance.course_title(c).lower() == title]
     return same[0] if len(same) == 1 else course
 
 
-def ground_courses(instance: Instance, request: Request, out: IntentOutput) -> IntentOutput:
-    """``out`` with its course IDs checked against the message: a course whose title the message does not name
-    becomes the one it does in the same section, and in a student's clash report each course is taken in the
-    section the message ties it to, or the student's own. Class references keep their course otherwise; which
-    section's copy the sender teaches is settled by ``classes``."""
+def _named_titles(instance: Instance, text: str, sections: dict[str, set[str]]) -> list[str]:
+    """The course titles ``text`` (lower case) names, longest first, so "Advanced Algorithms" is not also
+    read as "Algorithms"."""
+    titles = sorted({instance.course_title(c) for c in sections}, key=len, reverse=True)
+    found: list[str] = []
+    for t in titles:
+        if _titled(instance, text, next(c for c in sections if instance.course_title(c) == t))                 and not any(t.lower() in f.lower() for f in found):
+            found.append(t)
+    return found
+
+
+def _course(instance: Instance, course: str, text: str, sections: dict[str, set[str]]) -> str | None:
+    """``course`` checked against the message (``_named``); an ID that does not exist is the one course whose
+    title the message names, or nothing."""
+    if course in sections:
+        return _named(instance, course, text, sections)
+    titles = _named_titles(instance, text, sections)
+    hits = [c for c in sections if instance.course_title(c) in titles]
+    return hits[0] if len(titles) == 1 and hits else None
+
+
+def _surname(name: str) -> str:
+    return name.split()[-1].lower()
+
+
+def _colleague(instance: Instance, fid: str, text: str, sender: str) -> str:
+    """``fid``, unless the message does not name them and names exactly one other colleague: that one."""
+    from .lexicon import _close, words
+
+    ws = words(text)
+
+    def named(f) -> bool:
+        s = _surname(f.name)
+        return any(w == s or (len(s) >= 5 and _close(w, s)) for w in ws)
+
+    if fid in instance.faculty_by_id and named(instance.faculty_by_id[fid]):
+        return fid
+    others = [f.id for f in instance.faculty if f.id != sender and named(f)]
+    return others[0] if len(others) == 1 else fid
+
+
+def ground_references(instance: Instance, request: Request, out: IntentOutput) -> IntentOutput:
+    """``out`` with its IDs checked against the message, so that every ID exists and names what the message
+    names. A course whose title the message does not name becomes the one it does in the same section, and an
+    unknown course ID the one course the message names (or none: the rest of the reference decides). In a
+    clash report each course is taken in the section the message ties it to, or the student's own (or the one
+    section the message names), and a course a student's report names but left out is added. A colleague (a class's owner, a
+    ``who``) the message does not name becomes the one colleague it does."""
     text, sender = request.raw_text.lower(), request.sender_id
     sections = _sections(instance)
     intents = []
@@ -497,12 +550,26 @@ def ground_courses(instance: Instance, request: Request, out: IntentOutput) -> I
         update = {}
         for name in ("which", "mine", "theirs"):
             ref = getattr(intent, name, None)
-            if isinstance(ref, ClassRef) and ref.course is not None:
-                update[name] = ref.model_copy(update={"course": _named(instance, ref.course, text, sections)})
+            if isinstance(ref, ClassRef):
+                fix = {}
+                if ref.course is not None:
+                    fix["course"] = _course(instance, ref.course, text, sections)
+                if ref.owner is not None:
+                    fix["owner"] = _colleague(instance, ref.owner, text, sender)
+                if any(fix[k] != getattr(ref, k) for k in fix):
+                    update[name] = ref.model_copy(update=fix)
+        who = getattr(intent, "who", None)
+        if isinstance(who, Who) and who.kind == "faculty" and who.id != sender:
+            fid = _colleague(instance, who.id, text, sender)
+            if fid != who.id:
+                update["who"] = who.model_copy(update={"id": fid})
         if isinstance(intent, ClashReport):
-            courses = [_named(instance, c, text, sections) for c in intent.courses]
+            courses = [c for c in (_course(instance, c, text, sections) for c in intent.courses) if c]
             if sender.startswith("ST-"):
-                courses = [_section_of(instance, c, text, sender, sections) for c in courses]
+                have = {instance.course_title(c) for c in courses}
+                courses += [next(c for c in sorted(sections) if instance.course_title(c) == t)
+                            for t in _named_titles(instance, text, sections) if t not in have]
+            courses = [_section_of(instance, c, text, sender, sections) for c in courses]
             update["courses"] = list(dict.fromkeys(courses))
         intents.append(intent.model_copy(update=update) if update else intent)
     return out.model_copy(update={"intents": intents})
@@ -740,7 +807,9 @@ def compile_intents(instance: Instance, request: Request, out: IntentOutput, *,
                     timetable: Mapping[str, Placement] | None = None, current_week: int | None = None) -> Compiled:
     """Resolve every intent; the first reference that cannot be resolved turns the whole request into a question."""
     sender = request.sender_id
-    out = ground_courses(instance, request, out)
+    from .names import to_ids
+
+    out = ground_references(instance, request, to_ids(instance, out))
     drafts: list[DraftConstraint] = []
     compiled = Compiled(output=out, result=ParseResult(request=request, output=None))
     limits: list[LoadLimit] = []

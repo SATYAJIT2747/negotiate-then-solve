@@ -8,8 +8,8 @@ import pytest
 from core.generator import generate_department
 from core.schemas import Channel, ConstraintType, Placement, Request, Role
 from language.checks import check_reading, checked_compile, clock, read_repaired, repair_raw
-from language.intents import Avoid, ClassRef, IntentOutput, Move, Only, TimeSpec, Unavailable
-from language.lexicon import hedged, mentions, necessary, normalise
+from language.intents import Avoid, ClassRef, ClubBooking, IntentOutput, Move, Only, Period, TimeSpec, Unavailable
+from language.lexicon import hedged, mentions, names_weeks, necessary, normalise, whole_term
 from language.rule_parser import RuleParser
 
 
@@ -121,6 +121,42 @@ def test_a_requirement_on_all_times_in_a_message_about_one_class_is_asked_about(
     out = IntentOutput(action="compile", intents=[Only(time=TimeSpec(days=["Thu"], at=["14:00"]), hard=True)])
     c = checked_compile(instance, request(lecture.faculty, f"I need my {title} lecture on Thursday at 2 pm"), out)
     assert c.question and title in c.question and not c.result.constraints
+
+
+def test_weeks_and_the_whole_term_are_read_with_a_typo():
+    assert names_weeks("away in wek 11, sorry") and names_weeks("for the rst of the trem")
+    assert names_weeks("is a room free thhis tuesday?") and names_weeks("on 23 November")
+    assert not names_weeks("Looking for a large classroom on Thursday 2-5pm for the poetry reading")
+    assert whole_term("unavailable on Thursday mornings for the whole semester")
+    assert whole_term("for the duration of the entire semester")
+    assert not whole_term("for what's left of the semester") and not whole_term("from now until the term ends")
+
+
+def test_a_period_the_message_does_not_give_is_every_week(instance, lecture):
+    club = ClubBooking(club="Music Society", day="Fri", start="14:00", end="16:00", period=Period(relative="this_week"))
+    got = check_reading(instance, request(lecture.faculty, "A room on Friday 14:00 to 16:00 for band practice?"),
+                        IntentOutput(action="compile", intents=[club]))
+    assert got.output.intents[0].period.is_recurring and got.notes
+    off = Unavailable(time=TimeSpec(days=["Thu"], part="morning"), period=Period(relative="rest_of_semester"))
+    got = check_reading(instance, request(lecture.faculty, "I'm unavailable on Thursday mornings for the whole "
+                                                           "semester (clinical duty)."),
+                        IntentOutput(action="compile", intents=[off]))
+    assert got.output.intents[0].period.is_recurring
+    # what the message does say stays: "the rest of the term", and this Friday
+    for text in ("For the rest of the term I can't teach on Thursday mornings.", "Is a room free this Friday?"):
+        got = check_reading(instance, request(lecture.faculty, text), IntentOutput(action="compile", intents=[off]))
+        assert got.output.intents[0].period == off.period and not got.notes
+
+
+def test_a_reading_that_leaves_out_the_class_the_message_is_about_is_asked_about(instance, lecture):
+    title = instance.course_title(lecture.course)
+    out = IntentOutput(action="compile", intents=[Only(time=TimeSpec(days=["Tue"], part="afternoon"))])
+    c = checked_compile(instance, request(lecture.faculty, f"Tuesday afternoon would suit my {title} lecture "
+                                                            "better."), out)
+    assert c.question and title in c.question and not c.result.constraints
+    # an acronym counts in capitals only: "this is a must" is not about Information Security
+    assert check_reading(instance, request(lecture.faculty, "Keep me free on Fridays; this is a must."),
+                         IntentOutput(action="compile", intents=[Avoid(time=TimeSpec(days=["Fri"]))])).question is None
 
 
 def test_checks_leave_a_plain_reading_alone(instance, lecture):

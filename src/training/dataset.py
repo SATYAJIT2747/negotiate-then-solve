@@ -10,7 +10,8 @@ A recipe (``data/recipes/*.toml``) names the sources and how much of each:
   train-only wordings); its test split is the one every model so far was scored on;
 * ``generators``: ``intent_generators.REGISTRY``, each generator's held-out wordings going to its suite;
 * ``stored``: rows that cannot be rebuilt (mined from a model's mistakes, labelled by people), read from
-  files, migrated to the current schema (``language.migrations``) and put in the current prompt;
+  files, migrated to the current schema (``language.migrations``) and put in the current prompt and format
+  (``intent_compiler.format_row``: no directory, names for IDs);
 * ``augment``: noisy twins of training rows (typos, shorthand, casual wording: ``evaluation.robustness``,
   with seeds of its own), each kept only if its gold resolves as the original's does;
 * ``suites``: the evaluation suites written beside the test split (``data/suites``), held-out wordings and
@@ -27,7 +28,6 @@ it has not seen.
 from __future__ import annotations
 
 import argparse
-import copy
 import glob
 import hashlib
 import json
@@ -40,7 +40,7 @@ from pathlib import Path
 from core.instance import Instance
 from evaluation.intents import _context, outcome, same
 from evaluation.robustness import protected, rewrite_row, rewritten
-from language.intent_compiler import INTENT_PROMPT, base_rows, export_rows, label_placements
+from language.intent_compiler import base_rows, export_rows, format_row, label_placements
 from language.intents import SCHEMA_VERSION, IntentOutput, compile_intents
 from language.migrations import migrate_row
 
@@ -71,30 +71,25 @@ def _git() -> str:
         return "unknown"
 
 
-def _current_prompt(row: dict) -> dict:
-    row = copy.deepcopy(row)
-    row["messages"][0]["content"] = INTENT_PROMPT
-    return row
-
-
 def stored_rows(instance: Instance, spec: dict) -> list[tuple[str, dict]]:
     """``(split, row)`` from files: migrated, in the current prompt, labelled by the project's rule for moves
     when ``relabel`` (rows made by code under an older rule), never for rows people labelled."""
     paths = sorted(Path(p) for pattern in spec["paths"] for p in glob.glob(pattern))
     if spec.get("kind") == "human":
-        return [(split, _current_prompt(r)) for split, r in human.load(instance, paths)]
+        return [(split, format_row(instance, r)) for split, r in human.load(instance, paths)]
     out = []
     for p in paths:
         for line in p.read_text(encoding="utf-8").splitlines():
             if not line.strip():
                 continue
-            row = _current_prompt(migrate_row(json.loads(line)))
+            row = format_row(instance, migrate_row(json.loads(line)))
             if spec.get("relabel", False):
                 out_ = label_placements(IntentOutput.model_validate_json(row["messages"][-1]["content"]),
                                         row["request"]["raw_text"])
                 from language.intent_compiler import completion
+                from language.names import to_names
 
-                row["messages"][-1]["content"] = completion(out_)
+                row["messages"][-1]["content"] = completion(to_names(instance, out_))
             out.append((spec.get("split", "train"), row))
     return out
 

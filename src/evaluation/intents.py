@@ -42,8 +42,8 @@ from evaluation.metrics import atom_counts, exact_match, prf
 from language.corpus import ExpectedAction
 from language.adapters import add_args, local_client, registry
 from language.checks import checked_compile
-from language.intent_compiler import read_answer
-from language.intents import Compiled, IntentOutput, compile_intents
+from language.intent_compiler import format_row, read_answer
+from language.intents import SCHEMA_VERSION, Compiled, IntentOutput, compile_intents
 from language.llm import LLMError
 
 
@@ -108,8 +108,9 @@ class Reader:
 
     def read_noted(self, row: dict) -> tuple[IntentOutput, list[str]]:
         """The reading and what was repaired in the answer (a model's answer that missed the schema)."""
-        if self.kind in ("local", "gemini"):
-            return read_answer(self.client, row["messages"][1]["content"])
+        if self.kind in ("local", "gemini"):  # the row as the model was trained to read it (its schema's prompt)
+            schema = getattr(self.client, "schema", None) or SCHEMA_VERSION
+            return read_answer(self.client, format_row(self.instance, row, schema)["messages"][1]["content"])
         if self.kind == "gold":
             return IntentOutput.model_validate_json(row["messages"][2]["content"]), []
         return self.rules.read_intents(_context(row)[0]), []

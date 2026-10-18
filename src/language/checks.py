@@ -12,11 +12,13 @@ show what was changed and why.
 * ``check_reading``: an ``IntentOutput`` beside the message and the timetable:
   - a before/after range that is one time ("after 15:00 and before 15:00") is that start time;
   - a requirement (``hard``) in a message that hedges and says nothing must be so is a wish;
+  - a period the message does not say is every week: weeks or a "this week" in a message that names no
+    week, stretch of the term or date, and "the rest of the semester" for "the whole semester";
   - a move with no destination whose class reference names a time the class is not at reads that
     time as the destination ("I need my lecture on Thursday at 2 pm");
   - a wish to move a class to where it already is is asked about;
-  - a requirement on all the sender's times in a message that names one of their classes is asked
-    about (is it that class, or every class?).
+  - a reading that refers to no class, of a message that names one of the sender's classes, is asked
+    about (is it that class, or every class?): the reading left out what the message is about.
 """
 
 from __future__ import annotations
@@ -29,8 +31,18 @@ from core.instance import Instance
 from core.schemas import Placement, Request
 
 from .corpus import FULL_DAY, hour
-from .intents import ClassRef, IntentOutput, Move, Only, TimeSpec, Unresolved, classes, meeting, slots
-from .lexicon import hedged, mentions, necessary
+from .intents import (
+    ClassRef,
+    IntentOutput,
+    Move,
+    Period,
+    TimeSpec,
+    Unresolved,
+    classes,
+    meeting,
+    slots,
+)
+from .lexicon import acronym, hedged, mentions, names_weeks, necessary, whole_term
 
 _CLOCK = re.compile(r"^\s*(\d{1,2})(?:[:.](\d\d))?\s*(am|pm|a\.m\.|p\.m\.)?\s*$", re.IGNORECASE)
 _DAYS = {d.lower(): d for d in FULL_DAY} | {v.lower(): k for k, v in FULL_DAY.items()}
@@ -157,20 +169,51 @@ def check_reading(instance: Instance, request: Request, out: IntentOutput,
                          + ("says nothing must be so" if strict else "hedges and says nothing must be so")
                          + "; read as a wish")
             intent = intent.model_copy(update={"hard": False})
+        intent = _ground_period(intent, text, notes, i)
         if isinstance(intent, Move):
             intent, q = _check_move(instance, intent, sender, timetable, notes, i)
             if q and question is None:
                 question, missing = q, ["slots"]
-        if isinstance(intent, Only) and intent.who is None and intent.hard and question is None:
-            mine = {s.course for s in instance.sessions if s.faculty == sender}
-            named = sorted({instance.course_title(c) for c in mine
-                            if mentions(text, instance.course_title(c), acronyms=True)})
-            if len(named) == 1:
-                notes.append(f"intent {i}: a requirement on all your times, in a message about {named[0]}")
-                question, missing = (f"Should this apply to your {named[0]} classes only, or to all your classes?",
-                                     ["session"])
         intents.append(intent)
+    if question is None and intents and not any(map(_about_classes, intents)):
+        named = _own_courses_named(instance, text, sender)
+        if len(named) == 1:
+            notes.append(f"the reading is about all your times, in a message about {named[0]}")
+            question, missing = (f"Should this apply to your {named[0]} classes only, or to all your classes?",
+                                 ["session"])
     return Checked(out.model_copy(update={"intents": intents}), notes, question, missing)
+
+
+def _about_classes(intent) -> bool:
+    """Whether ``intent`` is about particular classes (or courses), not about the sender's times."""
+    who = getattr(intent, "who", None)
+    return (any(isinstance(getattr(intent, n, None), ClassRef) for n in ("which", "mine", "theirs"))
+            or (who is not None and who.kind in ("course", "session"))
+            or intent.kind in ("clash_report", "club_booking", "room_closed"))
+
+
+def _own_courses_named(instance: Instance, text: str, sender: str) -> list[str]:
+    """The titles of the sender's courses the message names: in full (a typo allowed), or by an acronym in
+    capitals ("my ML lecture"; "this is a must" names no IS)."""
+    titles = {instance.course_title(s.course) for s in instance.sessions if s.faculty == sender}
+    return sorted(t for t in titles if mentions(text, t)
+                  or (len(a := acronym(t).upper()) >= 2 and re.search(rf"(?<![\w.]){a}(?![\w.])", text)))
+
+
+def _ground_period(intent, text: str, notes: list[str], i: int):
+    """``intent`` with a period only where the message gives one: the model's habit of adding "this week" or
+    "rest of the semester" to a request that says neither changes which weeks it applies to."""
+    period = getattr(intent, "period", None)
+    if not isinstance(period, Period) or period.is_recurring:
+        return intent
+    if not names_weeks(text):
+        notes.append(f"intent {i} ({intent.kind}): weeks, but the message names none; read as every week")
+    elif period.relative == "rest_of_semester" and whole_term(text):
+        notes.append(f"intent {i} ({intent.kind}): the rest of the semester, but the message says the whole "
+                     "semester; read as every week")
+    else:
+        return intent
+    return intent.model_copy(update={"period": Period()})
 
 
 def _check_move(instance: Instance, intent: Move, sender: str, timetable: Mapping[str, Placement] | None,

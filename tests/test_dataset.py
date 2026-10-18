@@ -15,7 +15,7 @@ from training import quality
 from training.dataset import build, fingerprint, load_recipe
 
 ROOT = Path(__file__).resolve().parents[1]
-LATEST = ROOT / "data" / "recipes" / "intents-v5.toml"  # the newest recipe: its frozen test split is the current one
+LATEST = ROOT / "data" / "recipes" / "intents-v6.toml"  # the newest recipe: its frozen test split is the current one
 
 
 @pytest.fixture(scope="module")

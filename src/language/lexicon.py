@@ -17,6 +17,7 @@ from __future__ import annotations
 import re
 from difflib import SequenceMatcher, get_close_matches
 from functools import lru_cache
+from itertools import pairwise
 
 # chat shorthand, by exact token
 SHORTHAND = {
@@ -122,6 +123,50 @@ def necessary(text: str) -> bool:
 # a conflict that rules out the time a class is at now ("it clashes with a committee meeting")
 _CONFLICT = re.compile(r"\b(clash(es|ing)?|conflicts? with|overlaps? with|committee|meeting|exam duty|duty|"
                        r"appointment|conference|on leave|can't make|cannot make)\b", re.IGNORECASE)
+
+
+def _close(a: str, b: str) -> bool:
+    """One typo apart: a letter added, dropped, changed or two neighbours swapped ("wek", "trem", "rset").
+    For the short words ``normalise`` leaves alone."""
+    if a == b:
+        return True
+    if abs(len(a) - len(b)) > 1 or min(len(a), len(b)) < 3:
+        return False
+    if len(a) == len(b):
+        d = [i for i in range(len(a)) if a[i] != b[i]]
+        return len(d) == 1 or (len(d) == 2 and d[1] == d[0] + 1 and a[d[0]] == b[d[1]] and a[d[1]] == b[d[0]])
+    short, long = sorted((a, b), key=len)
+    return any(long[:i] + long[i + 1:] == short for i in range(len(long)))
+
+
+def _says(ws: list[str], vocabulary: tuple[str, ...]) -> bool:
+    return any(_close(w, v) for w in ws for v in vocabulary)
+
+
+# words that name weeks or a stretch of the term; a typo still counts, so a period is never dropped for one
+_SPAN = ("week", "weeks", "fortnight", "semester", "term", "today", "tomorrow", "tonight", "until", "till",
+         "onwards", "onward", "rest", "remainder", "remaining", "left", "january", "february", "march", "april",
+         "june", "july", "august", "september", "october", "november", "december")
+_FROM_NOW = ("this", "next", "coming", "following")
+_DAY = ("mon", "tue", "wed", "thu", "fri", "sat", "sun")
+_WHOLE = ("whole", "entire", "throughout", "all", "full", "duration")
+_TERM = ("semester", "term", "sem")
+_REST = ("rest", "remainder", "remaining", "left", "until", "till", "onwards", "onward", "now")
+
+
+def names_weeks(text: str) -> bool:
+    """Whether the text says when, beyond the weekday: weeks, a stretch of the term, a date or "this Friday".
+    A message that does not ("Monday morning would suit me") asks for every week."""
+    ws = words(normalise(text))
+    return (_says(ws, _SPAN) or any(re.fullmatch(r"\d{4}", w) for w in ws)
+            or any(_says([a], _FROM_NOW) and b.startswith(_DAY) for a, b in pairwise(ws)))
+
+
+def whole_term(text: str) -> bool:
+    """The text asks for the whole semester ("for the whole semester", "throughout the term"), which is every
+    week, and not for what is left of it."""
+    ws = words(normalise(text))
+    return _says(ws, _WHOLE) and _says(ws, _TERM) and not _says(ws, _REST)
 
 
 def firmness(text: str) -> str:

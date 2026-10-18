@@ -365,6 +365,21 @@ and update the adapter with `INIT_FROM` (it reads only rows it hasn't seen).
 `evaluation.robustness` and the `test-typo`/`test-noisy` suites measure noisy
 English; `--no-checks` scores the raw reading without `language.checks`.
 
+**What the model does and what the code does.** Since schema 4 (`intents-v6`)
+the model only reads: it writes courses, colleagues, sections and rooms as the
+message names them, and `language.names` finds their IDs, so the prompt carries
+no directory (the calendar, the week and the sender: a median prompt of 300
+characters instead of 1,800). Every reading is then checked against the message
+(`language.checks`, `intents.ground_references`): an ID must exist and name
+what the message names, a period the message does not give is every week
+("this week" on a booking that names no week, "the rest of the semester" for
+"the whole semester"), and a reading that leaves out the class the message is
+about is asked about rather than acted on. A rule belongs there, not in more
+training rows, when it holds for every gold reading (check it on all of
+`data/compiler-intents` and `data/suites` first). Models trained on schema 3
+keep their prompt: name them in the registry's `[schemas]`
+(`adapters-lora.toml`), or pass `--schema 3` with `--local-model`.
+
 A model trained on it is used with `NTS_INTENTS=1` beside `--parser local`; the
 orchestrator then routes swaps, extra classes, cancellations and withdrawals by
 the intents it reads. `evaluation.intents` scores it on the 417 test requests

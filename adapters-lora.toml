@@ -9,3 +9,7 @@ base = "Qwen3.5-4B-Base-Q8_0"
 [adapters]
 nts-intents-v4 = ["compile"]
 nts-read100 = ["policy", "reply", "explain"]
+
+[schemas]                       # the intent vocabulary an adapter was trained on, when not the current one
+nts-intents-v4 = 3              # IDs and the directory in the prompt (language.intent_compiler.INTENT_PROMPT_V3)
+nts-intents-v5 = 3

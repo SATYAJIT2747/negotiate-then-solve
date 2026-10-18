@@ -9,3 +9,7 @@ base = "Qwen3.5-4B-Finetune-NTS-Read100-Q8_0"
 [adapters]
 "Qwen3.5-4B-Finetune-NTS-Intents-v2-Q8_0" = ["compile"]
 "Qwen3.5-4B-Finetune-NTS-Read100-Q8_0" = ["policy", "reply", "explain"]
+
+[schemas]                       # the intent vocabulary a model was trained on, when not the current one
+"Qwen3.5-4B-Finetune-NTS-Intents-v2-Q8_0" = 3
+"Qwen3.5-4B-Finetune-NTS-Intents-v5-Q8_0" = 3

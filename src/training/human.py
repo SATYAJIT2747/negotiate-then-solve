@@ -51,7 +51,7 @@ def to_row(instance: Instance, h: dict) -> dict:
     return {"id": h["id"], "source": "human", "kind": h.get("kind") or (gold.intents[0].kind if gold.intents
                                                                           else gold.action),
             "schema": SCHEMA_VERSION, "annotator": h.get("annotator"), "paraphrased": False,
-            "messages": _chat(intent_message(instance, request, mine, h.get("current_week"), today), gold),
+            "messages": _chat(instance, intent_message(instance, request, mine, h.get("current_week"), today), gold),
             **_meta(request, timetable, h.get("current_week"), today)}
 
 
@@ -74,7 +74,9 @@ def prefill(instance: Instance, client, rows: list[dict]) -> list[dict]:
         request = request_of(h)
         timetable = {sid: Placement.model_validate(p) for sid, p in (h.get("timetable") or {}).items()}
         try:
-            reading, notes = read_answer(client, intent_message(instance, request, timetable, h.get("current_week")))
+            schema = getattr(client, "schema", None) or SCHEMA_VERSION
+            reading, notes = read_answer(client, intent_message(instance, request, timetable, h.get("current_week"),
+                                                                schema=schema))
             gold = json.loads(reading.model_dump_json(exclude_defaults=True))
         except Exception as e:  # noqa: BLE001 - a message the model cannot read is labelled from scratch
             gold, notes = None, [f"{type(e).__name__}: {e}"[:200]]

@@ -9,6 +9,9 @@ so that a later fine-tuning run can use every earlier row with the meaning it wa
 
 A step only rewrites what changed meaning. Version 2 made a move without ``hard`` a wish, so a version-1
 move without it, a requirement when it was written, gets ``hard: true``. Version 3 only added fields.
+Version 4 reads names where there were IDs, and an ID still reads as itself (``language.names``), so a
+reading needs no change; the training rows are written with names when they are put in the current
+prompt (``intent_compiler.format_row``).
 """
 
 from __future__ import annotations
@@ -30,7 +33,7 @@ def _added_fields(out: dict) -> dict:
     return out
 
 
-STEPS: dict[int, Callable[[dict], dict]] = {1: _v1_to_v2, 2: _added_fields}
+STEPS: dict[int, Callable[[dict], dict]] = {1: _v1_to_v2, 2: _added_fields, 3: _added_fields}
 assert sorted(STEPS) == list(range(1, SCHEMA_VERSION)), "a migration for every version before the current one"
 
 
