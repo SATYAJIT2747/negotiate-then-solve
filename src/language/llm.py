@@ -410,6 +410,8 @@ class DailyQuotaReached(LLMError):
 
 
 class GeminiClient:
+    zero_shot = True  # never fine-tuned on reading requests: asked with the whole vocabulary
+
     def __init__(
         self,
         model: str | None = None,

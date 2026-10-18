@@ -121,6 +121,9 @@ def add_args(ap) -> None:
     ap.add_argument("--schema", type=int, default=None,
                     help="the intent vocabulary version the model was trained on (default: the registry's, "
                          "else the current); an older one is asked with its prompt and its answer migrated")
+    ap.add_argument("--zero-shot", action="store_true",
+                    help="the model was not fine-tuned on reading requests (a base model): give it the whole "
+                         "vocabulary in the prompt, as Gemini is")
 
 
 def task_clients(*, base_url: str, reg: Registry | None = None, domain: str | None = None,

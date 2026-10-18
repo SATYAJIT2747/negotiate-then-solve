@@ -391,3 +391,21 @@ def test_the_current_prompt_has_no_directory(cse):
     short, full = intent_message(cse, req, current_week=5), intent_message(cse, req, current_week=5, schema=3)
     assert "Faculty:" in full and "Faculty:" not in short and "F-102" not in short
     assert "Current week: 5" in short and req.raw_text in short and len(short) * 5 < len(full)
+
+
+def test_a_fine_tuned_reader_gets_a_short_prompt_and_gemini_the_whole_vocabulary():
+    from language.intent_compiler import INTENT_INSTRUCTIONS, INTENT_PROMPT, read_answer
+
+    class Fake:
+        def __init__(self, zero_shot):
+            self.zero_shot, self.system = zero_shot, None
+
+        def generate(self, system, prompt, schema):
+            self.system = system
+            return IntentOutput(action="answer")
+
+    tuned, zero = Fake(False), Fake(True)
+    read_answer(tuned, "...")
+    read_answer(zero, "...")
+    assert tuned.system == INTENT_PROMPT and zero.system == INTENT_INSTRUCTIONS
+    assert len(INTENT_PROMPT) * 5 < len(INTENT_INSTRUCTIONS)

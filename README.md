@@ -380,6 +380,15 @@ training rows, when it holds for every gold reading (check it on all of
 keep their prompt: name them in the registry's `[schemas]`
 (`adapters-lora.toml`), or pass `--schema 3` with `--local-model`.
 
+The fine-tuned reader's system prompt only names the task (43 tokens); the
+whole vocabulary (`INTENT_INSTRUCTIONS`) goes to readers not trained on it:
+Gemini, or a base model with `--zero-shot`. A training row is now ~210 tokens
+(1,445 in schema 3) for a ~35-token answer, so an epoch of the intents data is
+0.57M tokens instead of 3.9M. With that and `PRECISION = "fp16"` (fp32 on a T4
+runs at a fraction of its fp16 speed, and was most of the 22-hour runs), the 4B
+notebook trains `nts-intents-v6` from the base with `CURVE = [1/3, 2/3, 1.0]`:
+an adapter after each epoch, so one run says how many epochs are needed.
+
 A model trained on it is used with `NTS_INTENTS=1` beside `--parser local`; the
 orchestrator then routes swaps, extra classes, cancellations and withdrawals by
 the intents it reads. `evaluation.intents` scores it on the 417 test requests

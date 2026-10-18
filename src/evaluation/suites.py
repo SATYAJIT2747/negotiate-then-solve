@@ -73,6 +73,7 @@ def main() -> None:
     if args.parser == "local":
         client = local_client("compile", base_url=args.local, schema=args.schema, server_model=args.local_model, adapter=args.adapter,
                               reg=registry(args.adapters))
+        client.zero_shot = args.zero_shot
     elif args.parser == "gemini":
         from language.llm import GeminiClient
 
