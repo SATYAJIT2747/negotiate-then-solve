@@ -8,7 +8,8 @@ import pytest
 from core.generator import generate_department
 from core.schemas import Channel, ConstraintType, Placement, Request, Role
 from language.checks import check_reading, checked_compile, clock, read_repaired, repair_raw
-from language.intents import Avoid, ClassRef, ClubBooking, IntentOutput, Move, Only, Period, TimeSpec, Unavailable
+from language.intents import (Avoid, ClassRef, ClubBooking, IntentOutput, Move, NeedsRoom, Only, Period, TimeSpec,
+                              Unavailable)
 from language.lexicon import hedged, mentions, names_weeks, necessary, normalise, whole_term
 from language.rule_parser import RuleParser
 
@@ -121,6 +122,28 @@ def test_a_requirement_on_all_times_in_a_message_about_one_class_is_asked_about(
     out = IntentOutput(action="compile", intents=[Only(time=TimeSpec(days=["Thu"], at=["14:00"]), hard=True)])
     c = checked_compile(instance, request(lecture.faculty, f"I need my {title} lecture on Thursday at 2 pm"), out)
     assert c.question and title in c.question and not c.result.constraints
+
+
+def test_a_room_need_that_leaves_out_the_time_the_message_gives_gets_it_back(instance, lecture):
+    title = instance.course_title(lecture.course)
+    which = ClassRef(course=title, kind="lecture")
+    out = IntentOutput(action="compile", intents=[NeedsRoom(which=which, equipment=["routers"])])
+    text = f"My {title} lecture needs the routers, and it has to be on Tuesday afternoon."
+    c = check_reading(instance, request(lecture.faculty, text), out)
+    need, move = c.output.intents
+    assert c.question is None and need.kind == "needs_room"
+    assert (move.kind, move.which, move.to.days, move.to.part, move.hard) == ("move", which, ["Tue"], "afternoon", True)
+    c = check_reading(instance, request(lecture.faculty, f"My {title} lecture needs routers; Thursday at 2 pm please."),
+                      out)
+    move = c.output.intents[1]
+    assert (move.to.days, move.to.at, move.hard) == (["Thu"], ["14:00"], False)
+    # a room need alone, or for the class that is on a day, is read as it is
+    c = checked_compile(instance, request(lecture.faculty, f"My {title} lecture needs the routers."), out)
+    assert c.question is None and c.result.constraints
+    on_wed = NeedsRoom(which=ClassRef(course=title, kind="lecture", day="Wed"), equipment=["routers"])
+    c = check_reading(instance, request(lecture.faculty, f"My Wednesday {title} lecture needs the routers."),
+                      IntentOutput(action="compile", intents=[on_wed]))
+    assert c.question is None
 
 
 def test_weeks_and_the_whole_term_are_read_with_a_typo():

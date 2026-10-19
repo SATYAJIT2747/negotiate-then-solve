@@ -18,7 +18,10 @@ show what was changed and why.
     time as the destination ("I need my lecture on Thursday at 2 pm");
   - a wish to move a class to where it already is is asked about;
   - a reading that refers to no class, of a message that names one of the sender's classes, is asked
-    about (is it that class, or every class?): the reading left out what the message is about.
+    about (is it that class, or every class?): the reading left out what the message is about;
+  - a reading of room needs only, of a message that names a day the class is not referred to by, gets the
+    time back as a move of that class ("needs the routers, and it has to be on Tuesday afternoon": the
+    time was left out; the message says it plainly, so asking again would only repeat it).
 """
 
 from __future__ import annotations
@@ -35,6 +38,7 @@ from .intents import (
     ClassRef,
     IntentOutput,
     Move,
+    NeedsRoom,
     Period,
     TimeSpec,
     Unresolved,
@@ -42,7 +46,7 @@ from .intents import (
     meeting,
     slots,
 )
-from .lexicon import acronym, hedged, mentions, names_weeks, necessary, whole_term
+from .lexicon import acronym, hedged, mentions, names_weeks, necessary, normalise, whole_term, words
 
 _CLOCK = re.compile(r"^\s*(\d{1,2})(?:[:.](\d\d))?\s*(am|pm|a\.m\.|p\.m\.)?\s*$", re.IGNORECASE)
 _DAYS = {d.lower(): d for d in FULL_DAY} | {v.lower(): k for k, v in FULL_DAY.items()}
@@ -181,6 +185,13 @@ def check_reading(instance: Instance, request: Request, out: IntentOutput,
             notes.append(f"the reading is about all your times, in a message about {named[0]}")
             question, missing = (f"Should this apply to your {named[0]} classes only, or to all your classes?",
                                  ["session"])
+    if (question is None and intents and all(isinstance(x, NeedsRoom) and x.which.day is None for x in intents)
+            and (days := _days_named(text))):
+        to = _time_named(text, days)
+        notes.append(f"the reading is only about the room, in a message that also says when: read as a move to "
+                     f"{' and '.join(days)}{' ' + to.part if to.part else ''}{' at ' + ', '.join(to.at) if to.at else ''}")
+        intents += [Move(which=x.which, to=to, hard=necessary(text), justification=x.justification)
+                    for x in list(intents)]
     return Checked(out.model_copy(update={"intents": intents}), notes, question, missing)
 
 
@@ -190,6 +201,27 @@ def _about_classes(intent) -> bool:
     return (any(isinstance(getattr(intent, n, None), ClassRef) for n in ("which", "mine", "theirs"))
             or (who is not None and who.kind in ("course", "session"))
             or intent.kind in ("clash_report", "club_booking", "room_closed"))
+
+
+def _days_named(text: str) -> list[str]:
+    """The weekdays ``text`` names ("tues" and "Thursdays" too), in the week's order."""
+    said = {w.removesuffix("s") for w in words(normalise(text))}
+    return [d for d in FULL_DAY.values() if d.lower() in said]
+
+
+_START = re.compile(r"\b(\d{1,2})(?::(\d\d))?\s*(am|pm)\b")
+
+
+def _time_named(text: str, days: list[str]) -> TimeSpec:
+    """When ``text`` says the class should be: the days, and a part of the day or start times."""
+    low = normalise(text)
+    codes = [k for k, v in FULL_DAY.items() if v in days]
+    if re.search(r"\b(afternoons?|after lunch)\b", low):
+        return TimeSpec(days=codes, part="afternoon")
+    if re.search(r"\b(mornings?|before lunch)\b", low):
+        return TimeSpec(days=codes, part="morning")
+    at = sorted({c for m in _START.finditer(low) if (c := clock(m[0]))})
+    return TimeSpec(days=codes, at=at or None)
 
 
 def _own_courses_named(instance: Instance, text: str, sender: str) -> list[str]:

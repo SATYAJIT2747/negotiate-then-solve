@@ -220,6 +220,8 @@ def check_authority(instance: Instance, request: Request, c: Constraint) -> str 
         return "students can report issues but cannot change the timetable"
     if role == Role.LAB_INCHARGE:
         return None if c.scope.room is not None else "lab in-charges can only change room availability"
+    if role == Role.EXAM_CELL:  # takes rooms for exams
+        return None if c.scope.room is not None else "the exam cell can only change room availability"
     if role == Role.HOD:
         return None  # departmental scope; cross-department checks come with multi-department data
     s = c.scope

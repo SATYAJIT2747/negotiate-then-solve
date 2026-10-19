@@ -202,6 +202,13 @@ def test_rooms(instance, teacher):
     (closed,) = c.result.constraints
     assert (closed.type, closed.tier, closed.scope.room) == (ConstraintType.UNAVAILABLE, Tier.PHYSICAL, lab.id)
 
+    # the exam cell takes a room for exams, and only rooms
+    c = compile_(instance, "S-EXAM", RoomClosed(room=lab.id, period=Period(weeks=[8])), role=Role.EXAM_CELL)
+    assert c.result.action == ExpectedAction.COMPILE and c.result.constraints[0].scope.room == lab.id
+    c = compile_(instance, "S-EXAM", Avoid(who=Who(kind="faculty", id=teacher), time=TimeSpec(days=["Mon"])),
+                 role=Role.EXAM_CELL)
+    assert c.result.action == ExpectedAction.REFUSE
+
     course = next(s.course for s in instance.sessions if s.faculty == teacher)
     c = compile_(instance, teacher, NeedsRoom(which=ClassRef(course=course), equipment=[lab.equipment[0]]))
     named = [s.id for s in instance.sessions if s.faculty == teacher and s.course == course]
