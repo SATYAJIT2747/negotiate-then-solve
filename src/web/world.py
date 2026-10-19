@@ -783,6 +783,8 @@ class World:
         labs = [r for r in inst.rooms if r.type.value == "lab"]
         name = {f.id: f.name for f in inst.faculty}
         steps: list[tuple[str, str, bool]] = []
+        waiting: list[tuple[str, str, bool]] = []  # left for the coordinator: after the changes approved here,
+        # since a change builds on the ones still waiting before it and is approved after them
         if teachers:
             steps.append((teachers[0].id, "I'm at a conference in week 7, Tuesday to Thursday, so I can't take my classes then.", True))
         if len(teachers) > 1:
@@ -791,12 +793,13 @@ class World:
             a, b = rivals
             self.profiles[b.faculty].windows = [Window(days=["Thu", "Fri"], slots=[5, 6, 7])]
             self.profiles[a.faculty].windows = []
-            steps += [(a.faculty, f"My {title(a.course)} practical needs the routers, and it has to be on Tuesday afternoon.", True),
-                      (b.faculty, f"My {title(b.course)} practical needs routers too; it must be on Tuesday afternoon.", False)]
+            steps.append((a.faculty, f"My {title(a.course)} practical needs the routers, and it has to be on Tuesday afternoon.", True))
+            waiting.append((b.faculty, f"My {title(b.course)} practical needs routers too; it must be on Tuesday afternoon.", False))
         if visiting:
             steps.append((visiting[0].id, ("I can't teach on Mondays, Wednesdays or Fridays; I am only on campus on Tuesdays and "
                                            "Thursdays this semester."), True))
-        steps += self._section_clashes(teachers, exclude={s[0] for s in steps})
+        steps += self._section_clashes(teachers, exclude={s[0] for s in steps + waiting})
+        steps += waiting
         if halls:
             steps.append(("S-EXAM", f"{halls[0].name} is closed for mid-semester exams in week 8.", False))
         if inst.groups and len(teachers) > 2:
@@ -878,7 +881,7 @@ class World:
             self.autopilot[f.id] = True
         try:
             for e in picked:
-                r = self.intake.from_portal(e.request.sender_id, e.request.raw_text)
+                r = self.intake.from_portal(e.request.sender_id, e.request.raw_text, makeup=None)  # as scored: moved
                 if r is None:
                     continue
                 self.submit(r, wait=True)

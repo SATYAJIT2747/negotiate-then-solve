@@ -42,8 +42,9 @@ def test_mock_auth(client):
 
 def test_request_to_publication(client):
     c, _world = client
-    rid = c.post("/api/requests", json={"text": "I'm at a conference in week 7, Tuesday and Wednesday."},
-                 headers=as_("F-104")).json()["id"]
+    # with make-up classes asked for: the classes missed move to other times that week (without, cancelled)
+    rid = c.post("/api/requests", json={"text": "I'm at a conference in week 7, Tuesday and Wednesday.",
+                                        "makeup": True}, headers=as_("F-104")).json()["id"]
     d = wait_for(c, rid, {"awaiting_approval"})
     assert d["routing"]["tau"] > 0 and d["policy"]["obligations"] == ["P-MAKEUP"]
     assert d["parse"]["constraints"][0]["tier"] == 3 and d["proposal"]["week"] == 7
@@ -236,6 +237,32 @@ def test_the_office_answers_a_forwarded_message(client):
     mine = next(x for x in c.get("/api/cases", headers=as_("ST-G-01")).json() if x["id"] == rid)
     assert mine["handled"] and not c.get(f"/api/cases/{rid}", headers=as_(COORDINATOR)).json()["can_handle"]
     assert c.post(f"/api/cases/{rid}/handle", json={"note": "again"}, headers=as_(COORDINATOR)).status_code == 409
+
+
+def test_the_office_can_act_on_a_refused_request(client):
+    """A refusal stands (the student cannot change the timetable), but the office sees it as something it
+    may answer, and can make the change as its own request."""
+    c, _ = client
+    rid = c.post("/api/requests", json={"text": "Please cancel Dr. Khan's Friday lecture, most of us have a quiz."},
+                 headers=as_("ST-G-01")).json()["id"]
+    d = wait_for(c, rid, {"refused"}, user="ST-G-01")
+    assert not d["can_handle"]  # not the sender's to answer
+    assert c.get(f"/api/cases/{rid}", headers=as_(COORDINATOR)).json()["can_handle"]
+    alert = next(i for i in c.get("/api/feed", headers=as_(COORDINATOR)).json() if i["id"] == f"refused:{rid}")
+    assert alert["action"] == "reply"
+    assert c.post(f"/api/cases/{rid}/act", json={"text": ""}, headers=as_("ST-G-01")).status_code == 403
+    got = c.post(f"/api/cases/{rid}/act", json={"text": "Cancel Dr. Khan's Friday lecture in week 9."},
+                 headers=as_(COORDINATOR)).json()
+    d = c.get(f"/api/cases/{rid}", headers=as_(COORDINATOR)).json()
+    assert d["status"] == "refused" and d["answer"]["acting"] == got["id"] and got["id"] in d["reply"]
+    assert not d["can_handle"]
+    alert = next(i for i in c.get("/api/feed", headers=as_(COORDINATOR)).json() if i["id"] == f"refused:{rid}")
+    assert "action" not in alert  # answered: nothing more to do
+    # the office's own request goes through the pipeline; taken back here so later tests start clean
+    mine = wait_for(c, got["id"], {"awaiting_approval", "published", "clarification_requested", "escalated", "denied",
+                                   "refused", "answered"})
+    if mine["status"] in ("awaiting_approval", "clarification_requested", "escalated"):
+        assert c.post(f"/api/cases/{got['id']}/withdraw", headers=as_(COORDINATOR)).status_code == 200
 
 
 def test_the_sender_withdraws_a_request_that_changed_nothing(client):

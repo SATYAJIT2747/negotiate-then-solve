@@ -127,6 +127,7 @@ def _summary(w: World, r: Request, case: Case | None) -> dict:
     status = case.status.value if case else r.status.value
     return {"id": r.id, "sender": r.sender_id, "sender_name": w.name_of(r.sender_id), "role": r.role.value,
             "channel": r.channel.value, "text": r.raw_text, "received_at": r.received_at.isoformat(),
+            "makeup": r.makeup,
             "status": status, "route": case.route if case else "",
             "type": case.parse.output.request_type if case and case.parse and case.parse.output else None,
             "rounds": case.outcome.rounds if case and case.outcome else 0,
@@ -147,7 +148,8 @@ def _case_detail(w: World, case: Case) -> dict:
     d["parse"] = None if p is None else {
         "action": p.action.value, "refusal": p.refusal, "errors": p.errors,
         "output": p.output.model_dump() if p.output else None,
-        "constraints": [_constraint(w, c) for c in p.constraints]}
+        # as recorded (a class named on the wrong day retargeted to the one on that day), else as read
+        "constraints": [_constraint(w, c) for c in (case.constraints or p.constraints)]}
     pol = case.policy
     d["policy"] = None if pol is None else {
         "verdict": pol.verdict.value, "cited": [{"id": i, "cite": next(r.cite() for r in w.rules if r.id == i)}
@@ -179,8 +181,10 @@ def _case_detail(w: World, case: Case) -> dict:
                                                      "soft_violations": o.result.soft_violations}}
     if case.proposal:
         before = w.store.version(case.proposal.parent) if case.proposal.parent else None
+        under = w.orch.builds_on(case)  # an earlier change still waiting: it is approved first
         d["proposal"] = {"version": case.proposal.version, "week": case.proposal.week,
-                         "diff": _diff(w, before.assignment if before else {}, case.proposal.assignment)}
+                         "diff": _diff(w, before.assignment if before else {}, case.proposal.assignment),
+                         "builds_on": under.id if under else None}
     else:
         d["proposal"] = None
     d["fairness"] = case.fairness
@@ -329,7 +333,8 @@ def _feed(w: World, u: dict, decides, handles) -> list[dict]:
         if me == COORDINATOR and not own and case.status == S.REFUSED:
             add(f"refused:{case.id}", n, "alert", case, "A request was refused",
                 f"Stopped before it reached the timetable: {case.parse.refusal}." if case.parse and case.parse.refusal
-                else "Stopped before it reached the timetable.", at, sender=case.request.sender_id)
+                else "Stopped before it reached the timetable.", at, sender=case.request.sender_id,
+                **({"action": "reply"} if case.handled is None else {}))  # the office may still answer it
         # waiting on me
         if me == COORDINATOR and case.status == S.AWAITING_APPROVAL:
             add(f"approve:{case.id}", n, "action", case, "A change is waiting for your approval", case.request.raw_text,
@@ -516,6 +521,7 @@ class LoginBody(BaseModel):
 
 class RequestBody(BaseModel):
     text: str
+    makeup: bool = False  # "hold make-up classes": off, classes missed in an absence are cancelled
 
 
 class FormRequestBody(BaseModel):
@@ -791,7 +797,7 @@ def create_web_app(world: World | None = None, *, worlds_dir: Path | None = None
     def submit(body: RequestBody, u: dict = Depends(user)) -> dict:
         w = W()
         try:
-            r = w.intake.from_portal(u["id"], body.text)
+            r = w.intake.from_portal(u["id"], body.text, makeup=body.makeup)
         except UnknownSender:
             raise HTTPException(403, "unknown user") from None
         if r is None:
@@ -863,8 +869,8 @@ def create_web_app(world: World | None = None, *, worlds_dir: Path | None = None
         return u["id"] == case.request.sender_id and not running and w.orch.withdrawable(case) is None
 
     def handles(u: dict, case: Case) -> bool:
-        """A message forwarded to the coordinator, still unanswered, and this is the coordinator."""
-        return u["id"] == COORDINATOR and case.forwarded_to == "coordinator" and case.handled is None
+        """A message forwarded to the coordinator, or refused, still unanswered, and this is the coordinator."""
+        return u["id"] == COORDINATOR and W().orch.office_answers(case) and case.handled is None
 
     def decides(u: dict, case: Case) -> bool:
         """The person an escalation was sent to: "coordinator", "dean", "hod", or the heads by id."""
@@ -916,7 +922,7 @@ def create_web_app(world: World | None = None, *, worlds_dir: Path | None = None
             raise HTTPException(404)
         if u["id"] != COORDINATOR:
             raise HTTPException(403, "only the timetable office acts on forwarded messages")
-        if c.forwarded_to != "coordinator" or c.handled is not None:
+        if not w.orch.office_answers(c) or c.handled is not None:
             raise HTTPException(409, "this message is not waiting for the timetable office")
         r = w.intake.from_portal(u["id"], (body.text or c.request.raw_text).strip())
         if r is None:

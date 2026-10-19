@@ -162,8 +162,10 @@ class Store:
     # -- timetable versions ----------------------------------------------------------
 
     def propose_version(self, assignment: dict[str, Placement], case_id: str,
-                        week: int | None = None, cancelled: list[str] | None = None) -> TimetableVersion:
-        cur = self.current_version(week) or self.current_version()
+                        week: int | None = None, cancelled: list[str] | None = None,
+                        parent: TimetableVersion | None = None) -> TimetableVersion:
+        """A version waiting for approval, built on ``parent`` (by default the published timetable)."""
+        cur = parent or self.current_version(week) or self.current_version()
         if week is not None:  # the week's extra classes are held wherever they were placed
             assignment = {**{s: p for s, p in assignment.items() if not s.startswith(EXTRA_PREFIX)},
                           **{x.session.id: x.placement for x in self.extras(week)}}

@@ -214,19 +214,79 @@ def test_a_request_the_timetable_already_meets_needs_no_approval(world):
     assert any(x.source.request == "R-8" for x in store.constraints())  # still in force
 
 
-def test_approving_an_older_proposal_does_not_undo_a_newer_change(world):
-    """Two proposals wait; the newer is approved first. The older was built on the timetable before
-    it, so it is solved again on the live version instead of being published as it was."""
+def test_a_change_builds_on_the_ones_still_waiting_and_is_approved_after_them(world):
+    """Two proposals wait. The newer is built on the older, so it shows only its own moves, and it cannot
+    be published first: that would publish the older one too, unapproved."""
+    sc, orch, store, owners = world
+    published = store.current_version()
+    a = orch.submit(req("R-1", owners["R-A"], "REQUEST-A"))
+    b = orch.submit(req("R-2", owners["R-B"], "REQUEST-B"))
+    assert a.status == b.status == S.AWAITING_APPROVAL
+    assert a.proposal.parent == published.version and b.proposal.parent == a.proposal.version
+    assert orch.builds_on(b) is a
+    with pytest.raises(ValueError, match="R-1"):
+        orch.approve("R-2", "C-TT")
+    assert store.current_version().version == published.version  # nothing was published
+    va = orch.approve("R-1", "C-TT")
+    vb = orch.approve("R-2", "C-TT")
+    assert (va.version, vb.version) == (a.proposal.version, b.proposal.version)  # as proposed: no re-solve
+    assert not any(e["kind"] == "rebased" for e in store.events("R-2"))
+    assert verify_timetable(sc.instance, vb.assignment, _hard_in(store)) == []
+
+
+def test_a_change_built_on_one_withdrawn_is_solved_again_on_the_live_timetable(world):
     sc, orch, store, owners = world
     a = orch.submit(req("R-1", owners["R-A"], "REQUEST-A"))
     b = orch.submit(req("R-2", owners["R-B"], "REQUEST-B"))
-    assert a.status == b.status == S.AWAITING_APPROVAL and a.proposal.parent == b.proposal.parent
+    assert b.proposal.parent == a.proposal.version
+    orch.withdraw("R-1", owners["R-A"])
+    assert orch.builds_on(b) is None
     vb = orch.approve("R-2", "C-TT")
-    stale = a.proposal.version
-    va = orch.approve("R-1", "C-TT")
-    assert va.version != stale and va.parent == vb.version
-    assert any(e["kind"] == "rebased" for e in store.events("R-1"))
-    assert verify_timetable(sc.instance, va.assignment, _hard_in(store)) == []
+    assert vb.parent == store.version(a.proposal.version).parent  # on the published timetable, not on R-1
+    assert any(e["kind"] == "rebased" for e in store.events("R-2"))
+    assert verify_timetable(sc.instance, vb.assignment, _hard_in(store)) == []
+
+
+def test_a_week_repair_builds_on_a_semester_change_still_waiting(world):
+    """A week's first repair, made while a semester change waits: it builds on that change, so its own
+    moves are all it shows (not the waiting change's again), and it is approved after it."""
+    sc, orch, store, owners = world
+    a = orch.submit(req("R-1", owners["R-A"], "REQUEST-A"))
+    who = owners["R-B"]
+    orch.parser.outputs["AWAY-WEEK-9"] = ParseOutput(request_type="unavailability", action="compile", constraints=[
+        DraftConstraint(type="unavailable", hard=True, scope_kind="faculty", scope_id=who,
+                        days=[teaching_day(sc, store, who)], weeks=[9], justification="stated")])
+    w = orch.submit(req("R-2", who, "AWAY-WEEK-9"))
+    assert w.status == S.AWAITING_APPROVAL and w.proposal.week == 9
+    assert w.proposal.parent == a.proposal.version and orch.builds_on(w) is a
+    own = {s for s, p in w.proposal.assignment.items() if a.proposal.assignment.get(s) != p}
+    assert all(sc.instance.session_by_id[s].faculty == who for s in own), "only the absent teacher's classes"
+    with pytest.raises(ValueError, match="R-1"):
+        orch.approve("R-2", "C-TT")
+    orch.approve("R-1", "C-TT")
+    assert orch.approve("R-2", "C-TT").version == w.proposal.version
+
+
+@pytest.mark.parametrize("makeup", [False, True])
+def test_an_absence_cancels_the_classes_it_misses_unless_make_up_classes_are_asked_for(world, makeup):
+    sc, orch, store, owners = world
+    who = owners["R-B"]
+    day = teaching_day(sc, store, who)
+    sessions = sc.instance.session_by_id
+    missed = {s for s, p in store.current_version().assignment.items() if sessions[s].faculty == who and p.day == day}
+    orch.parser.outputs["AWAY-WEEK-7"] = ParseOutput(request_type="unavailability", action="compile", constraints=[
+        DraftConstraint(type="unavailable", hard=True, scope_kind="faculty", scope_id=who, days=[day], weeks=[7],
+                        justification="stated")])
+    c = orch.submit(req("R-3", who, "AWAY-WEEK-7").model_copy(update={"makeup": makeup}))
+    assert c.status == S.AWAITING_APPROVAL and c.proposal.week == 7
+    if makeup:  # held at other times that week
+        assert not c.proposal.cancelled and missed <= set(c.proposal.assignment)
+        assert all(c.proposal.assignment[s].day != day for s in missed)
+    else:  # not held that week, and nothing else moves for them
+        assert set(c.proposal.cancelled) == missed and not missed & set(c.proposal.assignment)
+        assert "no make-up" in c.reply
+        orch.approve("R-3", "C-TT")
+        assert "No make-up class was asked for" in c.notices[who]
 
 
 def test_a_semester_change_reaches_weeks_with_their_own_repair(world):
