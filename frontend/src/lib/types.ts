@@ -52,6 +52,8 @@ export interface CaseSummary {
   channel: string;
   text: string;
   received_at: string;
+  /** Classes missed in an absence: true, make-up classes; false, cancelled; null, not asked (moved). */
+  makeup?: boolean | null;
   status: Status;
   route: string;
   type: string | null;
@@ -221,7 +223,8 @@ export interface CaseDetail extends CaseSummary {
     };
     solver: null | { status: string; wall_time: number; moved: number | null; soft_violations: Record<string, number> };
   };
-  proposal: null | { version: number; week: number | null; diff: DiffRow[] };
+  /** builds_on: an earlier change still waiting for approval that this one is built on (approved first). */
+  proposal: null | { version: number; week: number | null; diff: DiffRow[]; builds_on?: string | null };
   fairness: { gini_before?: number; gini_after?: number; conceded?: string[]; preferences_lost?: string[] };
   /** How a person with the authority settled its escalation. */
   decision?: null | { by: string; by_name: string; granted: boolean; note: string; set_aside?: string[] };

@@ -2,7 +2,6 @@ import clsx from "clsx";
 import { AnimatePresence, motion } from "framer-motion";
 import {
   Activity,
-  BadgeCheck,
   BookOpen,
   ClipboardCheck,
   CalendarDays,
@@ -54,7 +53,6 @@ export const NAV: NavItem[] = [
   { to: "/", label: "Home", icon: Home, group: "main", view: "home" },
   { to: "/inbox", label: "Inbox", icon: Inbox, group: "main", view: "inbox", badge: "inbox" },
   { to: "/requests", label: "Requests", icon: ListChecks, group: "main", view: "requests" },
-  { to: "/approvals", label: "Approvals", icon: BadgeCheck, group: "main", view: "approvals", badge: "approvals" },
   { to: "/documents", label: "Policy documents", icon: FileUp, group: "main", view: "documents" },
   { to: "/semester", label: "Semester plan", icon: Hammer, group: "semester", view: "semester" },
   { to: "/preferences", label: "Semester preferences", icon: SlidersHorizontal, group: "semester", view: "prefs" },
@@ -111,11 +109,13 @@ export function Shell({ children }: { children: ReactNode }) {
 
   // the timetable-home roles read and answer everything in the home panel, so the Inbox is not in their menu
   const items = NAV.filter((n) => sees(n.view) && !(n.to === "/inbox" && user && TIMETABLE_HOME.includes(user.role)));
-  // the timetable home and the requests chat fill the window, so their panels keep their proportions at any zoom
+  // the timetable home, the requests chat and the request workspace (every role's New request) fill the
+  // window, so their panels keep their proportions at any zoom
   const fullscreen =
     !!user &&
-    TIMETABLE_HOME.includes(user.role) &&
-    (location.pathname === "/" || (location.pathname.startsWith("/requests") && !new URLSearchParams(location.search).has("details")));
+    (location.pathname === "/new" ||
+      (TIMETABLE_HOME.includes(user.role) &&
+        (location.pathname === "/" || (location.pathname.startsWith("/requests") && !new URLSearchParams(location.search).has("details")))));
   const onSearch = () => setPalette(true);
 
   return (
@@ -190,7 +190,12 @@ function Sidebar({
   const navigate = useNavigate();
   const location = useLocation();
   const minimal = !!user && TIMETABLE_HOME.includes(user.role); // the home page has the request box
-  const [more, setMore] = useState(false);
+  // "More" opens when one of its pages is opened; after that only its button opens and closes it
+  const inMore = minimal && items.some((i) => !ESSENTIAL.includes(i.to) && location.pathname.startsWith(i.to));
+  const [more, setMore] = useState(inMore);
+  useEffect(() => {
+    if (inMore) setMore(true);
+  }, [location.pathname]); // eslint-disable-line react-hooks/exhaustive-deps
   const badge = (b?: NavItem["badge"]) => (b === "inbox" ? ov?.my_inbox : b === "approvals" ? (ov?.pending_approvals ?? 0) + (ov?.my_decisions ?? 0) + (ov?.my_forwarded ?? 0) : 0) ?? 0;
   const navLink = (n: NavItem) => {
     const active = n.to === "/" ? location.pathname === "/" : location.pathname.startsWith(n.to);
@@ -278,7 +283,7 @@ function Sidebar({
                   <ChevronRight size={12} className={clsx("transition-transform", more && "rotate-90")} /> More
                 </button>
               )}
-              {(more || collapsed || items.some((i) => !ESSENTIAL.includes(i.to) && location.pathname.startsWith(i.to))) &&
+              {(more || collapsed) &&
                 items.filter((i) => !ESSENTIAL.includes(i.to)).map(navLink)}
             </div>
           </>

@@ -12,9 +12,11 @@ import { useAuth } from "../lib/auth";
 import { useApi } from "../lib/hooks";
 import type { TimetableEntry } from "../lib/types";
 
-/** Faculty and class representatives: their week's timetable first; beside it, their requests and what
- * colleagues' requests asked of them, as conversations (this replaces the Inbox for them); and one box to
- * ask or request something. */
+/** The request workspace, the same for every role: the week's timetable first (click a class to cancel, move
+ * or swap it, with the free slots shown, or to name it in a request); beside it, the person's requests and
+ * what colleagues' requests asked of them, as conversations; and with none open, the full new-request
+ * composer (examples, the week and days on the timetable, Undo). Faculty and class representatives have it
+ * as their home (it replaces the Inbox for them); everyone else opens it as New request. */
 export default function Home() {
   const { user } = useAuth();
   const teaching = ["faculty", "guest_faculty", "hod"].includes(user?.role ?? "");
@@ -23,7 +25,9 @@ export default function Home() {
   const { data: inst } = useApi(() => api.instance(), []);
   const { data: cal } = useApi(() => api.calendar(), []);
   const [week, setWeek] = useState<number | null>(null); // null until the calendar is in
-  const [scope, setScope] = useState<"mine" | "all">("mine"); // this person's classes, or every teacher's
+  // this person's classes, or every teacher's: someone with no classes of their own (the office, the lab
+  // in-charge, the exam cell) starts on every class
+  const [scope, setScope] = useState<"mine" | "all">(teaching || group ? "mine" : "all");
   useEffect(() => {
     if (!cal || week !== null) return;
     // at the weekend this week's classes are all over, so open on the next one (nothing can move into the past)
@@ -149,6 +153,7 @@ export default function Home() {
   };
   // clicking a class: in a swap it is the colleague's class; with Ctrl or Shift it is attached; otherwise the menu
   const pickClass = (e: TimetableEntry, ev: MouseEvent) => {
+    if (draft && e.session === draft.cls.session) return stopDraft(); // the class again: leave the action
     if (draft?.kind === "swap") {
       if (swappable?.has(e.session)) setDraft({ ...draft, theirs: e });
       return;
@@ -157,6 +162,18 @@ export default function Home() {
     if (ev.ctrlKey || ev.metaKey || ev.shiftKey) return toggle(e, ev);
     setMenu({ x: ev.clientX, y: ev.clientY, cls: e });
   };
+  /** Leave a cancel, move or swap being put together: the Cancel button, Esc, or clicking its class again. */
+  const stopDraft = () => {
+    if (draft?.kind === "swap") setScope("mine");
+    setDraft(null);
+    setActionError(null);
+  };
+  useEffect(() => {
+    if (!draft) return;
+    const esc = (ev: KeyboardEvent) => ev.key === "Escape" && stopDraft();
+    window.addEventListener("keydown", esc);
+    return () => window.removeEventListener("keydown", esc);
+  }, [draft]); // eslint-disable-line react-hooks/exhaustive-deps
   const startAction = (kind: ActionKind | "write") => {
     const cls = menu!.cls;
     setMenu(null);
@@ -202,7 +219,7 @@ export default function Home() {
             title="My timetable: your own classes. All classes: every teacher's classes in the department, for the same week."
             className="h-8 w-40 rounded-md border border-line bg-panel px-2.5 text-[13px] outline-none hover:bg-panel-2 focus:border-brand/60"
           >
-            <option value="mine">My timetable</option>
+            {(teaching || group) && <option value="mine">My timetable</option>}
             <option value="all">All classes</option>
           </select>
         </div>
@@ -224,14 +241,24 @@ export default function Home() {
             <TimetableGrid instance={inst} entries={mine} changed={outlined} onPick={pickClass} fill dates={dates} ghosts={ghosts} slotState={slotState} onSlot={(day, slot) => draft && setDraft({ ...draft, to: { day, slot } })} />
           )}
         </Card>
-        <p className="text-[12px] text-ink-3">
+        <p className="flex flex-wrap items-center gap-x-2 text-[12px] text-ink-3">
           {draft?.kind === "move"
             ? weekOver
               ? `Week ${week} is over, so there is no free slot left in it: go to a later week to pick the new time.`
               : "Click a green slot for the new time."
             : draft?.kind === "swap"
               ? "Click the colleague's class to swap with. Classes that cannot be swapped are faded."
-              : "Click a class to cancel, reschedule or swap it."}
+              : draft
+                ? "Fill in the details on the right."
+                : "Click a class to cancel, reschedule or swap it."}
+          {draft && (
+            <>
+              <span>Esc or click the class again to stop.</span>
+              <button onClick={stopDraft} className="font-medium text-brand hover:underline">
+                Cancel {draft.kind === "move" ? "rescheduling" : draft.kind === "swap" ? "the swap" : "this"}
+              </button>
+            </>
+          )}
         </p>
       </div>
 
@@ -259,16 +286,18 @@ export default function Home() {
             current={cal?.current_week ?? 1}
             sending={sending}
             error={actionError}
-            onCancel={() => {
-              if (draft.kind === "swap") setScope("mine");
-              setDraft(null);
-            }}
+            onCancel={stopDraft}
             onSend={sendAction}
           />
         ) : (
           <ConversationPane
             s={s}
             convs={convs}
+            when={
+              cal && shownWeek
+                ? { week: shownWeek, days: cal.days.map((d) => ({ code: d, name: cal.day_names[d], date: dates?.[d]?.label })) }
+                : undefined
+            }
             attachments={{
               items: picks.map((e) => ({ key: e.session, label: `${e.title} ${e.kind} · ${dayName(e.day)} ${label(e.slot)}` })),
               remove: (key) => setPicks((p) => p.filter((x) => x.session !== key)),

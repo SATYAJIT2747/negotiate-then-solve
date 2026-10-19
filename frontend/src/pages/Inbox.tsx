@@ -2,10 +2,13 @@ import clsx from "clsx";
 import { AnimatePresence, motion } from "framer-motion";
 import { ArrowRight, BellRing, Bot, CalendarClock, CalendarDays, Check, CheckCheck, Clock3, FileText, Inbox as InboxIcon, MessageSquareDashed, MessagesSquare, ShieldAlert, Undo2, X } from "lucide-react";
 import { useEffect, useState } from "react";
-import { Link } from "react-router-dom";
+import { Link, useSearchParams } from "react-router-dom";
 import { ClarifyForm } from "../components/Clarify";
+import { EscalationPanel } from "../components/Escalation";
+import { ForwardedPanel } from "../components/Forwarded";
+import { ApprovalCard } from "./Approvals";
 import { GroundedExplanation, OfferCard } from "../components/Negotiation";
-import { Badge, Button, Card, CardHeader, Collapse, EmptyState, LiveDot, PageHeader, Tabs, Toast } from "../components/ui";
+import { Badge, Button, Card, CardHeader, Collapse, EmptyState, LiveDot, PageHeader, Skeleton, Tabs, Toast } from "../components/ui";
 import { api } from "../lib/api";
 import { useAuth } from "../lib/auth";
 import { useApi } from "../lib/hooks";
@@ -17,15 +20,18 @@ import { RatingForm } from "../components/Rating";
 
 const KIND_ICON = { negotiation: MessagesSquare, change: CalendarClock, request: FileText, action: BellRing, alert: ShieldAlert } as const;
 const KIND_LABEL = { negotiation: "Negotiation", change: "Timetable change", request: "Your request", action: "Waiting on you", alert: "Refused request" } as const;
-const ACTION_LINK = { approve: ["/approvals", "Review on Approvals"], reply: ["/approvals", "Reply on Approvals"], decide: [null, "Decide"] } as const;
+const ACTION_LINK = { approve: [null, "Open the request"], reply: [null, "Reply"], decide: [null, "Decide"] } as const;
 
+/** The inbox is also where the office approves, decides and replies: "Needs you" lists what waits on the
+ * person, and each such item is acted on here, in the pane beside the list. */
 export default function Inbox() {
   const { user } = useAuth();
   const { data, refresh } = useApi(() => api.feed(), [], 2000);
   const { data: inst } = useApi(() => api.instance(), []);
   const { data: auto, refresh: refreshAuto } = useApi(() => api.autopilot(), []);
+  const [params] = useSearchParams();
   const [sel, setSel] = useState<string | null>(null);
-  const [view, setView] = useState<"all" | "needs" | "unread">("all");
+  const [view, setView] = useState<"all" | "needs" | "unread">(params.get("view") === "needs" ? "needs" : "all");
   const [toast, setToast] = useState<string | null>(null);
   const teaches = ["hod", "faculty", "guest_faculty"].includes(user?.role ?? "");
 
@@ -151,6 +157,8 @@ export default function Inbox() {
                   slots={inst.slots}
                   onDone={done}
                 />
+              ) : (current.kind === "action" || (current.kind === "alert" && current.action)) && current.case ? (
+                <ActionPane item={current} onDone={done} />
               ) : (
                 <Notice item={current} onDone={done} />
               )}
@@ -164,6 +172,35 @@ export default function Inbox() {
       </div>
       <Toast message={toast} onDone={() => setToast(null)} />
     </>
+  );
+}
+
+/** Something waiting on the person, acted on in place: a change to approve, an escalation to decide, a
+ * message passed to the office to answer. */
+function ActionPane({ item, onDone }: { item: FeedItem; onDone: (msg: string) => Promise<void> }) {
+  const { data: c, refresh } = useApi(() => api.case(item.case!), [item.case]);
+  if (!c) return <Skeleton className="h-64" />;
+  const settled = async (msg: string) => {
+    await refresh();
+    await onDone(msg);
+  };
+  const body =
+    item.action === "approve" && c.status === "awaiting_approval" ? (
+      <ApprovalCard c={c} onDone={settled} compact />
+    ) : item.action === "decide" && c.status === "escalated" && c.outcome?.escalation ? (
+      <EscalationPanel c={c} onDecided={(msg) => void settled(msg)} />
+    ) : item.action === "reply" && (c.forwarded_to || c.status === "refused") ? (
+      <ForwardedPanel c={c} onHandled={(msg) => void settled(msg)} />
+    ) : (
+      <Notice item={item} onDone={onDone} />
+    );
+  return (
+    <div className="space-y-3">
+      {body}
+      <Link to={`/requests/${item.case}`} className="inline-flex items-center gap-1 text-[13px] text-brand hover:underline">
+        Open request {item.case} in full <ArrowRight size={13} />
+      </Link>
+    </div>
   );
 }
 

@@ -118,7 +118,8 @@ export const api = {
   me: () => call<Persona>("/me"),
   overview: () => call<Overview>("/overview"),
   instance: () => call<InstanceView>("/instance"),
-  submit: (text: string) => post<{ id: string }>("/requests", { text }),
+  /** makeup: hold make-up classes for the ones an absence misses (otherwise they are cancelled). */
+  submit: (text: string, makeup = false) => post<{ id: string }>("/requests", { text, makeup }),
   /** A request made with clicks: ``text`` is what people read, ``intent`` what the pipeline acts on (no parser). */
   submitForm: (text: string, intent: Record<string, unknown>) => post<{ id: string }>("/requests/form", { text, intent }),
   clarify: (id: string, text: string) => post<{ id: string }>(`/cases/${id}/clarify`, { text }),

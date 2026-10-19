@@ -1,7 +1,9 @@
-import { ArrowLeft, Send, X } from "lucide-react";
+import clsx from "clsx";
+import { ArrowLeft, Eraser, Send, Undo2, X } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { api } from "../lib/api";
 import { useAuth } from "../lib/auth";
+import { requestExamples } from "../lib/examples";
 import { useApi } from "../lib/hooks";
 import type { InboxItem } from "../lib/types";
 import { ColleagueThread, groupOf, type Conversation } from "./Conversations";
@@ -83,11 +85,38 @@ export interface Attachments {
   clear: () => void;
 }
 
-/** The open conversation and the composer under it. */
-export function ConversationPane({ s, convs, attachments, wide = false }: { s: ConversationState; convs: Conversation[]; attachments?: Attachments; wide?: boolean }) {
-  const [text, setText] = useState("");
+/** The week the timetable beside the composer shows, so a request can say when in a click. */
+export interface WhenHint {
+  week: number;
+  days: { code: string; name: string; date?: string }[];
+}
+
+/** The open conversation and the composer under it. With nothing open, the composer is the full new-request
+ * page: examples to start from, the week and days shown on the timetable to add, Undo and Clear. */
+export function ConversationPane({ s, convs, attachments, when, wide = false }: { s: ConversationState; convs: Conversation[]; attachments?: Attachments; when?: WhenHint; wide?: boolean }) {
+  const [text, setTextRaw] = useState("");
+  const [history, setHistory] = useState<string[]>([]); // the text before each click-made change, for Undo
+  // a change made by a click (an example, a week or day, Clear): Undo takes it back; typing is not recorded
+  const edit = (next: string) => {
+    setHistory((h) => [...h.slice(-49), text]);
+    setTextRaw(next);
+  };
+  const setText = (next: string) => {
+    setTextRaw(next);
+    if (!next) setHistory([]);
+  };
+  const undo = () => {
+    if (!history.length) return;
+    setTextRaw(history[history.length - 1]);
+    setHistory((h) => h.slice(0, -1));
+    box.current?.focus();
+  };
+  const { data: inst } = useApi(() => api.instance(), []);
   const [sending, setSending] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const { user } = useAuth();
+  const [makeup, setMakeup] = useState(false); // classes missed in an absence: make-up classes, or cancelled
+  const teaches = !!user && ["faculty", "hod", "guest_faculty"].includes(user.role);
   const [reading, setReading] = useState<{ text: string; reading: string } | null>(null); // how a reply was read
   const box = useRef<HTMLTextAreaElement>(null);
   useEffect(() => setReading(null), [s.selected, text]);
@@ -125,7 +154,7 @@ export function ConversationPane({ s, convs, attachments, wide = false }: { s: C
     setError(null);
     try {
       if (s.answering && s.shown) await api.clarify(s.shown.id, t);
-      else s.open((await api.submit(t)).id);
+      else s.open((await api.submit(t, teaches && makeup)).id);
       setText("");
       attachments?.clear();
       s.changed();
@@ -136,6 +165,15 @@ export function ConversationPane({ s, convs, attachments, wide = false }: { s: C
     }
   };
 
+  const composing = !s.selected && !s.answering && !s.replying; // a new request: the full composer
+  const examples = composing ? requestExamples(user, inst) : [];
+  /** Add a phrase ("in week 7", "on Tuesday in week 7") to the end of the text, or take it out again. */
+  const has = (phrase: string) => text.toLowerCase().includes(phrase.toLowerCase());
+  const togglePhrase = (phrase: string) => {
+    if (has(phrase)) edit(text.replace(new RegExp(`\\s*${phrase.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}`, "i"), "").trim());
+    else edit(text.trim() ? `${text.trim().replace(/[.!?]$/, "")} ${phrase}.` : `${phrase.charAt(0).toUpperCase()}${phrase.slice(1)}: `);
+    box.current?.focus();
+  };
   const column = wide ? "mx-auto w-full max-w-3xl" : "";
   return (
     <>
@@ -148,17 +186,56 @@ export function ConversationPane({ s, convs, attachments, wide = false }: { s: C
           ) : s.shown ? (
             <RequestThread c={s.shown} onChanged={s.changed} />
           ) : (
-            <div className="grid min-h-[240px] place-items-center text-center">
-              <div className="max-w-[300px] space-y-2">
+            <div className="space-y-5">
+              <div className="space-y-1.5">
                 {s.back && (
-                  <button onClick={s.goBack} className="mx-auto mb-3 flex max-w-full items-center gap-1 text-[12px] text-ink-3 hover:text-brand">
+                  <button onClick={s.goBack} className="mb-2 flex max-w-full items-center gap-1 text-[12px] text-ink-3 hover:text-brand">
                     <ArrowLeft size={12} className="shrink-0" />
                     <span className="truncate">Back to: {backTitle}</span>
                   </button>
                 )}
-                <p className="text-[14px] font-medium">New request</p>
-                <p className="text-[12.5px] text-ink-3">Write it the way you would write to the timetable office: an absence, a class to move, or a question about the rules.</p>
+                <p className="text-[15px] font-medium">New request</p>
+                <p className="text-[12.5px] leading-relaxed text-ink-3">
+                  Write it the way you would write to the timetable office: an absence, a class to move, or a question about the rules.
+                  Click a class on the timetable to cancel, move or swap it, or to name it here.
+                </p>
               </div>
+              {when && (
+                <div>
+                  <p className="mb-1.5 text-[11.5px] font-medium uppercase tracking-wide text-ink-3">When · the week on the timetable</p>
+                  <div className="flex flex-wrap gap-1.5">
+                    {[{ phrase: `in week ${when.week}`, label: `Week ${when.week}` }, ...when.days.map((d) => ({ phrase: `on ${d.name} in week ${when.week}`, label: d.date ? `${d.name.slice(0, 3)} ${d.date}` : d.name }))].map(
+                      ({ phrase, label }) => (
+                        <button
+                          key={phrase}
+                          onClick={() => togglePhrase(phrase)}
+                          title={has(phrase) ? "Take it out of the request" : `Add “${phrase}”`}
+                          className={clsx(
+                            "rounded-md border px-2 py-1 text-[12px] transition-colors",
+                            has(phrase) ? "border-brand bg-brand/10 text-brand" : "border-line hover:bg-panel-2",
+                          )}
+                        >
+                          {label}
+                        </button>
+                      ),
+                    )}
+                  </div>
+                </div>
+              )}
+              {examples.length > 0 && (
+                <div>
+                  <p className="mb-1.5 text-[11.5px] font-medium uppercase tracking-wide text-ink-3">Start from an example</p>
+                  <ul className="space-y-1">
+                    {examples.map((ex) => (
+                      <li key={ex}>
+                        <button onClick={() => edit(ex)} className="text-left text-[13px] leading-snug text-ink-2 hover:text-brand">
+                          “{ex}”
+                        </button>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              )}
             </div>
           )}
         </div>
@@ -214,7 +291,7 @@ export function ConversationPane({ s, convs, attachments, wide = false }: { s: C
                 }
               }}
               onFocus={s.startNew}
-              rows={2}
+              rows={composing ? 4 : 2}
               placeholder={
                 s.answering
                   ? "Your answer…"
@@ -230,7 +307,27 @@ export function ConversationPane({ s, convs, attachments, wide = false }: { s: C
             />
             <Button variant="primary" size="sm" icon={Send} loading={sending} disabled={!text.trim()} onClick={send} aria-label="Send" />
           </div>
-          <p className="mt-1.5 text-[11px] text-ink-3">Enter to send · Shift+Enter for a new line</p>
+          <div className="mt-1.5 flex flex-wrap items-center justify-between gap-2 text-[11px] text-ink-3">
+            <p className="flex items-center gap-2">
+              Enter to send · Shift+Enter for a new line
+              {composing && (
+                <>
+                  <button onClick={undo} disabled={!history.length} className="flex items-center gap-0.5 hover:text-ink disabled:opacity-40" title="Undo the last example, week or clear">
+                    <Undo2 size={11} /> Undo
+                  </button>
+                  <button onClick={() => edit("")} disabled={!text} className="flex items-center gap-0.5 hover:text-ink disabled:opacity-40" title="Clear the text (Undo brings it back)">
+                    <Eraser size={11} /> Clear
+                  </button>
+                </>
+              )}
+            </p>
+            {teaches && !s.answering && !s.replying && (
+              <label className="flex cursor-pointer items-center gap-1.5" title="If you are away in some weeks: ticked, the classes you miss move to other times that week; left empty, they are cancelled">
+                <input type="checkbox" checked={makeup} onChange={(e) => setMakeup(e.target.checked)} className="accent-brand" />
+                Hold make-up classes
+              </label>
+            )}
+          </div>
           {error && <p className="mt-1 text-[12.5px] text-bad">{error}</p>}
         </div>
       </div>

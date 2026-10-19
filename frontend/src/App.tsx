@@ -11,12 +11,10 @@ import type { Role, View } from "./lib/types";
 const Login = lazy(() => import("./pages/Login"));
 const Dashboard = lazy(() => import("./pages/Dashboard"));
 const Home = lazy(() => import("./pages/Home"));
-const NewRequest = lazy(() => import("./pages/NewRequest"));
 const Requests = lazy(() => import("./pages/Requests"));
 const RequestChat = lazy(() => import("./pages/RequestChat"));
 const CaseDetail = lazy(() => import("./pages/CaseDetail"));
 const Inbox = lazy(() => import("./pages/Inbox"));
-const Approvals = lazy(() => import("./pages/Approvals"));
 const Timetable = lazy(() => import("./pages/Timetable"));
 const Fairness = lazy(() => import("./pages/Fairness"));
 const Graph = lazy(() => import("./pages/Graph"));
@@ -91,11 +89,11 @@ function Routed() {
       <Suspense fallback={<PageFallback />}>
         <Routes>
           <Route path="/" element={<HomePage />} />
-          <Route path="/new" element={<Guard view="new"><NewRequest /></Guard>} />
+          <Route path="/new" element={<Guard view="new"><Home /></Guard>} /> {/* the same request workspace for every role */}
           <Route path="/requests" element={<RequestsPage />} />
           <Route path="/requests/:id" element={<RequestsPage one />} />
           <Route path="/inbox" element={<Guard view="inbox"><Inbox /></Guard>} />
-          <Route path="/approvals" element={<Guard view="approvals"><Approvals /></Guard>} />
+          <Route path="/approvals" element={<Navigate to="/inbox?view=needs" replace />} /> {/* approvals are in the inbox now */}
           <Route path="/timetable" element={<Timetable />} />
           <Route path="/fairness" element={<Guard view="fairness"><Fairness /></Guard>} />
           <Route path="/policy" element={<Policy />} />

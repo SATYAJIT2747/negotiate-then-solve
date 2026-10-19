@@ -206,7 +206,7 @@ export function DiffTable({ rows }: { rows: DiffRow[] }) {
   }
   return (
     <div className="overflow-x-auto">
-      <table className="w-full min-w-[560px] text-[13px]">
+      <table className="w-full min-w-[520px] text-[13px]">
         <thead>
           <tr className="border-b border-line text-left text-[12px] text-ink-3">
             <th className="py-2 pr-3 font-medium">Class</th>
@@ -223,14 +223,14 @@ export function DiffTable({ rows }: { rows: DiffRow[] }) {
                 <p className="font-medium">{r.session_name.replace(/^the /, "")}</p>
               </td>
               <td className="py-2.5 pr-3 text-ink-2">{r.faculty_name}</td>
-              <td className={clsx("py-2.5 pr-3 text-ink-3", r.before && "line-through decoration-bad/50")}>
+              <td className={clsx("whitespace-nowrap py-2.5 pr-3 text-ink-3", r.before && "line-through decoration-bad/50")}>
                 {r.before ? `${r.before.day} ${r.before.time} · ${r.before.room}` : r.extra ? "New" : "—"}
               </td>
               <td className="py-2.5 pr-3 text-ink-3">
                 <ArrowRight size={14} />
               </td>
-              <td className={clsx("py-2.5 font-medium", r.after || !r.before ? "text-ok" : "text-bad")}>
-                {r.after ? `${r.after.day} ${r.after.time} · ${r.after.room}` : r.before ? "Cancelled this week (make-up owed)" : "—"}
+              <td className={clsx("whitespace-nowrap py-2.5 font-medium", r.after || !r.before ? "text-ok" : "text-bad")}>
+                {r.after ? `${r.after.day} ${r.after.time} · ${r.after.room}` : r.before ? "Cancelled this week" : "—"}
                 {r.extra && !r.before && <span className="ml-2 text-[12px] font-normal text-ink-3">extra class, this week only</span>}
               </td>
             </tr>

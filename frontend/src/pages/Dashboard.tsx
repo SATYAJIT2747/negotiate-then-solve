@@ -72,9 +72,9 @@ export default function Dashboard() {
   const own = mine ?? (can("see_all") ? [] : cases) ?? [];
   const todos: Todo[] = [];
   if (can("approve") && ov?.pending_approvals)
-    todos.push({ key: "approve", icon: BadgeCheck, text: `${ov.pending_approvals} change${ov.pending_approvals > 1 ? "s" : ""} waiting for your approval`, to: "/approvals", action: "Review" });
+    todos.push({ key: "approve", icon: BadgeCheck, text: `${ov.pending_approvals} change${ov.pending_approvals > 1 ? "s" : ""} waiting for your approval`, to: "/inbox?view=needs", action: "Review" });
   if (ov?.my_forwarded)
-    todos.push({ key: "forwarded", icon: Mail, text: `${ov.my_forwarded} message${ov.my_forwarded > 1 ? "s" : ""} passed to you for a reply`, to: "/approvals", action: "Reply" });
+    todos.push({ key: "forwarded", icon: Mail, text: `${ov.my_forwarded} message${ov.my_forwarded > 1 ? "s" : ""} passed to you for a reply`, to: "/inbox?view=needs", action: "Reply" });
   if (sees("inbox") && ov?.my_inbox)
     todos.push({ key: "inbox", icon: Inbox, text: `${ov.my_inbox} new message${ov.my_inbox > 1 ? "s" : ""} in your inbox`, to: "/inbox", action: "Open" });
   for (const c of own.filter((c) => c.status === "clarification_requested").slice(0, 3))

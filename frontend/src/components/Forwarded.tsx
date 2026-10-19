@@ -11,6 +11,8 @@ import { Badge, Button, Card, CardHeader } from "./ui";
  * answers it, or acts on it: the office's own request made of it goes through the whole pipeline. */
 export function ForwardedPanel({ c, onHandled }: { c: CaseDetail; onHandled?: (msg: string) => void }) {
   const h = c.answer;
+  // a refused request: the refusal stands, but the office may still answer it or make the change itself
+  const refused = c.status === "refused" && c.forwarded_to !== "coordinator";
   return (
     <Card className="overflow-hidden">
       <div className={clsx("flex items-start gap-4 px-5 py-4", !h && "bg-info/[0.06]", c.can_handle && "border-b border-line")}>
@@ -20,12 +22,22 @@ export function ForwardedPanel({ c, onHandled }: { c: CaseDetail; onHandled?: (m
         <div className="min-w-0 flex-1">
           <div className="flex flex-wrap items-center gap-2">
             <h3 className="text-[15px] font-semibold">
-              {h ? `Answered by ${h.by_name}` : c.can_handle ? "Passed to you for a reply" : "Waiting for a reply from the timetable office"}
+              {h
+                ? `Answered by ${h.by_name}`
+                : refused
+                  ? "Refused: you can still answer it, or make the change yourself"
+                  : c.can_handle
+                    ? "Passed to you for a reply"
+                    : "Waiting for a reply from the timetable office"}
             </h3>
             {h && <Badge tone="muted">{ago(h.at)}</Badge>}
           </div>
           <p className="mt-1 max-w-3xl text-[13.5px] leading-relaxed text-ink-2">
-            {h ? `“${h.note}”` : "This is not a change the system can make by itself, so a person answers it or acts on it."}
+            {h
+              ? `“${h.note}”`
+              : refused
+                ? `The system refused it (${c.parse?.refusal ?? "no authority over it"}), so nothing reached the timetable. If it should happen, make it your request: it goes through the policy check, the solver and your approval like any other. Its sender is told either way.`
+                : "This is not a change the system can make by itself, so a person answers it or acts on it."}
           </p>
           {h?.acting && (
             <Link to={`/requests/${h.acting}`} className="mt-1.5 inline-flex items-center gap-1 text-[13px] font-medium text-brand">

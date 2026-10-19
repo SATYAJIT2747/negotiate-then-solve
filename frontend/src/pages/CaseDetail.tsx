@@ -9,6 +9,7 @@ import { decider, EscalationPanel } from "../components/Escalation";
 import { ForwardedPanel } from "../components/Forwarded";
 import { Avatar, Badge, Button, Card, CardHeader, Collapse, EmptyState, Json, Label, Meter, Skeleton, StatusBadge, Tabs, Toast } from "../components/ui";
 import { api } from "../lib/api";
+import { useAuth } from "../lib/auth";
 import { useApi } from "../lib/hooks";
 import { ago, num, pct, ROLE_LABEL, secs } from "../lib/meta";
 import { study } from "../lib/study";
@@ -94,7 +95,7 @@ export default function CaseDetail({ id: given, embedded = false }: { id?: strin
         </div>
       )}
 
-      {c.forwarded_to === "coordinator" && (
+      {(c.forwarded_to === "coordinator" || (c.status === "refused" && (c.can_handle || c.answer))) && (
         <div className="mb-6">
           <ForwardedPanel
             c={c}
@@ -167,6 +168,8 @@ function outcomeText(c: Detail): string | null {
   if (c.extra?.placement)
     return `An extra ${c.extra.label} class fits on ${c.extra.placement.text}, week ${c.extra.week}. It was placed in a free hour, so no other class moves.`;
   const o = c.outcome;
+  if (!o && c.events.some((e) => e.kind === "solved" && e.already_met))
+    return "The timetable already meets it, so nothing had to move and there was nothing to approve. It stays recorded, and later changes keep to it.";
   if (!o) return null;
   if (o.status === "agreed") {
     const who = o.concessions.map((x) => x.name).join(", ");
@@ -174,22 +177,58 @@ function outcomeText(c: Detail): string | null {
   }
   if (o.status === "escalated") return `Escalated to ${o.escalation ? decider(o.escalation.to, o.escalation.to_name) : "someone with authority"}: ${o.escalation?.reason ?? "no agreement"}.`;
   if (o.step === 2) return "Fitted into the timetable directly; some preferences could not be kept and their owners were told.";
+  const dropped = (c.proposal?.diff ?? []).filter((d) => d.faculty === c.sender && !d.after).length;
+  if (c.makeup === false && dropped)
+    return `Your ${dropped === 1 ? "class" : `${dropped} classes`} while you are away ${dropped === 1 ? "is" : "are"} cancelled for that week: no make-up class was asked for.`;
+  // classes of other teachers the solver moved to make room: no constraint given up, but not "nobody"
+  const others = [...new Set((c.proposal?.diff ?? []).filter((d) => d.faculty && d.faculty !== c.sender).map((d) => d.faculty_name ?? d.faculty))];
+  if (others.length)
+    return `Fitted into the timetable directly; to make room, ${others.join(", ")}'s ${others.length === 1 ? "class was" : "classes were"} moved (no constraint was given up, and they were told).`;
   return "Fitted into the timetable directly; nobody had to give anything up.";
+}
+
+/** How the negotiation ended: what each person who gave way ended up with (after the last reply, which
+ * otherwise leaves the thread on a counter-offer). */
+function AgreedNote({ c }: { c: Detail }) {
+  const o = c.outcome!;
+  const gave = new Set(o.concessions.map((x) => x.stakeholder));
+  const placed = (c.proposal?.diff ?? []).filter((d) => d.faculty && gave.has(d.faculty) && d.after);
+  return (
+    <div className="rounded-lg border border-ok/30 bg-ok/5 px-4 py-3 text-[13.5px]">
+      <p className="font-medium">
+        Agreed in {o.rounds} round{o.rounds === 1 ? "" : "s"}
+        {o.concessions.length ? `: ${[...new Set(o.concessions.map((x) => x.name))].join(", ")} gave way` : ""}.
+      </p>
+      {placed.length > 0 && (
+        <ul className="mt-1 space-y-0.5 text-ink-2">
+          {placed.map((d) => (
+            <li key={d.session}>
+              {d.session_name}: {d.after!.text}
+            </li>
+          ))}
+        </ul>
+      )}
+      <p className="mt-1 text-[12.5px] text-ink-3">The solver checked the result; it went to the coordinator for approval.</p>
+    </div>
+  );
 }
 
 function Summary({ c }: { c: Detail }) {
   const f = c.fairness;
   const outcome = outcomeText(c);
+  const { user } = useAuth();
+  // the sender answers the question in the form (which shows it); everyone else just reads it
+  const answering = c.status === "clarification_requested" && user?.id === c.sender;
   return (
     <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]">
       <UnderstoodCheck c={c} />
       <Card>
         <CardHeader title={`Reply to ${c.sender_name}`} />
         <div className="p-5">
-          {c.status === "clarification_requested" ? (
+          {answering ? (
             <ClarifyForm caseId={c.id} sender={c.sender} question={c.reply || "Could you give more detail?"} />
           ) : null}
-          {c.status === "clarification_requested" && c.reply ? null : c.reply ? (
+          {answering ? null : c.reply ? (
             <p className="text-[14.5px] leading-relaxed">{c.reply}</p>
           ) : (
             <p className="text-[13.5px] text-ink-3">Still working on it…</p>
@@ -217,7 +256,11 @@ function Summary({ c }: { c: Detail }) {
             <p className="text-ink-2">
               Policy check: <span className="font-medium text-ink">{c.policy.verdict.replace("_", " ")}</span>
               {c.policy.cited.length ? ` under ${c.policy.cited.map((x) => x.cite).join(", ")}` : ""}.
-              {c.policy.obligations.length ? " A make-up class is required." : ""}
+              {c.policy.obligations.length
+                ? c.makeup === false
+                  ? " The rules ask for a make-up class; none was asked for, so the classes missed are cancelled."
+                  : " A make-up class is required."
+                : ""}
             </p>
           )}
           {f.gini_after !== undefined && (
@@ -291,6 +334,7 @@ function Negotiation({ c }: { c: Detail }) {
             {o.messages.map((m, i) => (
               <MessageBubble key={i} m={m} reply={o.replies[i] ? { ...o.replies[i], decision: o.replies[i].decision ?? null } : undefined} />
             ))}
+            {o.status === "agreed" && <AgreedNote c={c} />}
           </div>
         </Card>
       )}
