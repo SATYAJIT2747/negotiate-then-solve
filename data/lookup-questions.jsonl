@@ -1,0 +1,18 @@
+{"id": "LQ-01", "sender": "Dr. Menon", "question": "What are my free slots this week?", "tool": "free_hours", "args": {"teachers": ["me"]}, "week": "this"}
+{"id": "LQ-02", "sender": "Dr. Menon", "question": "any free hours next week?", "tool": "free_hours", "args": {"teachers": ["me"]}, "week": "next"}
+{"id": "LQ-03", "sender": "Dr. Menon", "question": "When are Dr. Iyer and I both free on Friday?", "tool": "free_hours", "args": {"teachers": ["me", "Dr. Iyer"], "days": ["Fri"]}, "week": "this"}
+{"id": "LQ-04", "sender": "Dr. Menon", "question": "is lab 2 free on thursday at 3 pm", "tool": "free_hours", "args": {"rooms": ["Lab 2"], "days": ["Thu"], "slots": [6]}, "week": "this"}
+{"id": "LQ-05", "sender": "Dr. Menon", "question": "When does Dr. Iyer teach ML?", "tool": "classes_of", "args": {"teacher": "Dr. Iyer", "course": "Machine Learning"}, "week": "this"}
+{"id": "LQ-06", "sender": "Dr. Menon", "question": "what do I teach on wednesday?", "tool": "classes_of", "args": {"teacher": "me", "days": ["Wed"]}, "week": "this"}
+{"id": "LQ-07", "sender": "Dr. Menon", "question": "free slots in week 15 for section 4", "tool": "free_hours", "args": {"sections": ["Section 4"]}, "week": 15}
+{"id": "LQ-08", "sender": "Dr. Menon", "question": "When is Machine Learning this week?", "tool": "classes_of", "args": {"course": "Machine Learning"}, "week": "this"}
+{"id": "LQ-09", "sender": "Dr. Menon", "question": "Is Dr. Khan available on Monday?", "tool": "free_hours", "args": {"teachers": ["Dr. Khan"], "days": ["Mon"]}, "week": "this"}
+{"id": "LQ-10", "sender": "Dr. Menon", "question": "which hours is room 101 empty on tuesday?", "tool": "free_hours", "args": {"rooms": ["Room 101"], "days": ["Tue"]}, "week": "this"}
+{"id": "LQ-11", "sender": "Dr. Menon", "question": "Can I move my Friday lecture to Monday?", "tool": null}
+{"id": "LQ-12", "sender": "Dr. Menon", "question": "Please cancel my class tomorrow.", "tool": null}
+{"id": "LQ-13", "sender": "Dr. Menon", "question": "Can I hold my class before lunch, from 12 to 1?", "tool": null}
+{"id": "LQ-14", "sender": "Dr. Menon", "question": "What is the wifi password for the library?", "tool": null}
+{"id": "LQ-15", "sender": "Dr. Menon", "question": "when's Iyer around this week?", "tool": "free_hours", "args": {"teachers": ["Dr. Iyer"]}, "week": "this"}
+{"id": "LQ-16", "sender": "Dr. Menon", "question": "Do I have any gaps on Thursday?", "tool": "free_hours", "args": {"teachers": ["me"], "days": ["Thu"]}, "week": "this"}
+{"id": "LQ-17", "sender": "Dr. Menon", "question": "who teaches section 2 on monday", "tool": "classes_of", "args": {"section": "Section 2", "days": ["Mon"]}, "week": "this"}
+{"id": "LQ-18", "sender": "Dr. Menon", "question": "Is Dr. Smith free on Monday?", "tool": "unclear"}
