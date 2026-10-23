@@ -37,9 +37,11 @@ from pydantic import BaseModel, ValidationError
 from agents.documents import SUFFIXES, ingest
 from agents.explainer import TIER_NAME, describe, placement_text, session_name
 from agents.ledger import ConcessionLedger
+from agents.lookup import WeekTimetable
 from agents.negotiation import Message, Reply
 from agents.policy import RETRIEVERS, Rule, make_retriever, tokens
 from agents.priority import JUSTIFICATION, ROLE_AUTHORITY, Weights
+from agents.questions import Answerer, QuestionReader
 from core.graph import add_conflict, build_graph
 from core.instance import Session
 from core.schemas import DAYS, Placement, Request, RequestStatus, Tier
@@ -519,6 +521,10 @@ class LoginBody(BaseModel):
     person: str
 
 
+class AskBody(BaseModel):
+    text: str
+
+
 class RequestBody(BaseModel):
     text: str
     makeup: bool = False  # "hold make-up classes": off, classes missed in an absence are cancelled
@@ -792,6 +798,25 @@ def create_web_app(world: World | None = None, *, worlds_dir: Path | None = None
         today = (date.today() - start).days // 7 + 1
         return {"days": inst.calendar.days, "day_names": {d: FULL_DAY[d] for d in inst.calendar.days},
                 "current_week": min(max(today, 1), n_weeks), "weeks": rows}
+
+    @app.post("/api/ask")
+    def ask(body: AskBody, u: dict = Depends(user)) -> dict:
+        """A question about the timetable ("my free slots this week", "when does Dr. Iyer teach ML?"), answered
+        from the published timetable (agents.lookup, agents.questions) for anyone signed in. Nothing is stored:
+        a question is not a request. Anything that is not a timetable question (a request, a question about the
+        rules) comes back as ``not_a_question``, so the message can go the usual way."""
+        w = W()
+        call = QuestionReader(w.instance, u["id"], w.current_week() or 1).read(body.text)
+        if call is None:
+            return {"kind": "not_a_question"}
+        week = WeekTimetable(w.instance, w.store, call.week)
+        out = {"kind": "timetable", "answer": Answerer(w.instance, u["id"]).answer(call, week),
+               "call": {"tool": call.tool, "args": call.args, "week": call.week, "confident": call.confident}}
+        if call.tool == "free_hours" and call.confident:  # the hours themselves, for the timetable to shade
+            a = call.args
+            free = week.free_hours(a.get("teachers", ()), a.get("sections", ()), a.get("rooms", ()), a.get("days"))
+            out["free"] = [{"day": d, "slot": s} for d, s in free if not a.get("slots") or s in a["slots"]]
+        return out
 
     @app.post("/api/requests")
     def submit(body: RequestBody, u: dict = Depends(user)) -> dict:
