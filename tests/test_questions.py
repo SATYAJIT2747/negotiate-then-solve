@@ -1,13 +1,15 @@
 """Questions about the timetable (agents.questions): what the regex reader makes of them, and the replies."""
 
 import json
-from datetime import date
+from datetime import date, datetime
 from pathlib import Path
 
 import pytest
 
 from agents.lookup import Directory, WeekTimetable
 from agents.questions import Answerer, QuestionReader, ToolCall, _spans
+from language.corpus import FULL_DAY, hour
+from pipeline.store import Store
 from web.app import World
 
 WEEK = 13
@@ -194,3 +196,86 @@ def test_which_rooms_are_free_at_an_hour(world, week):
 def test_the_auditorium_is_not_in_the_timetable(reader):
     call = reader.read("is the auditorium free on friday?")
     assert not call.confident and "auditorium" in call.note
+
+
+# -- the newer tools: describe, who_is_free, changes; next class, counts, parts of the day, a room too -----------
+
+
+@pytest.mark.parametrize("text, tool, args", [
+    ("can you enlist all rooms with their capacities?", "describe", {"what": "rooms"}),
+    ("list all labs", "describe", {"what": "rooms", "kind": "lab"}),
+    ("list all teachers", "describe", {"what": "teachers"}),
+    ("who is free on monday at 10 am?", "who_is_free", {"days": ["Mon"], "slots": [1]}),
+    ("anyone free thursday afternoon?", "who_is_free", {"days": ["Thu"], "part": "afternoon"}),
+    ("which sections are free on friday at 9 am?", "who_is_free", {"days": ["Fri"], "slots": [0], "sections": True}),
+    ("what changed this week?", "changes", {}),
+    ("any labs free on monday morning?", "free_rooms", {"kind": "lab", "days": ["Mon"], "part": "morning"}),
+])
+def test_reads_the_newer_tools(reader, text, tool, args):
+    call = reader.read(text)
+    assert call.tool == tool and call.args == args and call.week == WEEK
+
+
+def test_reads_me_into_the_newer_options(world, reader):
+    me = person(world, "Dr. Menon")
+    assert reader.read("how many hours do I teach this week?").args == {"teacher": me, "count": True}
+    assert reader.read("was my class cancelled this week?").args == {"teacher": me}
+    assert reader.read("am I free this afternoon?").args == {"teachers": [me], "days": ["Wed"], "part": "afternoon"}
+    call = reader.read("when are section 1 and I free for 2 hours with a lab?")
+    assert call.args == {"teachers": [me], "sections": ["G-01"], "length": 2, "kind": "lab"}
+
+
+def test_next_class_counts_from_now(world):
+    me = person(world, "Dr. Menon")
+    at = QuestionReader(world.instance, me, WEEK, today=WEDNESDAY, now=datetime(2026, 10, 21, 10, 30))
+    assert at.read("when is my next class?").args == {"teacher": me, "after": ["Wed", 2]}  # 10:30: from 11 am
+    friday_night = QuestionReader(world.instance, me, WEEK, today=date(2026, 10, 23), now=datetime(2026, 10, 23, 18))
+    call = friday_night.read("when is my next class?")
+    assert call.args["after"] == ["Mon", 0] and call.week == WEEK + 1
+
+
+def test_describe_replies(world, week):
+    a = Answerer(world.instance, person(world, "Dr. Menon"))
+    rooms = a.answer(ToolCall("describe", {"what": "rooms"}, WEEK), week)
+    assert all(f"{r.name} ({r.type.value}, {r.capacity} seats" in rooms for r in world.instance.rooms)
+    g = world.instance.groups[0]
+    assert a.answer(ToolCall("describe", {"section": g.id}, WEEK), week).startswith(f"{g.name} has {g.size} students")
+    assert "this is week 13" in a.answer(ToolCall("describe", {"what": "calendar"}, WEEK), week)
+
+
+def test_who_is_free_leaves_out_the_busy_and_the_asker(world, week):
+    c = week.classes[0]
+    (day, slot), busy = c.hours()[0], c.session.faculty
+    me = next(f.id for f in world.instance.faculty if f.id != busy)
+    reply = Answerer(world.instance, me).answer(ToolCall("who_is_free", {"days": [day], "slots": [slot]}, WEEK), week)
+    assert world.instance.faculty_by_id[busy].name not in reply and world.instance.faculty_by_id[me].name not in reply
+
+
+def test_counts_and_next_class_replies(world, week):
+    me = person(world, "Dr. Menon")
+    a = Answerer(world.instance, me)
+    mine = week.classes_of(teacher=me)
+    hours = sum(c.session.duration for c in mine)
+    assert a.answer(ToolCall("classes_of", {"teacher": me, "count": True}, WEEK), week) == \
+        f"You have {len(mine)} classes ({hours} hours) in week {WEEK}."
+    first = mine[0]
+    reply = a.answer(ToolCall("classes_of", {"teacher": me, "after": [first.placement.day, first.placement.slot]}, WEEK), week)
+    assert reply.startswith("Your next class: ") and world.instance.course_title(first.session.course) in reply
+    last = mine[-1]
+    assert "no more classes" in a.answer(ToolCall(
+        "classes_of", {"teacher": me, "after": [last.placement.day, last.placement.slot + 1]}, WEEK), week)
+
+
+def test_changes_reply(world):
+    store = Store()  # a copy of the published timetable; one class not held in WEEK
+    semester = world.store.current_version()
+    store.publish_version(store.propose_version(dict(semester.assignment), "test").version, "test")
+    gone = WeekTimetable(world.instance, store, WEEK).classes[0]
+    v = store.propose_version(dict(semester.assignment), "test", week=WEEK, cancelled=[gone.session.id])
+    store.publish_version(v.version, "test")
+    a = Answerer(world.instance, person(world, "Dr. Menon"))
+    p, what = gone.placement, f"{world.instance.course_title(gone.session.course)} {gone.session.kind.value}"
+    assert a.answer(ToolCall("changes", {}, WEEK), WeekTimetable(world.instance, store, WEEK)) == \
+        f"Changes in week {WEEK}: {what} on {FULL_DAY[p.day]} {hour(p.slot)} is not held."
+    assert a.answer(ToolCall("changes", {}, WEEK + 1), WeekTimetable(world.instance, store, WEEK + 1)) == \
+        f"No changes in week {WEEK + 1}: the timetable is as planned."
