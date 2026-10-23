@@ -10,7 +10,7 @@ import { Card, Skeleton } from "../components/ui";
 import { api } from "../lib/api";
 import { useAuth } from "../lib/auth";
 import { useApi } from "../lib/hooks";
-import type { TimetableEntry } from "../lib/types";
+import type { AskAnswer, TimetableEntry } from "../lib/types";
 
 /** The request workspace, the same for every role: the week's timetable first (click a class to cancel, move
  * or swap it, with the free slots shown, or to name it in a request); beside it, the person's requests and
@@ -93,7 +93,16 @@ export default function Home() {
     return at < today;
   };
   const weekOver = !!cal && cal.days.every(dayPassed);
+  // free hours from a question answered in the panel ("when is Dr. Iyer free this week?"), shaded on that week
+  const [shade, setShade] = useState<{ week: number; free: Set<string> } | null>(null);
+  const showAnswer = (a: AskAnswer) => {
+    if (!a.call || !a.free) return setShade(null);
+    setWeek(a.call.week);
+    setShade({ week: a.call.week, free: new Set(a.free.map((h) => `${h.day}:${h.slot}`)) });
+  };
+  const shaded = !draft && !!shade && shade.week === week;
   const slotState = (day: string, slot: number): "free" | "blocked" | null => {
+    if (shaded) return shade!.free.has(`${day}:${slot}`) ? "free" : null;
     if (draft?.kind !== "move" || !inst) return null;
     const e = draft.cls;
     if (day === e.day && slot === e.slot) return null; // where it is now
@@ -233,12 +242,12 @@ export default function Home() {
             <Skeleton className="h-full" />
           ) : scope === "all" ? (
             <div className="h-full overflow-auto">
-              <TimetableGrid instance={inst} entries={tt.entries} changed={outlined} onPick={pickClass} dates={dates} ghosts={ghosts} slotState={slotState} onSlot={(day, slot) => draft && setDraft({ ...draft, to: { day, slot } })} dim={dim} />
+              <TimetableGrid instance={inst} entries={tt.entries} changed={outlined} onPick={pickClass} dates={dates} ghosts={ghosts} slotState={slotState} onSlot={draft?.kind === "move" ? (day, slot) => setDraft({ ...draft, to: { day, slot } }) : undefined} dim={dim} />
             </div>
           ) : !mine.length ? (
             <p className="px-3 py-16 text-center text-[13.5px] text-ink-3">No classes in the published timetable for this week.</p>
           ) : (
-            <TimetableGrid instance={inst} entries={mine} changed={outlined} onPick={pickClass} fill dates={dates} ghosts={ghosts} slotState={slotState} onSlot={(day, slot) => draft && setDraft({ ...draft, to: { day, slot } })} />
+            <TimetableGrid instance={inst} entries={mine} changed={outlined} onPick={pickClass} fill dates={dates} ghosts={ghosts} slotState={slotState} onSlot={draft?.kind === "move" ? (day, slot) => setDraft({ ...draft, to: { day, slot } }) : undefined} />
           )}
         </Card>
         <p className="flex flex-wrap items-center gap-x-2 text-[12px] text-ink-3">
@@ -250,7 +259,14 @@ export default function Home() {
               ? "Click the colleague's class to swap with. Classes that cannot be swapped are faded."
               : draft
                 ? "Fill in the details on the right."
-                : "Click a class to cancel, reschedule or swap it."}
+                : shaded
+                  ? "Green: the free hours from your question."
+                  : "Click a class to cancel, reschedule or swap it."}
+          {shaded && (
+            <button onClick={() => setShade(null)} className="font-medium text-brand hover:underline">
+              Clear
+            </button>
+          )}
           {draft && (
             <>
               <span>Esc or click the class again to stop.</span>
@@ -293,6 +309,7 @@ export default function Home() {
           <ConversationPane
             s={s}
             convs={convs}
+            onAnswer={showAnswer}
             when={
               cal && shownWeek
                 ? { week: shownWeek, days: cal.days.map((d) => ({ code: d, name: cal.day_names[d], date: dates?.[d]?.label })) }
