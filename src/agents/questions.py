@@ -21,7 +21,7 @@ from datetime import date, datetime, timedelta
 from core.instance import Faculty, Group, Instance, Room
 from language.corpus import FULL_DAY, hour
 
-from .lookup import Department, Directory, ScheduledClass, WeekTimetable, part_slots
+from .lookup import TITLES, Department, Directory, ScheduledClass, WeekTimetable, part_slots
 
 # what makes a message a timetable question, and what makes it a request instead
 FREE = re.compile(r"\b(free|available|availability|empty|vacant|gaps?|unbooked)\b", re.IGNORECASE)
@@ -54,6 +54,17 @@ DESCRIBE = re.compile(r"\b(list|all)\b.*\b(rooms|labs|classrooms|sections|teache
                       r"\bcapacit(y|ies)\b|\bhow (big|large) is\b|\bhow many students\b", re.IGNORECASE)
 CHANGES = re.compile(r"\bwhat(?:'s| has| have)? changed\b|\bchanges\b|\bcancell?ed\b|\bnot (being )?held\b",
                      re.IGNORECASE)
+# questions the timetable must not, or cannot, answer: said so, never guessed
+PRIVATE = re.compile(r"\bwhy\b.*\b(absent|away|on leave|off|not (coming|here|in)|cancell?ed|missing)\b", re.IGNORECASE)
+NOT_IN_DATA = re.compile(r"\b(holidays?|vacations?|exams?|examinations?|mid-?sems?|end-?sems?)\b", re.IGNORECASE)
+PRIVATE_NOTE = "I can't say why someone is away: the reasons are private. I can tell you which classes are not held."
+NOT_IN_DATA_NOTE = "I don't know that: holidays and exam dates are not in the timetable."
+# calendar dates: "28 October", "28th Oct", "Oct 28", "28/10", "28-10-2026" (day first, as written in India)
+MONTHS = {m: i + 1 for i, m in enumerate(["jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec"])}
+_MON = r"(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\.?"
+DATE_DM = re.compile(rf"\b(\d{{1,2}})(?:st|nd|rd|th)?\s+(?:of\s+)?{_MON}(?:,?\s+(\d{{4}}))?", re.IGNORECASE)
+DATE_MD = re.compile(rf"\b{_MON}\s+(\d{{1,2}})(?:st|nd|rd|th)?\b(?:,?\s+(\d{{4}}))?", re.IGNORECASE)
+DATE_NUM = re.compile(r"\b(\d{1,2})[/.-](\d{1,2})(?:[/.-](\d{2,4}))?\b(?!\s*(?:am|pm|hours?|hrs?)\b)", re.IGNORECASE)
 
 
 @dataclass
@@ -72,22 +83,35 @@ class QuestionReader:
     timetable question (a request for a change, a question about the rules), so another part handles it."""
 
     def __init__(self, instance: Instance, sender: str, current_week: int, today: date | None = None,
-                 now: datetime | None = None) -> None:
+                 now: datetime | None = None, semester_start: date | None = None) -> None:
         self.instance = instance
         self.sender = sender
         self.current_week = current_week
         self.today = today or date.today()
         self.now = now  # for "my next class"; the clock when not given
+        self.semester_start = semester_start  # for dates ("28 October" -> week 14, Wednesday); None: no dates
         self.directory = Directory(instance)
 
     def read(self, text: str) -> ToolCall | None:
         if REQUEST.search(text):
             return None  # a change is being asked for, not information
+        if PRIVATE.search(text):
+            return ToolCall("unclear", week=self.current_week, confident=False, note=PRIVATE_NOTE)
+        if NOT_IN_DATA.search(text):
+            return ToolCall("unclear", week=self.current_week, confident=False, note=NOT_IN_DATA_NOTE)
         free, classes = FREE.search(text), CLASSES.search(text)
         newer = CHANGES.search(text) or WHO_FREE.search(text) or DESCRIBE.search(text) or COUNT.search(text)
         if not free and not classes and not newer:
             return None
         week, days = self._when(text)
+        if dated := dates_in(text, self.today):  # a date is more exact than a day name or "this week"
+            if self.semester_start is None:
+                return ToolCall("unclear", week=week, confident=False, note="I can't tell which week that date is in.")
+            found = [week_and_day(self.instance, self.semester_start, d) for d in dated]
+            if bad := next((x for x in found if isinstance(x, str)), None):
+                return ToolCall("unclear", week=week, confident=False, note=bad)
+            week = found[0][0]
+            days = list(dict.fromkeys(d for w, d in found if w == week))
         teachers, sections, rooms, courses, unclear = self._names(text)
         slots = sorted({_slot(int(h), ap) for h, ap in TIME.findall(text)} & set(range(self.instance.calendar.slots_per_day)))
         part = (m.group(1).lower() if (m := PART.search(text)) and not slots else None)
@@ -152,16 +176,7 @@ class QuestionReader:
         return {"what": what, "kind": kind} if what == "rooms" and kind else {"what": what}
 
     def _from_now(self) -> tuple[int, tuple[str, int]]:
-        """The week and the (day, slot) from which "next" counts: now, or the next teaching hour."""
-        cal, now = self.instance.calendar, self.now or datetime.now()
-        week, d = self.current_week, now.date()
-        slot = now.hour - 9 + (1 if now.minute else 0)  # slot 0 is 9 am; a class already started is not "next"
-        if slot >= cal.slots_per_day:  # after the day's last hour: the next day
-            d, slot = d + timedelta(days=1), 0
-        if d.weekday() > 4:  # a weekend: Monday of the next week
-            d, slot = d + timedelta(days=7 - d.weekday()), 0
-            week += 1
-        return min(week, cal.weeks), (cal.days[d.weekday()], max(slot, 0))
+        return from_now(self.instance, self.current_week, self.now or datetime.now())
 
     def _when(self, text: str) -> tuple[int, list[str]]:
         """The week asked about (this week unless it says otherwise) and the days, if any."""
@@ -186,17 +201,8 @@ class QuestionReader:
 
     def _names(self, text: str) -> tuple[list[str], list[str], list[str], list[str], str]:
         """Teachers, sections, rooms and courses the question names (IDs), and what is unclear, if anything."""
-        teachers, sections, rooms, courses, unclear = [], [], [], [], ""
-        said = [m.group(1) for m in TEACHER.finditer(text)]
-        said += [f.name.split()[-1] for f in self.instance.faculty
-                 if re.search(rf"\b{re.escape(f.name.split()[-1])}\b", text, re.IGNORECASE)]
-        for name in dict.fromkeys(s.lower() for s in said):
-            found = [x for x in self.directory.find(name) if isinstance(x, Faculty)]
-            if len(found) == 1:
-                teachers.append(found[0].id)
-            else:
-                unclear = (f"I don't know a teacher called {name.title()}." if not found else
-                           f"Which one do you mean: {', '.join(f.name for f in found)}?")
+        teachers, unclear = self._teachers(text)
+        sections, rooms, courses = [], [], []
         for m in SECTION.finditer(text):
             found = [x for x in self.directory.find(m.group(0)) if isinstance(x, Group)]
             sections += [g.id for g in found[:1]]
@@ -212,6 +218,42 @@ class QuestionReader:
         for abbr in INITIALS.findall(text):
             courses += [c for c in self.directory.find(abbr) if isinstance(c, str) and c not in courses]
         return teachers, sections, rooms, courses, unclear
+
+    def _teachers(self, text: str) -> tuple[list[str], str]:
+        """The teachers a question names, in any form the department's names allow: "Dr. Imran Khan", "Imran
+        Khan", "Khan", "imran", "khan sir". A full name is matched before its parts, so "Imran Khan" is one
+        person even when another teacher is also called Imran; a first name two teachers share is asked about."""
+        low, found, taken, unclear = text.lower().replace("'", ""), [], [], ""
+        parts = {f.id: [w for w in re.findall(r"[a-z]+", f.name.lower()) if w not in TITLES] for f in self.instance.faculty}
+
+        def at(phrase: str) -> list[tuple[int, int]]:
+            return [m.span() for m in re.finditer(rf"\b{re.escape(phrase)}\b", low)
+                    if not any(a <= m.start() < b for a, b in taken)]
+
+        for size in (3, 2):  # whole names first ("imran khan"), then single words
+            for f in self.instance.faculty:
+                if len(parts[f.id]) >= size and (spans := at(" ".join(parts[f.id][-size:]))):
+                    found.append(f.id)
+                    taken.extend(spans)
+        surnames = {f.id: parts[f.id][-1] for f in self.instance.faculty if parts[f.id]}
+        for fid, surname in surnames.items():
+            if fid not in found and (spans := at(surname)):
+                found.append(fid)
+                taken.extend(spans)
+        firsts: dict[str, list[Faculty]] = {}
+        for f in self.instance.faculty:
+            if len(parts[f.id]) > 1 and f.id not in found:
+                firsts.setdefault(parts[f.id][0], []).append(f)
+        for first, people in firsts.items():
+            if at(first):
+                if len(people) == 1:
+                    found.append(people[0].id)
+                else:
+                    unclear = f"Which one do you mean: {_listed([p.name for p in people])}?"
+        for m in TEACHER.finditer(text):  # "Dr. Smith": a title with a name the department does not have
+            if not any(a <= m.start(1) < b for a, b in taken) and not self.directory.find(m.group(1)):
+                unclear = unclear or f"I don't know a teacher called {m.group(1).title()}."
+        return list(dict.fromkeys(found)), unclear
 
     def _equipment(self, text: str) -> list[str]:
         """The rooms' equipment the question names: "a lab with GPUs" -> ["gpu"]."""
@@ -499,6 +541,51 @@ class Answerer:
         if not names:
             return "anyone", False
         return _listed(names), len(names) > 1 or names == ["you"]
+
+
+def dates_in(text: str, today: date) -> list[date]:
+    """The calendar dates a question names, in order; the year is today's unless it says another."""
+    found: list[tuple[int, date]] = []
+    for pattern, order in ((DATE_DM, "dm"), (DATE_MD, "md"), (DATE_NUM, "num")):
+        for m in pattern.finditer(text):
+            if any(start <= m.start() < start + 12 for start, _ in found):  # already read by an earlier pattern
+                continue
+            if order == "dm":
+                day, month, year = int(m.group(1)), MONTHS[m.group(2).lower()[:3]], m.group(3)
+            elif order == "md":
+                day, month, year = int(m.group(2)), MONTHS[m.group(1).lower()[:3]], m.group(3)
+            else:
+                day, month, year = int(m.group(1)), int(m.group(2)), m.group(3)
+            y = int(year) + (2000 if year and len(year) == 2 else 0) if year else today.year
+            try:
+                found.append((m.start(), date(y, month, day)))
+            except ValueError:  # "31/02", or "2-14" that was never a date
+                continue
+    return [d for _, d in sorted(found)]
+
+
+def week_and_day(instance: Instance, semester_start: date, d: date) -> tuple[int, str] | str:
+    """The teaching week and day of a date, or why it has none (a weekend, outside the semester)."""
+    weeks = instance.calendar.weeks
+    week = (d - semester_start).days // 7 + 1
+    if not 1 <= week <= weeks:
+        return f"{d.day} {d:%B} is outside this semester (weeks 1–{weeks})."
+    if d.weekday() >= len(instance.calendar.days):
+        return f"There are no classes on {d:%A} {d.day} {d:%B}."
+    return week, instance.calendar.days[d.weekday()]
+
+
+def from_now(instance: Instance, current_week: int, now: datetime) -> tuple[int, tuple[str, int]]:
+    """The week and the (day, slot) from which "my next class" counts: now, or the next teaching hour."""
+    cal = instance.calendar
+    week, d = current_week, now.date()
+    slot = now.hour - 9 + (1 if now.minute else 0)  # slot 0 is 9 am; a class already started is not "next"
+    if slot >= cal.slots_per_day:  # after the day's last hour: the next day
+        d, slot = d + timedelta(days=1), 0
+    if d.weekday() > 4:  # a weekend: Monday of the next week
+        d, slot = d + timedelta(days=7 - d.weekday()), 0
+        week += 1
+    return min(week, cal.weeks), (cal.days[d.weekday()], max(slot, 0))
 
 
 def _cap(text: str) -> str:

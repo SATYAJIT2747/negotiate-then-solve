@@ -296,12 +296,12 @@ class Directory:
         return found
 
 
-_TITLES = {"dr", "prof", "professor", "mr", "ms", "mrs"}
+TITLES = {"dr", "prof", "professor", "mr", "ms", "mrs", "sir", "maam", "madam"}  # "Khan sir", "Iyer ma'am"
 
 
 def _words(text: str) -> list[str]:
     """Lower-case words without titles: "Dr. Iyer" -> ["iyer"], "Lab 2" -> ["lab", "2"]."""
-    return [w for w in re.findall(r"[a-z0-9]+", text.lower()) if w not in _TITLES]
+    return [w for w in re.findall(r"[a-z0-9]+", text.lower().replace("'", "")) if w not in TITLES]
 
 
 def _matches(words: list[str], name: str) -> bool:

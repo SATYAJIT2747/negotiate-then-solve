@@ -806,7 +806,9 @@ def create_web_app(world: World | None = None, *, worlds_dir: Path | None = None
         a question is not a request. Anything that is not a timetable question (a request, a question about the
         rules) comes back as ``not_a_question``, so the message can go the usual way."""
         w = W()
-        call = QuestionReader(w.instance, u["id"], w.current_week() or 1).read(body.text)
+        start = w.semester.state.semester_start
+        call = QuestionReader(w.instance, u["id"], w.current_week() or 1,
+                              semester_start=date.fromisoformat(start) if start else None).read(body.text)
         if call is None:
             return {"kind": "not_a_question"}
         week = WeekTimetable(w.instance, w.store, call.week)
