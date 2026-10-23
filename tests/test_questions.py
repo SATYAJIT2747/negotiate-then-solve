@@ -85,6 +85,7 @@ def test_unknown_names_are_not_guessed(reader, text, note):
 
 def test_spans_merge_hours_into_ranges():
     assert _spans([("Mon", 2), ("Mon", 3), ("Mon", 5), ("Tue", 0)]) == "Monday 11 am–1 pm and 2–3 pm; Tuesday 9–10 am"
+    assert _spans([("Mon", 2), ("Mon", 3), ("Mon", 5), ("Mon", 7)]) == "Monday 11 am–1 pm, 2–3 pm and 4–5 pm"
 
 
 # -- replies ---------------------------------------------------------------------------------------------
@@ -114,6 +115,26 @@ def test_classes_reply_names_every_class(world, week):
     iyer = person(world, "Dr. Iyer")
     reply = Answerer(world.instance, person(world, "Dr. Menon")).answer(ToolCall("classes_of", {"teacher": iyer}, WEEK), week)
     assert reply.startswith("Dr. Iyer teaches in week 13: ") and reply.count(";") == len(week.classes_of(teacher=iyer)) - 1
+
+
+def test_a_teacher_who_does_not_teach_the_course_is_told_who_does(world, week):
+    c = week.classes[0]
+    course, teacher = c.session.course, c.session.faculty
+    other = next(f.id for f in world.instance.faculty if f.id != teacher
+                 and not week.classes_of(teacher=f.id, course=course))
+    reply = Answerer(world.instance, person(world, "Dr. Menon")).answer(
+        ToolCall("classes_of", {"teacher": other, "course": course}, WEEK), week)
+    taught_by = world.instance.faculty_by_id[teacher].name
+    assert "doesn't teach" in reply and f"taught by {taught_by}" in reply, reply
+
+
+def test_a_section_question_names_each_teacher(world, week):
+    c = week.classes[0]
+    section = c.session.groups[0]
+    reply = Answerer(world.instance, person(world, "Dr. Menon")).answer(
+        ToolCall("classes_of", {"section": section}, WEEK), week)
+    assert reply.startswith(f"{world.instance.group_by_id[section].name}'s classes in week {WEEK}: ")
+    assert all(world.instance.faculty_by_id[x.session.faculty].name in reply for x in week.classes_of(section=section))
 
 
 # -- the question set: how many the regex reader gets right (the baseline for a model, ROADMAP.md step 5) --

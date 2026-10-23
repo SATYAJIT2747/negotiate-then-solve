@@ -185,20 +185,34 @@ class Answerer:
         who, _ = self._who({"teachers": [a["teacher"]] if a.get("teacher") else [],
                             "sections": [a["section"]] if a.get("section") else [],
                             "rooms": [a["room"]] if a.get("room") else []})
-        what = f" {self.instance.course_title(a['course'])}" if a.get("course") else ""
+        course = self.instance.course_title(a["course"]) if a.get("course") else ""
+        when = f"week {call.week}"
+        by_teacher = not a.get("teacher")  # name each class's teacher unless the question is about one teacher
+        listed = "; ".join(self._one(c, teacher=by_teacher) for c in found)
+        if not found and a.get("teacher") and a.get("course"):
+            # "When does Dr. Iyer teach ML?" when someone else does: say who
+            others = week.classes_of(course=a["course"])
+            if others:
+                teachers = _listed(list(dict.fromkeys(self.instance.faculty_by_id[c.session.faculty].name for c in others)))
+                lead = f"{who} {"don't" if who == "you" else "doesn't"} teach {course} in {when}. It is taught by {teachers}: "
+                return _cap(lead) + "; ".join(self._one(c) for c in others) + "."
         if not found:
-            return f"No{what} classes found for {who} in week {call.week}."
-        if who == "anyone":  # a course asked about, nobody named: everyone's classes of it
-            return f"{what.strip()} in week {call.week}: " + "; ".join(self._one(c, teacher=True) for c in found) + "."
-        verb = "teach" if who == "you" else "teaches" if a.get("teacher") else "has"
-        return _cap(f"{who} {verb}{what} in week {call.week}: ") + "; ".join(self._one(c) for c in found) + "."
+            return f"No{' ' + course if course else ''} classes found for {who} in {when}."
+        if a.get("teacher"):
+            verb = "teach" if who == "you" else "teaches"
+            return _cap(f"{who} {verb}{' ' + course if course else ''} in {when}: ") + listed + "."
+        if a.get("section"):
+            return _cap(f"{who}'s{' ' + course if course else ''} classes in {when}: ") + listed + "."
+        if a.get("room"):
+            return f"{course + ' c' if course else 'C'}lasses in {who} in {when}: " + listed + "."
+        return f"{course} in {when}: " + listed + "."  # a course asked about, nobody named: everyone's classes of it
 
     def _one(self, c: ScheduledClass, teacher: bool = False) -> str:
         s, p = c.session, c.placement
-        end = hour(p.slot + s.duration)
         room = self.instance.room_by_id[p.room].name if p.room in self.instance.room_by_id else p.room
         by = f", {self.instance.faculty_by_id[s.faculty].name}" if teacher else ""
-        return f"{self.instance.course_title(s.course)} {s.kind.value}, {FULL_DAY[p.day]} {hour(p.slot)}–{end} ({room}{by})"
+        when = f"{FULL_DAY[p.day]} {_range(p.slot, p.slot + s.duration)}"
+        return f"{self.instance.course_title(s.course)} {s.kind.value}, {when} ({room}{by})"
 
     def _people(self, a: dict) -> list[str]:
         return [*a.get("teachers", []), *a.get("sections", []), *a.get("rooms", [])]
@@ -213,12 +227,16 @@ class Answerer:
         names += [self.instance.room_by_id[r].name for r in a.get("rooms", [])]
         if not names:
             return "anyone", False
-        text = names[0] if len(names) == 1 else ", ".join(names[:-1]) + " and " + names[-1]
-        return text, len(names) > 1 or names == ["you"]
+        return _listed(names), len(names) > 1 or names == ["you"]
 
 
 def _cap(text: str) -> str:
     return text[:1].upper() + text[1:]
+
+
+def _listed(items: list[str]) -> str:
+    """["a"] -> "a"; ["a", "b"] -> "a and b"; ["a", "b", "c"] -> "a, b and c"."""
+    return items[0] if len(items) == 1 else ", ".join(items[:-1]) + " and " + items[-1]
 
 
 def _slot(h: int, ampm: str) -> int:
@@ -232,7 +250,7 @@ def _range(start: int, end: int) -> str:
 
 
 def _spans(free: list[tuple[str, int]]) -> str:
-    """[("Mon", 2), ("Mon", 3), ("Mon", 5)] -> "Monday 11 am–1 pm and 2–3 pm"."""
+    """[("Mon", 2), ("Mon", 3), ("Mon", 5), ("Mon", 7)] -> "Monday 11 am–1 pm, 2–3 pm and 4–5 pm"."""
     out, by_day = [], {}
     for d, s in free:
         by_day.setdefault(d, []).append(s)
@@ -242,5 +260,5 @@ def _spans(free: list[tuple[str, int]]) -> str:
             if s != prev + 1:
                 runs.append(_range(start, prev + 1))
                 start = s
-        out.append(f"{FULL_DAY[d]} {' and '.join(runs)}")
+        out.append(f"{FULL_DAY[d]} {_listed(runs)}")
     return "; ".join(out)
