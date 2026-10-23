@@ -37,13 +37,18 @@ TEACHER = re.compile(r"\b(?:dr|prof|professor)\.?\s+([a-z]+)", re.IGNORECASE)
 SECTION = re.compile(r"\bsection\s*(\d+)\b", re.IGNORECASE)
 ROOM = re.compile(r"\b(lab|room)\s*(\d+)\b", re.IGNORECASE)
 INITIALS = re.compile(r"\b[A-Z]{2,4}\b")  # "ML", "TOC" as written (not lower case: "is", "do")
+# a kind of room, not one room ("any labs", "a free classroom", "lecture halls"; "Lab 2" is ROOM)
+LABS = re.compile(r"\b(labs?|laborator(y|ies))\b(?!\s*\d)", re.IGNORECASE)
+ROOMS = re.compile(r"\b(rooms?|classrooms?|lecture (halls?|rooms?)|halls?)\b(?!\s*\d)", re.IGNORECASE)
+NOT_IN_TIMETABLE = re.compile(r"\b(auditorium|seminar (hall|room)s?|conference (hall|room)s?)\b", re.IGNORECASE)
+SEATS = re.compile(r"\bfor\s+(\d{2,3})\b|\b(\d{2,3})\s*(?:students|people|seats|persons)\b", re.IGNORECASE)
 
 
 @dataclass
 class ToolCall:
     """What to look up: the same shape whether the regex or (later) a model decided it."""
 
-    tool: str  # "free_hours" | "classes_of"
+    tool: str  # "free_hours" | "classes_of" | "free_rooms" | "unclear"
     args: dict = field(default_factory=dict)
     week: int = 1
     confident: bool = True
@@ -69,11 +74,20 @@ class QuestionReader:
             return None
         week, days = self._when(text)
         teachers, sections, rooms, courses, unclear = self._names(text)
+        slots = sorted({_slot(int(h), ap) for h, ap in TIME.findall(text)} & set(range(self.instance.calendar.slots_per_day)))
+        if NOT_IN_TIMETABLE.search(text) and not rooms:
+            return ToolCall("unclear", week=week, confident=False,
+                            note="The timetable has lecture rooms and labs only; the auditorium and seminar halls "
+                                 "are booked through the timetable office.")
+        kind = "lab" if LABS.search(text) else "lecture" if ROOMS.search(text) else None
+        if free and kind and not (teachers or sections or rooms):  # "any labs free on Monday?": which rooms
+            args = {"kind": kind, "equipment": self._equipment(text), "min_capacity": self._seats(text),
+                    "days": days, "slots": slots}
+            return ToolCall("free_rooms", {k: v for k, v in args.items() if v}, week)
         if ME.search(text) or not (teachers or sections or rooms or courses):  # "my free hours", or no one named
             self._add_me(teachers, sections)
         if unclear:
             return ToolCall("unclear", week=week, confident=False, note=unclear)
-        slots = sorted({_slot(int(h), ap) for h, ap in TIME.findall(text)} & set(range(self.instance.calendar.slots_per_day)))
         if free:
             args = {"teachers": teachers, "sections": sections, "rooms": rooms, "days": days, "slots": slots}
             return ToolCall("free_hours", {k: v for k, v in args.items() if v}, week)
@@ -131,6 +145,16 @@ class QuestionReader:
             courses += [c for c in self.directory.find(abbr) if isinstance(c, str) and c not in courses]
         return teachers, sections, rooms, courses, unclear
 
+    def _equipment(self, text: str) -> list[str]:
+        """The rooms' equipment the question names: "a lab with GPUs" -> ["gpu"]."""
+        known = {e for r in self.instance.rooms for e in r.equipment}
+        return sorted(e for e in known if re.search(rf"\b{re.escape(e)}s?\b", text, re.IGNORECASE))
+
+    def _seats(self, text: str) -> int | None:
+        """The seats asked for: "a room for 70 students" -> 70."""
+        m = SEATS.search(text)
+        return int(m.group(1) or m.group(2)) if m else None
+
     def _add_me(self, teachers: list[str], sections: list[str]) -> None:
         """The sender: a teacher by their ID, a class representative ("ST-G-04") by their section."""
         if self.sender.startswith("ST-"):
@@ -154,6 +178,8 @@ class Answerer:
             return self._free(call, week)
         if call.tool == "classes_of":
             return self._classes(call, week)
+        if call.tool == "free_rooms":
+            return self._free_rooms(call, week)
         return "I can answer questions like: my free hours this week, when Dr. Iyer teaches Machine Learning, " \
                "or whether Lab 2 is free on Friday."
 
@@ -176,6 +202,29 @@ class Answerer:
             return _cap(f"{who} {'have' if plural else 'has'} no free hours{on} in {when}.")
         both = " both" if plural and len(self._people(a)) == 2 else ""
         return _cap(f"{who} {'are' if plural else 'is'}{both} free on {_spans(free)} ({when}).")
+
+    def _free_rooms(self, call: ToolCall, week: WeekTimetable) -> str:
+        """ "Free labs on Monday (week 14): Lab 1 9 am–1 pm; Lab 3 2–5 pm." or, for one hour, which rooms."""
+        a = call.args
+        found = week.free_rooms(a.get("kind"), a.get("equipment", ()), a.get("min_capacity"), a.get("days"))
+        what = {"lab": "labs", "lecture": "lecture rooms"}.get(a.get("kind"), "rooms")
+        if a.get("equipment"):
+            what += f" with {_listed(a['equipment'])}"
+        if a.get("min_capacity"):
+            what += f" for {a['min_capacity']}"
+        on = f" on {_listed([FULL_DAY[d] for d in a['days']])}" if a.get("days") else ""
+        if a.get("slots"):  # "which labs are free on Monday at 3 pm?": the rooms free at every hour asked
+            at = " and ".join(hour(s) for s in a["slots"])
+            days = a.get("days") or self.instance.calendar.days
+            free = [r.name for r, hours in found if all((d, s) in hours for d in days for s in a["slots"])]
+            if not free:
+                return _cap(f"no {what} are free{on} at {at} (week {call.week}).")
+            return _cap(f"{what} free{on} at {at} (week {call.week}): {_listed(free)}.")
+        if not found:
+            return _cap(f"no {what} are free{on} in week {call.week}.")
+        one_day = FULL_DAY[a["days"][0]] + " " if len(a.get("days", [])) == 1 else ""  # said once, not per room
+        return _cap(f"free {what}{on} (week {call.week}): ") + "; ".join(
+            f"{r.name} {_spans(h).removeprefix(one_day)}" for r, h in found) + "."
 
     def _classes(self, call: ToolCall, week: WeekTimetable) -> str:
         a = call.args

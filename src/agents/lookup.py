@@ -81,6 +81,17 @@ class WeekTimetable:
                 if slot != cal.lunch_slot and (day, slot) not in busy]
 
 
+    def free_rooms(self, kind: str | None = None, equipment: Sequence[str] = (), min_capacity: int | None = None,
+                   days: Sequence[str] | None = None) -> list[tuple[Room, list[tuple[str, int]]]]:
+        """Rooms of a kind ("lab", "lecture"; None: any) with every piece of equipment asked for and at least
+        ``min_capacity`` seats, each with its free (day, slot) hours this week; rooms with none left out."""
+        rooms = [r for r in self.instance.rooms
+                 if (kind is None or r.type.value == kind) and set(equipment) <= set(r.equipment)
+                 and (min_capacity is None or r.capacity >= min_capacity)]
+        out = [(r, self.free_hours(rooms=[r.id], days=days)) for r in rooms]
+        return [(r, hours) for r, hours in out if hours]
+
+
 class Directory:
     """Finds the teachers, sections, rooms and courses a question names, the way people name them:
     "iyer", "Dr. Iyer", "section 4", "lab 2", "machine learning", "ML"."""

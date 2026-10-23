@@ -173,3 +173,24 @@ def test_question_set_score(world):
             misses.append(f"{row['id']} {row['question']!r} -> {call}")
     print(f"\nregex reader: {right}/{len(rows)} right" + "".join(f"\n  miss {m}" for m in misses))
     assert right >= len(rows) - 2, misses  # the baseline; known misses: wordings the regex has no pattern for
+
+
+def test_which_rooms_are_free(world, reader, week):
+    call = reader.read("are there any labs free next week on monday ??")
+    assert call.tool == "free_rooms" and call.args == {"kind": "lab", "days": ["Mon"]} and call.week == WEEK + 1
+    reply = Answerer(world.instance, person(world, "Dr. Menon")).answer(ToolCall("free_rooms", {"kind": "lab", "days": ["Mon"]}, WEEK), week)
+    labs = week.free_rooms(kind="lab", days=["Mon"])
+    assert reply.startswith(f"Free labs on Monday (week {WEEK}): ") and all(r.name in reply for r, _ in labs)
+
+
+def test_which_rooms_are_free_at_an_hour(world, week):
+    a = Answerer(world.instance, person(world, "Dr. Menon"))
+    reply = a.answer(ToolCall("free_rooms", {"kind": "lecture", "days": ["Fri"], "slots": [5]}, WEEK), week)
+    free = [r.name for r, h in week.free_rooms(kind="lecture", days=["Fri"]) if ("Fri", 5) in h]
+    assert reply == (f"Lecture rooms free on Friday at 2 pm (week {WEEK}): " + ", ".join(free[:-1]) + (" and " if len(free) > 1 else "") + free[-1] + "."
+                     if free else f"No lecture rooms are free on Friday at 2 pm (week {WEEK}).")
+
+
+def test_the_auditorium_is_not_in_the_timetable(reader):
+    call = reader.read("is the auditorium free on friday?")
+    assert not call.confident and "auditorium" in call.note

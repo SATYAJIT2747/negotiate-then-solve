@@ -96,3 +96,13 @@ def test_directory_finds_what_people_call_things(world, text, expected):
 def test_directory_finds_nothing_for_nonsense(world):
     assert Directory(world.instance).find("xyzzy") == []
     assert Directory(world.instance).find("Dr.") == []
+
+
+def test_free_rooms_by_kind_equipment_and_seats(world, week):
+    labs = week.free_rooms(kind="lab")
+    assert labs and all(r.type.value == "lab" and hours == week.free_hours(rooms=[r.id]) for r, hours in labs)
+    gpu = week.free_rooms(kind="lab", equipment=["gpu"])
+    assert gpu and all("gpu" in r.equipment for r, _ in gpu)
+    big = max(r.capacity for r in world.instance.rooms)
+    assert all(r.capacity >= big for r, _ in week.free_rooms(min_capacity=big))
+    assert week.free_rooms(min_capacity=big + 1) == []
