@@ -19,10 +19,11 @@ every model mistake becomes an error the model sees (and a training example), no
 | `nts.state` | append-only event log (hash chain), immutable `World` versions, drafts, the commit gate | done |
 | `nts.tools` | typed tools (pydantic args -> JSON schema), scopes, `Refusal` errors with hints, name resolution | read tools done |
 | `nts.protocol` | messages, tool calls, results: what every layer passes and telemetry records | done |
-| `nts.models` | one `chat(messages, tools)` interface: scripted (tests), then replay, llama.cpp, Gemini | scripted done |
-| `nts.harness` | the loop: turn budgets, policy gate, repeat detection, context trimming, pause/resume | next |
-| `nts.telemetry` | spans episode > turn > model_call / tool_call; JSONL per day + SQLite index | next |
+| `nts.models` | one `chat(messages, tools)` interface: scripted (tests), replay, then llama.cpp, Gemini | scripted, replay done |
+| `nts.harness` | the loop: budgets (turns, calls, tokens, time), repeat refusal, context trimming; pause/resume later | done |
+| `nts.telemetry` | spans episode > turn > model_call / tool_call; JSONL per day + SQLite index | done |
 | `nts.data` | labels (validator, solver, approval, judge), SFT / DPO exporters, frozen splits, replay | later |
+| `nts.agents` | agent configs: `READER` (read-only questions); the coordinator comes with step 3 | reader done |
 | `nts.eval` | scenarios = start state + request + checks on the committed state; paired runs vs the old pipeline | later |
 | `nts.api` | FastAPI + server-sent events of each turn | later |
 
@@ -40,7 +41,7 @@ matches nothing is refused with `did_you_mean`, so the model fixes the call on i
 ## Build order
 
 1. Kernel, state store, read tools, scripted model, tests. **(done)**
-2. Harness loop + budgets, telemetry, replay model: every test deterministic.
+2. Harness loop + budgets, telemetry, replay model: every test deterministic. **(done)**
 3. Draft and evaluate tools; the coordinator end to end on Gemini (clean first traces).
 4. Exporters; a 4B LoRA on the traces; the same scenarios on the local model.
 5. Talk tools, negotiation with simulators, API and UI.
@@ -48,3 +49,18 @@ matches nothing is refused with `did_you_mean`, so the model fixes the call on i
 ## Running the tests
 
     uv run pytest tests/nts        # or, offline: ../negotiate-then-solve/.venv/Scripts/python -m pytest tests/nts
+
+## Telemetry
+
+Every episode is recorded as spans under `runs/telemetry/` (gitignored: the records hold real names):
+`spans/YYYY-MM-DD.jsonl` is the record itself, append-only; `index.sqlite` holds the same spans to query.
+
+| Span | Holds |
+|---|---|
+| episode | agent and its version hash, model, who asked, week, request, state version, tools offered, budgets; status, answer, counts, tokens, time |
+| turn | its number, whether it was the last, the tools offered |
+| model_call | the exact messages sent, the request hash, the reply as the model gave it, tokens |
+| tool_call | the call, the state version it ran on, the result or the error |
+
+`ReplayModel.from_spans(load_trace(folder, episode_id))` reruns an episode with no server; in strict mode it stops
+with `ReplayDiverged` at the first model call that is asked differently from the recorded one.

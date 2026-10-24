@@ -6,9 +6,22 @@ needed to rebuild a turn: the exact messages, the raw completion, the parsed cal
 
 from __future__ import annotations
 
+import hashlib
+import json
+from collections.abc import Sequence
 from typing import Any, Literal
 
 from pydantic import BaseModel, Field
+
+
+def request_hash(messages: Sequence[Message], tools: Sequence[dict]) -> str:
+    """One hash for everything a model call is asked with: the same hash means the same request."""
+    body = json.dumps([[m.model_dump(mode="json") for m in messages], list(tools)], sort_keys=True)
+    return hashlib.sha256(body.encode()).hexdigest()[:16]
+
+
+def tools_hash(tools: Sequence[dict]) -> str:
+    return hashlib.sha256(json.dumps(list(tools), sort_keys=True).encode()).hexdigest()[:16]
 
 
 class ToolCall(BaseModel):
