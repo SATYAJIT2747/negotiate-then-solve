@@ -157,6 +157,7 @@ class Orchestrator:
         system_one=None,
         tau: float = 0.9,
         policy_agent: PolicyAgent | None = None,
+        form_policy=None,
         responders: Mapping[str, Responder] | None = None,
         approvers: Iterable[str] = ("C-TT",),
         semester: str = "current",
@@ -177,7 +178,10 @@ class Orchestrator:
 
         ``club_desk`` books a club activity from a message (``ClubRef``) and returns the reply and the outcome
         (booked, rejected, or needs_approval: the timetable office decides); without one, club bookings go to
-        the coordinator."""
+        the coordinator.
+
+        ``form_policy`` checks requests made with clicks (``Case.form``) in place of ``policy_agent``: their
+        intents are exact, so the rule-based check (``RulePolicyAgent``) suffices and no model is called."""
         self.instance = instance
         self.store = store
         self.parser = parser
@@ -185,6 +189,7 @@ class Orchestrator:
         self.system_one = system_one
         self.tau = tau
         self.policy = policy_agent
+        self.form_policy = form_policy
         self.negotiator = negotiator
         self.responders = dict(responders or {})
         self.approvers = set(approvers)
@@ -260,6 +265,10 @@ class Orchestrator:
                 return case.compiled.result
         return parser.parse(case.request)
 
+    def _policy_for(self, case: Case):
+        """The policy check for ``case``: the rule-based one for a request made with clicks, when given."""
+        return self.form_policy if case.form is not None and self.form_policy is not None else self.policy
+
     def submit(self, request: Request, form: IntentOutput | None = None) -> Case:
         """Take a request through the pipeline. ``form``: the request made with clicks (cancel, move or
         swap a class), its intents given instead of read from ``request.raw_text``, which is then only the
@@ -309,9 +318,9 @@ class Orchestrator:
             return case
 
         # compile or clarify: check policy first
-        if self.policy is not None and action == ExpectedAction.COMPILE:
+        if (policy := self._policy_for(case)) is not None and action == ExpectedAction.COMPILE:
             t = time.perf_counter()
-            case.policy = self.policy.review(request.raw_text, case.parse)
+            case.policy = policy.review(request.raw_text, case.parse)
             case.timings["policy"] = time.perf_counter() - t
         self._advance(case, S.POLICY_CHECKED,
                       verdict=case.policy.verdict.value if case.policy else "not_checked")
@@ -380,10 +389,10 @@ class Orchestrator:
         if errors := [e for c in pins for e in validate_constraint(c, self.instance)]:
             plan, pins = None, []
             reading.question, reading.missing = f"That swap cannot be written as a timetable change ({errors[0]}).", ["session"]
-        if plan and self.policy is not None:
+        if plan and (policy := self._policy_for(case)) is not None:
             t = time.perf_counter()
             view = ParseResult(request=r, output=case.parse.output, constraints=pins)
-            case.policy = self.policy.review(r.raw_text, view)
+            case.policy = policy.review(r.raw_text, view)
             case.timings["policy"] = time.perf_counter() - t
         self._advance(case, S.POLICY_CHECKED, verdict=case.policy.verdict.value if case.policy else "not_checked",
                       swap=_plan_view(plan) if plan else None)
@@ -570,9 +579,9 @@ class Orchestrator:
         case.route += "+extra"
         reading = self._extra_reading(case)
         case.extra = {"template": reading.template.id if reading.template else None, "week": reading.week}
-        if reading.template is not None and self.policy is not None:
+        if reading.template is not None and (policy := self._policy_for(case)) is not None:
             t = time.perf_counter()
-            case.policy = self.policy.review(r.raw_text, ParseResult(request=r, output=case.parse.output))
+            case.policy = policy.review(r.raw_text, ParseResult(request=r, output=case.parse.output))
             case.timings["policy"] = time.perf_counter() - t
         self._advance(case, S.POLICY_CHECKED, verdict=case.policy.verdict.value if case.policy else "not_checked",
                       extra=case.extra)

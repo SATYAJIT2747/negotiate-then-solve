@@ -243,6 +243,7 @@ class World:
             self.instance, self.store, parser=self.parser, negotiator=self._negotiator(),
             negotiator_factory=self._negotiator, system_one=self.system_one, tau=self.tau,
             fast_parser=RuleParser(self.instance), policy_agent=self.policy,
+            form_policy=self.rule_policy,  # a request made with clicks is checked by the rules, no model
             responders={f: InboxResponder(self, f) for f in teaching}, approvers={COORDINATOR}, semester=SEMESTER,
             swap_reader=self._swap_reader(),
             # a person picks the time; not while the start-up history replays, nor in a scored test run
@@ -414,7 +415,7 @@ class World:
     def reload_policies(self) -> None:
         """Re-read the policy documents (OCR is cached) and hand the new corpus to the policy agent."""
         self.rules, self.documents = load_corpus(ROOT / "data" / "handbook.md", self.policy_dir, self.ocr)
-        self.policy.set_rules(self.rules)
+        self.policy.set_rules(self.rules)  # with a model, Fallback hands them to the rule-based check too
 
     # -- components ------------------------------------------------------------------
 
@@ -567,6 +568,7 @@ class World:
         rule-based stand-in answers whenever the model cannot (``web.fallback``); offline, the stand-ins."""
         kind = self.retriever_kind = self._retriever_kind()
         rule_parser, rule_policy = RuleParser(self.instance), RulePolicyAgent(self.rules, self.instance, retriever=kind)
+        self.rule_policy = rule_policy
         self.model_link = None
         self.lookup_adapter = None  # the adapter trained on timetable questions, when the local model has one
         if self.parser_mode not in ("gemini", "local"):
@@ -631,12 +633,43 @@ class World:
             return "model" if chosen == "model" and self.parser_mode in ("gemini", "local") else "regex"
         return "model" if self.lookup_adapter else "regex"
 
-    def read_question(self, text: str, sender: str) -> tuple[ToolCall | None, str]:
+    def answer_rule(self, text: str, sender: str) -> dict | None:
+        """A question about the rules answered from them (the policy check, as for a rule question sent as a
+        request), or None when ``text`` is not one. A rule question: the regex's check for what is allowed, or
+        System One's "policy question". Returns the answer and every rule it cites; with no rule cited, an honest
+        "no rule found" instead of whatever the check wrote (KNOWN_BUGS B7)."""
+        from agents.questions import RULE
+        from core.schemas import Channel, Role
+        from language.corpus import ExpectedAction, RequestType
+        from language.parsing import ParseOutput, ParseResult
+
+        role = self.role_of(sender)
+        request = Request(id="R-CHAT", channel=Channel.PORTAL, sender_id=sender,
+                          role=Role(role) if role in Role._value2member_map_ else Role.FACULTY,
+                          raw_text=text, received_at=datetime.now(UTC))
+        rule = bool(RULE.search(text))
+        if not rule and self.system_one is not None:
+            d = self.system_one.decide(request)
+            rule = d.request_type == RequestType.POLICY_QUESTION and d.action == ExpectedAction.ANSWER
+        if not rule:
+            return None
+        # read as a question about the rules (as the request parser marks one), so the check answers it
+        # instead of checking it as a request ("no rule is broken")
+        asked = ParseResult(request=request, output=ParseOutput(request_type="policy_question", action="answer"))
+        decision = self.policy.review(text, asked)
+        by_id = {r.id: r for r in self.rules}
+        cited = [{"id": c, "title": by_id[c].title if c in by_id else c} for c in decision.cited]
+        if not cited:
+            return {"answer": "I couldn't find a rule about that. You can ask the timetable office.", "rules": []}
+        return {"answer": decision.answer or decision.explanation, "rules": cited}
+
+    def read_question(self, text: str, sender: str, gate: bool = True) -> tuple[ToolCall | None, str]:
         """What a chat message asks to look up, and who read it. In the order that scored best on the test set
         (PROGRESS.md: 332/362): a message with request words ("can I have", "please move", "cancel") is a request,
         never a lookup; then the model; the regex when the model is off, unreachable or could not read it.
-        None: not a timetable question (a request or a rule question), for the request flow."""
-        if REQUEST.search(text):
+        None: not a timetable question (a request or a rule question), for the request flow. ``gate=False``:
+        without the request-words check (the person said "it's a question")."""
+        if gate and REQUEST.search(text):
             return None, "request words"
         week = self.current_week() or 1
         start = self.semester.state.semester_start

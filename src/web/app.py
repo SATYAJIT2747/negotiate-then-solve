@@ -29,10 +29,11 @@ import threading
 from collections import Counter
 from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
+from typing import Literal
 
 from fastapi import Depends, FastAPI, Header, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel, ValidationError
+from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from agents.documents import SUFFIXES, ingest
 from agents.explainer import TIER_NAME, describe, placement_text, session_name
@@ -526,6 +527,23 @@ class AskBody(BaseModel):
     text: str
 
 
+class ConfirmBody(BaseModel):
+    """The answer to the chat's "send this as a request?": ``{"n": 12, "as": "request" | "question" | "cancel"}``."""
+
+    model_config = ConfigDict(populate_by_name=True)
+    n: int
+    as_: Literal["request", "question", "cancel"] = Field(alias="as")
+
+
+# a request that has run its course: it can be taken off its sender's list ("Delete from list")
+FINISHED = frozenset({RequestStatus.PUBLISHED, RequestStatus.REFUSED, RequestStatus.DENIED, RequestStatus.ANSWERED,
+                      RequestStatus.FORWARDED, RequestStatus.WITHDRAWN})
+
+# a message that is only a greeting or thanks: the chat says what it can do instead of filing it as a request
+SMALL_TALK = re.compile(r"^\s*(hi+|hello+|hey+|hii+|good (morning|afternoon|evening)|thanks?( you)?|thank u|thx|"
+                        r"ok(ay)?|cool|bye|great)\b[\s!.?,]*$", re.IGNORECASE)
+
+
 class RequestBody(BaseModel):
     text: str
     makeup: bool = False  # "hold make-up classes": off, classes missed in an absence are cancelled
@@ -817,29 +835,95 @@ def create_web_app(world: World | None = None, *, worlds_dir: Path | None = None
 
     @app.get("/api/chat")
     def chat(after: int = 0, u: dict = Depends(user)) -> list[dict]:
-        """The signed-in person's chat, oldest first (``after``: only messages after that number)."""
-        return W().store.chat(u["id"], after)
+        """The signed-in person's chat, oldest first (``after``: only messages after that number). A request card
+        comes with its request's state as it is now (``status``, ``reply``, ``asks_you``)."""
+        w = W()
+        _chat_notices(w, u["id"])
+        return [_chat_out(w, m, u["id"]) for m in w.store.chat(u["id"], after)]
+
+    def _chat_notices(w: World, person: str) -> None:
+        """Messages addressed to ``person`` that wait on them (options for a time, a colleague's request that
+        clashes with their class) become cards in their chat (``kind: notice``), once each, in the order they
+        came (CHAT-PLAN step 7)."""
+        for item in sorted(w.inbox.items.values(), key=lambda i: i.created):
+            if item.to == person and not w.store.chat_has(person, "notice", "item", item.id):
+                w.store.add_chat(person, "assistant", "notice", {"item": item.id, "case": item.case_id})
 
     @app.post("/api/chat")
     def chat_send(body: RequestBody, u: dict = Depends(user)) -> list[dict]:
-        """A message to the chat: a timetable question is answered here and now (nothing stored but the chat); anything
-        else goes in as a request, exactly as ``POST /api/requests``, and the chat keeps a card that follows it (a
-        rule question's request ends answered, and the card shows the answer). Returns the new messages."""
+        """A message to the chat (CHAT-PLAN.md). In order:
+        - a timetable question → answered (``kind: lookup``);
+        - a question about the rules → answered from them, with every rule cited (``kind: rule``; no request);
+        - a greeting or thanks → what the chat can do (``kind: other``);
+        - anything else → "send this as a request?" (``kind: confirm``): nothing is sent until the person
+          confirms (``POST /api/chat/confirm``).
+        Returns the new messages: the person's, then the reply."""
         w = W()
-        call, reader = w.read_question(body.text, u["id"])
+        text, me = body.text.strip(), u["id"]
+        if not text:
+            raise HTTPException(422, "write a message first")
+        call, reader = w.read_question(text, me)
         if call is not None:
-            mine = w.store.add_chat(u["id"], "you", "text", {"text": body.text})
-            return [mine, w.store.add_chat(u["id"], "assistant", "lookup", _lookup_answer(w, call, u["id"], reader))]
+            reply = ("lookup", _lookup_answer(w, call, me, reader))
+        elif (rule := w.answer_rule(text, me)) is not None:
+            reply = ("rule", rule)
+        elif SMALL_TALK.match(text):
+            reply = ("other", {"text": "I can answer questions about the timetable (“am I free on Friday?”) and "
+                                       "about the rules (“how many online classes are allowed?”), and make "
+                                       "requests (“move my Monday lecture to Tuesday”)."})
+        else:
+            reply = ("confirm", {"text": text, "makeup": body.makeup, "reader": reader})
+        mine = w.store.add_chat(me, "you", "text", {"text": text})
+        return [mine, w.store.add_chat(me, "assistant", reply[0], reply[1])]
+
+    @app.post("/api/chat/confirm")
+    def chat_confirm(body: ConfirmBody, u: dict = Depends(user)) -> list[dict]:
+        """The answer to "send this as a request?" (message ``n``): ``request`` sends it (as ``POST /api/requests``)
+        and the chat gets a request card; ``question`` reads it again as a timetable question, without the
+        request-words check; ``cancel`` drops it. A confirm is answered once. Returns the new messages."""
+        w = W()
+        me = u["id"]
+        m = w.store.chat_message(me, body.n)
+        if m is None or m["kind"] != "confirm":
+            raise HTTPException(404, "no such message to confirm")
+        if m.get("answered"):
+            raise HTTPException(409, f"already answered: {m['answered']}")
+        w.store.update_chat(me, body.n, {"answered": body.as_})
+        if body.as_ == "cancel":
+            return []
+        if body.as_ == "question":
+            call, reader = w.read_question(m["text"], me, gate=False)
+            if call is None:
+                return [w.store.add_chat(me, "assistant", "other", {
+                    "text": "I couldn't read that as a question about the timetable. Try asking it another way, "
+                            "or send it as a request."})]
+            return [w.store.add_chat(me, "assistant", "lookup", _lookup_answer(w, call, me, reader))]
         try:
-            r = w.intake.from_portal(u["id"], body.text, makeup=body.makeup)
+            r = w.intake.from_portal(me, m["text"], makeup=m.get("makeup"))
         except UnknownSender:
             raise HTTPException(403, "unknown user") from None
         if r is None:
             raise HTTPException(409, "duplicate request")
-        mine = w.store.add_chat(u["id"], "you", "text", {"text": body.text})
-        card = w.store.add_chat(u["id"], "assistant", "request", {"case": r.id, "reader": reader})
+        card = w.store.add_chat(me, "assistant", "request", {"case": r.id})
         w.submit(r)
-        return [mine, card]
+        return [_chat_out(w, card, me)]
+
+    def _chat_out(w: World, m: dict, person: str) -> dict:
+        """A chat message as sent to the page: a request card with its request's state now (status, the latest
+        reply: the outcome or the question it asks, and whether it waits on this person); a notice with its
+        message as it is now (the options, and the answer once given)."""
+        if m["kind"] == "notice":
+            item = w.inbox.items.get(m["item"])
+            return m | {"inbox": _inbox_item(w, item) if item else None}
+        if m["kind"] != "request":
+            return m
+        r = w.store.request(m["case"])
+        if r is None:
+            return m | {"status": "unknown"}
+        case = w.orch.cases.get(r.id)
+        s = _summary(w, r, case)
+        return m | {"status": s["status"], "running": s["running"], "reply": case.reply if case else None,
+                    "asks_you": s["status"] == "clarification_requested" and r.sender_id == person}
 
     @app.delete("/api/chat")
     def chat_clear(u: dict = Depends(user)) -> dict:
@@ -867,6 +951,9 @@ def create_web_app(world: World | None = None, *, worlds_dir: Path | None = None
             raise HTTPException(403, "unknown user") from None
         if r is None:
             raise HTTPException(409, "duplicate request")
+        # sent on purpose (the request builder): in the chat too, as what was asked and its request card
+        w.store.add_chat(u["id"], "you", "text", {"text": body.text})
+        w.store.add_chat(u["id"], "assistant", "request", {"case": r.id})
         w.submit(r)
         return {"id": r.id}
 
@@ -899,20 +986,44 @@ def create_web_app(world: World | None = None, *, worlds_dir: Path | None = None
             raise HTTPException(403, "unknown user") from None
         if r is None:
             raise HTTPException(409, "duplicate request")
+        # made from the timetable (the chat's popup): in the chat too, as what was asked and its request card
+        w.store.add_chat(u["id"], "you", "text", {"text": body.text})
+        w.store.add_chat(u["id"], "assistant", "request", {"case": r.id})
         w.submit(r, form=out)
         return {"id": r.id}
 
     @app.get("/api/cases")
     def cases(scope: str = "mine", u: dict = Depends(user)) -> list[dict]:
+        """``mine``: the person's own requests, without those they took off their list, each with whether they
+        may withdraw it (the Requests table's quick actions); ``all``: every request they may see."""
         w = W()
         out = []
+        hidden = w.store.hidden(u["id"]) if scope == "mine" else set()
         for r in reversed(w.store.requests()):
             case = w.orch.cases.get(r.id)
-            if scope == "mine" and r.sender_id != u["id"]:
+            if scope == "mine" and (r.sender_id != u["id"] or r.id in hidden):
                 continue
             if visible(u, case, r):
-                out.append(_summary(w, r, case))
+                out.append(_summary(w, r, case) | ({"can_withdraw": bool(case and withdraws(w, u, case))}
+                                                   if scope == "mine" else {}))
         return out
+
+    @app.post("/api/cases/{case_id}/hide")
+    def hide_case(case_id: str, u: dict = Depends(user)) -> dict:
+        """"Delete from list": takes one of the person's own finished requests off their list. It stays in the
+        records (and on the oversight pages); only their list changes."""
+        w = W()
+        r = w.store.request(case_id)
+        if r is None:
+            raise HTTPException(404)
+        if r.sender_id != u["id"]:
+            raise HTTPException(403, "only your own requests can be taken off your list")
+        case = w.orch.cases.get(case_id)
+        status = case.status if case else r.status
+        if status not in FINISHED:
+            raise HTTPException(409, f"it is not finished yet ({status.value}): withdraw it first")
+        w.store.hide(u["id"], case_id)
+        return {"id": case_id, "hidden": True}
 
     @app.get("/api/cases/{case_id}")
     def case(case_id: str, u: dict = Depends(user)) -> dict:

@@ -52,7 +52,7 @@ export const ROLE_LABEL: Record<Role, string> = {
   student: "Class representative",
 };
 
-/** Roles whose home is their week's timetable with their requests beside it (pages/Home), and whose
+/** Roles whose home is the chat (pages/Chat: questions, rules, requests; the timetable in a popup), and whose
  * sidebar keeps only the essentials. Everyone else opens on the dashboard. */
 export const TIMETABLE_HOME: Role[] = ["faculty", "guest_faculty", "student"];
 

@@ -1,5 +1,25 @@
 import type { InstanceView, Persona } from "./types";
 
+/** The chat's examples, in three kinds (CHAT-PLAN): questions about the timetable, questions about the rules, and
+ * requests. Written from the person's own classes and colleagues where it helps; a click puts one in the box. */
+export function chatExamples(user: Persona | null, inst: InstanceView | null | undefined): { title: string; items: string[] }[] {
+  if (!user || !inst) return [];
+  const rep = user.role === "student";
+  const colleague = inst.faculty.find((f) => f.id !== user.id && inst.sessions.some((s) => s.faculty === f.id))?.name ?? "Dr. Iyer";
+  const lab = inst.rooms.find((r) => r.type === "lab")?.name ?? "Lab 2";
+  const timetable = rep
+    ? ["What are our free slots this week?", `When is ${colleague} free on Friday?`, `Is ${lab} free on Thursday at 3 pm?`, "What changed this week?"]
+    : ["What are my free slots this week?", `When are ${colleague} and I both free?`, `Is ${lab} free on Thursday at 3 pm?`, "When is my next class?"];
+  const rules = ["How many online classes can a course have?", "Is it allowed to teach more than three hours in a row?",
+                 "Within how many weeks must a missed class be made up?"];
+  const requests = requestExamples(user, inst).filter((x) => !rules.includes(x) && !/^is it allowed/i.test(x)).slice(0, 3);
+  return [
+    { title: "Timetable", items: timetable },
+    { title: "Rules", items: rules },
+    ...(requests.length ? [{ title: "Requests", items: requests }] : []),
+  ];
+}
+
 /** Requests a person of this role might send, written from their own classes: a click puts one in the box. */
 export function requestExamples(user: Persona | null, inst: InstanceView | null | undefined): string[] {
   if (!user || !inst) return [];

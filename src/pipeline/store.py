@@ -41,6 +41,7 @@ CREATE TABLE IF NOT EXISTS seen (person TEXT NOT NULL, item TEXT NOT NULL, n INT
                                  PRIMARY KEY (person, item));
 CREATE TABLE IF NOT EXISTS chat (n INTEGER PRIMARY KEY AUTOINCREMENT, person TEXT NOT NULL, at TEXT NOT NULL,
                                  role TEXT NOT NULL, kind TEXT NOT NULL, body TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS hidden (person TEXT NOT NULL, item TEXT NOT NULL, PRIMARY KEY (person, item));
 """
 
 
@@ -273,10 +274,29 @@ class Store:
         rows = self._exec("SELECT n, at, role, kind, body FROM chat WHERE person=? AND n>? ORDER BY n", (person, after))
         return [{"n": n, "at": at, "role": role, "kind": kind, **json.loads(body)} for n, at, role, kind, body in rows]
 
+    def chat_message(self, person: str, n: int) -> dict | None:
+        """One of ``person``'s messages by its number (None: no such message, or someone else's)."""
+        row = self._exec("SELECT n, at, role, kind, body FROM chat WHERE person=? AND n=?", (person, n)).fetchone()
+        return {"n": row[0], "at": row[1], "role": row[2], "kind": row[3], **json.loads(row[4])} if row else None
+
+    def update_chat(self, person: str, n: int, changes: dict) -> None:
+        """Adds or changes fields of one of ``person``'s messages (e.g. a confirm, once answered)."""
+        m = self.chat_message(person, n)
+        if m is not None:
+            body = {k: v for k, v in m.items() if k not in ("n", "at", "role", "kind")} | changes
+            self._exec("UPDATE chat SET body=? WHERE person=? AND n=?", (json.dumps(body), person, n))
+
     def chat_has(self, person: str, kind: str, key: str, value: str) -> bool:
         """Whether ``person``'s chat already has a ``kind`` message with ``body[key] == value``."""
         rows = self._exec("SELECT body FROM chat WHERE person=? AND kind=?", (person, kind))
         return any(json.loads(b).get(key) == value for (b,) in rows)
+
+    def hide(self, person: str, item: str) -> None:
+        """Takes ``item`` (a request) off ``person``'s own list; it stays in the records."""
+        self._exec("INSERT OR IGNORE INTO hidden (person, item) VALUES (?,?)", (person, item))
+
+    def hidden(self, person: str) -> set[str]:
+        return {i for (i,) in self._exec("SELECT item FROM hidden WHERE person=?", (person,))}
 
     def clear_chat(self, person: str) -> int:
         """Empties ``person``'s chat (their requests stay, in the Requests list). Returns how many went."""

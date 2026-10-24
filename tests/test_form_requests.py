@@ -59,6 +59,35 @@ def test_move_with_clicks_goes_where_it_was_asked(client):
         assert (moved["after"]["day"], moved["after"]["slot"]) == (day, slot)
 
 
+def test_a_request_made_with_clicks_is_checked_by_the_rules_not_the_model(client):
+    c, world = client
+
+    class Model:  # stands in for the model's policy check: it must not be asked
+        asked = []
+
+        def review(self, text, parse=None):
+            self.asked.append(text)
+            return world.rule_policy.review(text, parse)
+
+    week = c.get("/api/calendar", headers=as_("F-104")).json()["current_week"]
+    entries, e = own_class(c, "F-104", week)
+    taken = {(o["day"], s) for o in entries if o["faculty"] == "F-104" or set(o["groups"]) & set(e["groups"])
+             for s in range(o["slot"], o["slot"] + o["duration"])}
+    day, slot = next((d, s) for d in ("Mon", "Tue", "Wed", "Thu", "Fri") for s in (0, 1, 2, 5, 6)
+                     if (d, s) not in taken and (d, s) != (e["day"], e["slot"]))
+    model, world.orch.policy = world.orch.policy, Model()
+    try:
+        rid = c.post("/api/requests/form", headers=as_("F-104"), json={
+            "text": f"Please move my {e['title']} lecture to {day} at {9 + slot}:00, in week {week} only.",
+            "intent": {"kind": "move", "which": {"session": e["session"]},
+                       "to": {"days": [day], "at": [f"{9 + slot:02d}:00"]}, "period": {"weeks": [week]}}}).json()["id"]
+        d = wait_for(c, rid, DONE)
+    finally:
+        world.orch.policy = model
+    assert d["route"].startswith("form+intents") and Model.asked == []
+    assert world.orch.cases[rid].policy is not None  # checked all the same, by the rules
+
+
 def test_form_only_for_your_own_classes(client):
     c, _ = client
     week = c.get("/api/calendar", headers=as_("F-101")).json()["current_week"]

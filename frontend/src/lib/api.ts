@@ -2,7 +2,9 @@ import type {
   AskAnswer,
   CaseDetail,
   CaseSummary,
+  ChatMessage,
   ClubDecision,
+  ConfirmAs,
   ClubRequest,
   EventRow,
   FeedItem,
@@ -122,6 +124,13 @@ export const api = {
   /** makeup: hold make-up classes for the ones an absence misses (otherwise they are cancelled). */
   /** A question about the timetable ("my free slots this week"): answered, nothing stored; else "not_a_question". */
   ask: (text: string) => post<AskAnswer>("/ask", { text }),
+  /** The person's chat (CHAT-PLAN.md): all of it, or only the messages after number ``after``. */
+  chat: (after = 0) => call<ChatMessage[]>(`/chat?after=${after}`),
+  /** A message to the chat; returns the new messages (yours, then the reply). */
+  chatSend: (text: string, makeup = false) => post<ChatMessage[]>("/chat", { text, makeup }),
+  /** The answer to "send this as a request?" (message ``n``); returns the new messages. */
+  chatConfirm: (n: number, as: ConfirmAs) => post<ChatMessage[]>("/chat/confirm", { n, as }),
+  chatClear: () => call<{ cleared: number }>("/chat", { method: "DELETE" }),
   submit: (text: string, makeup = false) => post<{ id: string }>("/requests", { text, makeup }),
   /** A request made with clicks: ``text`` is what people read, ``intent`` what the pipeline acts on (no parser). */
   submitForm: (text: string, intent: Record<string, unknown>) => post<{ id: string }>("/requests/form", { text, intent }),
@@ -152,6 +161,8 @@ export const api = {
   act: (id: string, text: string) => post<{ id: string; case: CaseDetail }>(`/cases/${id}/act`, { text }),
   /** The sender takes a request back; everything it set in motion is undone. */
   withdraw: (id: string) => post<CaseDetail>(`/cases/${id}/withdraw`, {}),
+  /** "Delete from list": one of your own finished requests off your list (it stays in the records). */
+  hide: (id: string) => post<{ id: string; hidden: boolean }>(`/cases/${id}/hide`, {}),
   versions: () => call<VersionRow[]>("/versions"),
   calendar: () => call<CalendarView>("/calendar"),
   weeklyChanges: () => call<WeeklyChange[]>("/weekly-changes"),

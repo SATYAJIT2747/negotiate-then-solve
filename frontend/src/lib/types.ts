@@ -59,6 +59,8 @@ export interface CaseSummary {
   type: string | null;
   rounds: number;
   running: boolean;
+  /** In the person's own list (scope "mine"): they may withdraw it now. */
+  can_withdraw?: boolean;
 }
 
 export interface ConstraintView {
@@ -747,11 +749,31 @@ export interface RowsSlice {
   rows: { name: string; free: number[] }[];
 }
 
-/** One message of the person's chat (GET/POST /api/chat). */
+/** One message of the person's chat (GET/POST /api/chat, POST /api/chat/confirm; CHAT-PLAN.md). */
 export type ChatMessage =
   | (ChatBase & { role: "you"; kind: "text"; text: string })
   | (ChatBase & { role: "assistant"; kind: "lookup" } & Omit<AskAnswer, "kind">)
-  | (ChatBase & { role: "assistant"; kind: "request"; case: string; reader?: string });
+  /** a question about the rules, answered from them: every rule cited (none: "I couldn't find a rule"). */
+  | (ChatBase & { role: "assistant"; kind: "rule"; answer: string; rules: { id: string; title: string }[] })
+  /** "send this as a request?": nothing sent until answered (POST /api/chat/confirm). */
+  | (ChatBase & { role: "assistant"; kind: "confirm"; text: string; makeup?: boolean | null; answered?: ConfirmAs })
+  /** a request, once sent: its state as it is now. */
+  | (ChatBase & {
+      role: "assistant";
+      kind: "request";
+      case: string;
+      status: Status | "unknown";
+      running?: boolean;
+      /** the latest reply: the outcome, or the question it asks */
+      reply?: string | null;
+      /** it waits on this person (a question back): answered in the chat */
+      asks_you?: boolean;
+    })
+  /** a message that waits on this person (options for a time, a colleague's request that clashes with their class) */
+  | (ChatBase & { role: "assistant"; kind: "notice"; item: string; case: string | null; inbox: InboxItem | null })
+  | (ChatBase & { role: "assistant"; kind: "other"; text: string });
+
+export type ConfirmAs = "request" | "question" | "cancel";
 
 interface ChatBase {
   n: number;

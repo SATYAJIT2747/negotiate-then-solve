@@ -93,12 +93,15 @@ export interface WhenHint {
 
 /** The open conversation and the composer under it. With nothing open, the composer is the full new-request
  * page: examples to start from, the week and days shown on the timetable to add, Undo and Clear. */
-export function ConversationPane({ s, convs, attachments, when, wide = false, onAnswer }: {
+export function ConversationPane({ s, convs, attachments, when, wide = false, onAnswer, answerOnly = false }: {
   s: ConversationState;
   convs: Conversation[];
   attachments?: Attachments;
   when?: WhenHint;
   wide?: boolean;
+  /** Only to answer the open request (a question back, options): no new requests here (they are made in the
+   * chat, with its confirm step); without anything to answer, no input box. */
+  answerOnly?: boolean;
   /** A timetable question was answered (e.g. to shade the free hours on the timetable). */
   onAnswer?: (a: AskAnswer) => void;
 }) {
@@ -287,6 +290,7 @@ export function ConversationPane({ s, convs, attachments, when, wide = false, on
         </div>
       </div>
 
+      {(!answerOnly || s.answering || s.replying) && (
       <div className="border-t border-line p-3">
         <div className={column}>
           {s.replying && !reading && <p className="mb-2 text-[12px] text-brand">Pick an option above, or reply in your own words.</p>}
@@ -377,6 +381,7 @@ export function ConversationPane({ s, convs, attachments, when, wide = false, on
           {error && <p className="mt-1 text-[12.5px] text-bad">{error}</p>}
         </div>
       </div>
+      )}
     </>
   );
 }
