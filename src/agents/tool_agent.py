@@ -26,6 +26,7 @@ from .lookup import TITLES, Directory
 from .questions import NOT_IN_DATA_NOTE, PRIVATE_NOTE, ToolCall, from_now, week_and_day
 
 MAX_TRIES = 3
+COULD_NOT = "I couldn't work out that question. Could you ask it another way?"  # after MAX_TRIES failed checks
 
 SYSTEM = """You turn a question about a university department's weekly timetable into one lookup.
 Tools (the fields to fill; leave the others empty):
@@ -154,8 +155,7 @@ class ToolAgent:
                 continue
             self.trace.append({"choice": choice.model_dump(exclude_defaults=True), "problem": None})
             return call
-        return ToolCall("unclear", week=self.current_week, confident=False,
-                        note="I couldn't work out that question. Could you ask it another way?")
+        return ToolCall("unclear", week=self.current_week, confident=False, note=COULD_NOT)
 
     def _prompt(self, text: str) -> str:
         i, cal = self.instance, self.instance.calendar

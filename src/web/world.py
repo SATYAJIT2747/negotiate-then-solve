@@ -18,6 +18,8 @@ from agents.documents import load_corpus, ocr_backend
 from agents.negotiation import Message, Negotiator, Reply
 from agents.policy import RulePolicyAgent, embedder
 from agents.priority import PriorityModel
+from agents.questions import REQUEST, QuestionReader, ToolCall
+from agents.tool_agent import COULD_NOT, ToolAgent
 from agents.simulators import Profile, Simulator, Window
 from core.generator import generate_department
 from core.instance import Instance, policy_constraints
@@ -230,6 +232,8 @@ class World:
         self.simulators = {p: Simulator(self.instance, prof) for p, prof in self.profiles.items()}
         self.system_one, self.tau, self.system_one_info = self._train_system_one()
         self.parser, self.policy, self.models = self._components()
+        self.models["lookup"] = (f"{self.lookup_adapter or 'the model'} (regex when unreachable)"
+                                 if self.lookup_reader == "model" else "regex")
         self.reply_parser = self._reply_parser()
         from evaluation.study import Study
 
@@ -564,6 +568,7 @@ class World:
         kind = self.retriever_kind = self._retriever_kind()
         rule_parser, rule_policy = RuleParser(self.instance), RulePolicyAgent(self.rules, self.instance, retriever=kind)
         self.model_link = None
+        self.lookup_adapter = None  # the adapter trained on timetable questions, when the local model has one
         if self.parser_mode not in ("gemini", "local"):
             return (rule_parser, rule_policy,
                     {"parser": "offline rules", "policy": f"offline rules ({kind} retrieval)", "retrieval": kind})
@@ -607,11 +612,50 @@ class World:
             else:
                 make_parser = lambda c: CompilerParser(self.instance, _task(c, "compile"))  # noqa: E731
             make_policy = lambda c: PolicyAgent(self.rules, _task(c, "policy"), self.instance, retriever=kind)  # noqa: E731
+        self.lookup_adapter = adapters.adapter_for("lookup") if self.parser_mode == "local" and adapters else None
         self.model_link.usable()  # connect now if it can; it is tried again later if not
         parser = Fallback(self.model_link, make_parser, rule_parser, "parser")
         policy = Fallback(self.model_link, make_policy, rule_policy, "policy")
         fallback = " (rules when unreachable)"
         return parser, policy, {"parser": name + fallback, "policy": name + fallback, "retrieval": kind}
+
+    # -- timetable questions (agents.questions, agents.tool_agent) ---------------------------------------
+
+    @property
+    def lookup_reader(self) -> str:
+        """Who reads timetable questions: ``model`` (the local model's lookup adapter; Gemini with
+        ``NTS_LOOKUP_READER=model``) or ``regex``. ``NTS_LOOKUP_READER`` overrides the default, which is the
+        model whenever the adapters file names a ``lookup`` adapter."""
+        chosen = os.environ.get("NTS_LOOKUP_READER")
+        if chosen in ("model", "regex"):
+            return "model" if chosen == "model" and self.parser_mode in ("gemini", "local") else "regex"
+        return "model" if self.lookup_adapter else "regex"
+
+    def read_question(self, text: str, sender: str) -> tuple[ToolCall | None, str]:
+        """What a chat message asks to look up, and who read it. In the order that scored best on the test set
+        (PROGRESS.md: 332/362): a message with request words ("can I have", "please move", "cancel") is a request,
+        never a lookup; then the model; the regex when the model is off, unreachable or could not read it.
+        None: not a timetable question (a request or a rule question), for the request flow."""
+        if REQUEST.search(text):
+            return None, "request words"
+        week = self.current_week() or 1
+        start = self.semester.state.semester_start
+        start = date.fromisoformat(start) if start else None
+        if self.lookup_reader == "model" and self.model_link is not None and self.model_link.usable():
+            try:
+                agent = ToolAgent(self.instance, _task(self.model_link.client, "lookup"), sender, week,
+                                  semester_start=start)
+                call = agent.read(text)
+                if call is None or call.confident or call.note != COULD_NOT:
+                    return call, "model"
+                # the model could not settle it in three tries: the regex may still read it
+            except Exception as e:  # noqa: BLE001 - the regex answers instead
+                from .fallback import _outage
+
+                if _outage(e):
+                    self.model_link.failed(e)
+                print(f"[model] lookup: {type(e).__name__}: {str(e)[:160]}; regex used", flush=True)
+        return QuestionReader(self.instance, sender, week, semester_start=start).read(text), "regex"
 
     def _model_changed(self, up: bool, error: str | None) -> None:
         self.store.log(None, "model_reachable" if up else "model_unreachable", error=error)

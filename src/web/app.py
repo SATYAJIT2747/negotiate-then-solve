@@ -37,11 +37,11 @@ from pydantic import BaseModel, ValidationError
 from agents.documents import SUFFIXES, ingest
 from agents.explainer import TIER_NAME, describe, placement_text, session_name
 from agents.ledger import ConcessionLedger
-from agents.lookup import WeekTimetable
+from agents.lookup import WeekTimetable, part_slots
 from agents.negotiation import Message, Reply
 from agents.policy import RETRIEVERS, Rule, make_retriever, tokens
 from agents.priority import JUSTIFICATION, ROLE_AUTHORITY, Weights
-from agents.questions import Answerer, QuestionReader
+from agents.questions import Answerer
 from core.graph import add_conflict, build_graph
 from core.instance import Session
 from core.schemas import DAYS, Placement, Request, RequestStatus, Tier
@@ -804,20 +804,22 @@ def create_web_app(world: World | None = None, *, worlds_dir: Path | None = None
         """A question about the timetable ("my free slots this week", "when does Dr. Iyer teach ML?"), answered
         from the published timetable (agents.lookup, agents.questions) for anyone signed in. Nothing is stored:
         a question is not a request. Anything that is not a timetable question (a request, a question about the
-        rules) comes back as ``not_a_question``, so the message can go the usual way."""
+        rules) comes back as ``not_a_question``, so the message can go the usual way. ``reader`` says who read the
+        question: the model (the local ``lookup`` adapter), the regex, or the request words that ruled it out."""
         w = W()
-        start = w.semester.state.semester_start
-        call = QuestionReader(w.instance, u["id"], w.current_week() or 1,
-                              semester_start=date.fromisoformat(start) if start else None).read(body.text)
+        call, reader = w.read_question(body.text, u["id"])
         if call is None:
-            return {"kind": "not_a_question"}
+            return {"kind": "not_a_question", "reader": reader}
         week = WeekTimetable(w.instance, w.store, call.week)
-        out = {"kind": "timetable", "answer": Answerer(w.instance, u["id"]).answer(call, week),
+        out = {"kind": "timetable", "answer": Answerer(w.instance, u["id"]).answer(call, week), "reader": reader,
                "call": {"tool": call.tool, "args": call.args, "week": call.week, "confident": call.confident}}
         if call.tool == "free_hours" and call.confident:  # the hours themselves, for the timetable to shade
             a = call.args
-            free = week.free_hours(a.get("teachers", ()), a.get("sections", ()), a.get("rooms", ()), a.get("days"))
-            out["free"] = [{"day": d, "slot": s} for d, s in free if not a.get("slots") or s in a["slots"]]
+            free = week.free_hours(a.get("teachers", ()), a.get("sections", ()), a.get("rooms", ()), a.get("days"),
+                                   length=a.get("length", 1))
+            part = set(part_slots(w.instance, a["part"])) if a.get("part") else None
+            out["free"] = [{"day": d, "slot": s} for d, s in free
+                           if (not a.get("slots") or s in a["slots"]) and (part is None or s in part)]
         return out
 
     @app.post("/api/requests")
