@@ -3,6 +3,7 @@ Gemini (``ToolAgent``) and both together (ROADMAP.md, step 4).
 
     uv run python -m evaluation.lookup_set                          # the regex only: no API calls
     uv run python -m evaluation.lookup_set --gemini gemini-3.8-flash # also Gemini (cached: reruns are free)
+    uv run python -m evaluation.lookup_set --local http://10.1.25.191:8080/v1   # also the nts-lookup-v1 adapter
 
 ``data/lookup-test-templates.jsonl`` has templates, not questions: *"is {teacher.any} free on {day.any} at
 {time.any}?"* with the expected lookup in the same placeholders, ``{"teachers": ["{teacher}"], ...}``. The
@@ -331,6 +332,9 @@ def _show(call: ToolCall | None) -> str:
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--gemini", metavar="MODEL", help="also ask Gemini (ToolAgent), e.g. gemini-3.8-flash")
+    ap.add_argument("--local", metavar="URL", nargs="?", const="http://localhost:8080/v1", default=None,
+                    help="also ask the local model on llama-server (ToolAgent), e.g. http://10.1.25.191:8080/v1")
+    ap.add_argument("--adapter", default="nts-lookup-v1", help="with --local: the LoRA adapter (its GGUF file name)")
     ap.add_argument("--fills", type=int, default=3, help="questions per template")
     ap.add_argument("--seed", type=int, default=0)
     ap.add_argument("--rpm", type=float, default=None, help="Gemini calls a minute (a paid key: e.g. 60)")
@@ -345,14 +349,22 @@ def main() -> None:
     instance = with_first_names(w.instance)
     rows = [json.loads(x) for x in TEMPLATES.read_text(encoding="utf-8").splitlines() if x.strip()]
     questions = fill_all(instance, rows, a.fills, a.seed)
-    client = None
+    client, model = None, None
+    from agents.tool_agent import ToolAgent
+
+    if a.gemini and a.local:
+        raise SystemExit("one model per run: --gemini or --local")
     if a.gemini:
-        from agents.tool_agent import ToolAgent
         from language.llm import GeminiClient
 
-        client = GeminiClient(model=a.gemini, rpm=a.rpm, rpd=a.rpd)
+        client, model = GeminiClient(model=a.gemini, rpm=a.rpm, rpd=a.rpd), "gemini"
+    elif a.local:
+        from language.local import LocalClient
 
-    readers = ["regex"] + (["gemini", "both"] if client else [])
+        client, model = LocalClient(base_url=a.local, adapter=a.adapter, timeout=300), "local"
+        print("local model:", client.model)
+
+    readers = ["regex"] + ([model, "both"] if client else [])
     score: dict[str, dict[str, list[int]]] = {r: {} for r in readers}
     a.out.parent.mkdir(parents=True, exist_ok=True)
     with a.out.open("w", encoding="utf-8") as out:
@@ -363,9 +375,9 @@ def main() -> None:
             if client:
                 agent = ToolAgent(instance, client, f.asker, WEEK, today=NOW.date(), now=NOW,
                                   semester_start=SEMESTER_START)
-                got["gemini"] = _with_retries(agent.read, f.question)
+                got[model] = _with_retries(agent.read, f.question)
                 trace = agent.trace
-                got["both"] = got["regex"] if got["regex"] is not None or REQUEST.search(f.question) else got["gemini"]
+                got["both"] = got["regex"] if got["regex"] is not None or REQUEST.search(f.question) else got[model]
             for r in readers:
                 ok = right(f, got[r])
                 score[r].setdefault(f.group, []).append(ok)

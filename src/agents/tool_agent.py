@@ -20,6 +20,7 @@ from pydantic import BaseModel, Field
 
 from core.instance import Faculty, Group, Instance, Room
 from language.corpus import hour
+from language.local import LocalClient
 
 from .lookup import TITLES, Directory
 from .questions import NOT_IN_DATA_NOTE, PRIVATE_NOTE, ToolCall, from_now, week_and_day
@@ -99,6 +100,15 @@ class Choice(BaseModel):
     ambiguous: list[str] = Field(default_factory=list, description="names that fit more than one listed teacher")
 
 
+class GrammarChoice(Choice):
+    """``Choice`` as sent to a local model (llama-server): ``week`` not forced. The server's grammar makes every
+    field up to the last required one required (``language.local.grammar_schema``); with ``week`` required near
+    the end, the model had to write every field before it and filled them with nonsense ("me", "gpu"). With only
+    ``tool`` required it writes the fields it needs, in the order it was trained on, ``week`` among them."""
+
+    week: int | None = None
+
+
 class Client(Protocol):
     """Anything with GeminiClient's ``generate`` (a fake one in the tests)."""
 
@@ -124,13 +134,17 @@ class ToolAgent:
         self.semester_start = semester_start  # for dates; None: a date can't be placed in a week
         self.directory = Directory(instance)
         self.trace: list[dict] = []
+        # a local model is held to its answer's shape by a grammar: send it the grammar-friendly schema
+        self.schema = GrammarChoice if isinstance(client, LocalClient) else Choice
 
     def read(self, text: str) -> ToolCall | None:
         self.trace = []
         self.question = text  # the checks compare the model's names with what the question says
         prompt = self._prompt(text)
         for _ in range(MAX_TRIES):
-            choice = self.client.generate(SYSTEM, prompt, Choice)
+            choice = self.client.generate(SYSTEM, prompt, self.schema)
+            if choice.week is None:  # a local model may leave the week out: this week
+                choice = choice.model_copy(update={"week": self.current_week})
             try:
                 call = self._check(choice)
             except Problem as p:

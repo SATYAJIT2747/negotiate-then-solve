@@ -5,7 +5,8 @@ from datetime import date, datetime
 
 import pytest
 
-from agents.tool_agent import MAX_TRIES, Choice, ToolAgent
+from agents.tool_agent import MAX_TRIES, Choice, GrammarChoice, ToolAgent
+from language.local import grammar_schema
 from web.app import World
 
 WEEK = 13
@@ -156,6 +157,18 @@ def test_a_date_is_placed_by_the_calendar_not_the_model(world):
     a = ToolAgent(world.instance, FakeModel(*[bad] * MAX_TRIES), "F-102", WEEK, semester_start=start)
     a.read("is lab 2 free on 28/10?")
     assert "YYYY-MM-DD" in a.trace[0]["problem"]
+
+
+def test_a_local_model_is_forced_to_write_only_the_tool():
+    # the server's grammar makes every field before the last required one required; only "tool" may be
+    assert grammar_schema(GrammarChoice.model_json_schema())["required"] == ["tool"]
+    assert len(grammar_schema(Choice.model_json_schema())["required"]) > 10  # why Choice itself won't do
+
+
+def test_a_week_left_out_is_this_week(world):
+    no_week = GrammarChoice(tool="free_hours", teachers=["me"])
+    call = agent(world, no_week).read("am I free?")
+    assert call.week == WEEK and call.args == {"teachers": [person(world, "Dr. Menon")]}
 
 
 def test_free_rooms_and_classes_of_take_the_regex_shapes(world):
