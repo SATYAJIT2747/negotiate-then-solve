@@ -13,4 +13,5 @@ data/*.zip
 *.out
 PROGRESS.md
 ROADMAP.md
+CHAT-PLAN.md
 models
