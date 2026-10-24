@@ -54,7 +54,7 @@ def test_a_request_is_sent_only_once_confirmed(client):
     assert len(world.store.requests()) == before  # nothing sent yet
     card = confirm(c, me, ask["n"], "request").json()[0]
     assert card["kind"] == "request" and world.store.request(card["case"]).sender_id == me
-    assert card["status"]  # the request's state comes with the card
+    assert "status" not in card  # only the number: what happens next is on the request's page
     assert confirm(c, me, ask["n"], "request").status_code == 409  # answered once
 
 
@@ -174,18 +174,21 @@ def test_an_unfinished_request_cannot_be_taken_off(client):
     assert c.post(f"/api/cases/{rid}/hide", headers={"X-User": me}).status_code == 409
 
 
-def test_a_message_that_waits_on_you_becomes_a_card_once(client):
+def test_a_message_that_waits_on_you_is_in_the_requests_tab_not_the_chat(client):
     from agents.negotiation import Message
 
     c, world = client
-    me = faculty(world, "Dr. Khan")
+    me, other = faculty(world, "Dr. Khan"), faculty(world, "Dr. Rao")
+    rid = c.post("/api/requests", json={"text": "Please move my Friday class to Monday in week 15."},
+                 headers={"X-User": other}).json()["id"]
+    world.threads[rid].join()
     m = Message(round=1, to=me, mus=[], offers=[], text="Which of these works for you?\n\nOptions:\nA) Monday 9 am",
                 explanation_mode="choice", faithfulness=1.0)
-    item = world.inbox.add(None, me, m)
-    cards = [x for x in chat(c, me) if x["kind"] == "notice" and x["item"] == item.id]
-    assert len(cards) == 1 and cards[0]["inbox"]["message"]["text"].startswith("Which of these")
-    assert len([x for x in chat(c, me) if x["kind"] == "notice" and x["item"] == item.id]) == 1  # once, not again
-    assert all(x.get("item") != item.id for x in chat(c, faculty(world, "Dr. Rao")))  # only to whom it is addressed
+    world.inbox.add(rid, me, m)
+    assert all(x["kind"] != "notice" for x in chat(c, me))
+    listed = c.get("/api/cases?scope=mine", headers={"X-User": me}).json()
+    assert next(x for x in listed if x["id"] == rid)["waits_on_you"]  # a colleague's request that asks me
+    assert c.get("/api/overview", headers={"X-User": me}).json()["my_waiting"] >= 1
 
 
 def test_the_chat_is_saved_with_the_store():

@@ -45,14 +45,14 @@ interface NavItem {
   label: string;
   icon: LucideIcon;
   view: View;
-  badge?: "inbox" | "approvals";
+  badge?: "inbox" | "approvals" | "requests";
   group: "main" | "semester" | "reference" | "research";
 }
 
 export const NAV: NavItem[] = [
   { to: "/", label: "Home", icon: Home, group: "main", view: "home" },
   { to: "/inbox", label: "Inbox", icon: Inbox, group: "main", view: "inbox", badge: "inbox" },
-  { to: "/requests", label: "Requests", icon: ListChecks, group: "main", view: "requests" },
+  { to: "/requests", label: "Requests", icon: ListChecks, group: "main", view: "requests", badge: "requests" },
   { to: "/documents", label: "Policy documents", icon: FileUp, group: "main", view: "documents" },
   { to: "/semester", label: "Semester plan", icon: Hammer, group: "semester", view: "semester" },
   { to: "/preferences", label: "Semester preferences", icon: SlidersHorizontal, group: "semester", view: "prefs" },
@@ -196,7 +196,7 @@ function Sidebar({
   useEffect(() => {
     if (inMore) setMore(true);
   }, [location.pathname]); // eslint-disable-line react-hooks/exhaustive-deps
-  const badge = (b?: NavItem["badge"]) => (b === "inbox" ? ov?.my_inbox : b === "approvals" ? (ov?.pending_approvals ?? 0) + (ov?.my_decisions ?? 0) + (ov?.my_forwarded ?? 0) : 0) ?? 0;
+  const badge = (b?: NavItem["badge"]) => (b === "inbox" ? ov?.my_inbox : b === "requests" ? ov?.my_waiting : b === "approvals" ? (ov?.pending_approvals ?? 0) + (ov?.my_decisions ?? 0) + (ov?.my_forwarded ?? 0) : 0) ?? 0;
   const navLink = (n: NavItem) => {
     const active = n.to === "/" ? location.pathname === "/" : location.pathname.startsWith(n.to);
     const count = badge(n.badge);

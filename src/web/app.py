@@ -719,6 +719,11 @@ def create_web_app(world: World | None = None, *, worlds_dir: Path | None = None
             # messages forwarded to the office and not answered yet (listed on the Approvals page)
             "my_forwarded": sum(1 for c in cases.values() if handles(u, c)),
             "my_inbox": sum(1 for i in _feed(w, u, decides, handles) if i["unread"]),
+            # requests that wait on this person's answer (the Requests tab's count): their own asking a question
+            # back, and others' sending them options
+            "my_waiting": len({i.case_id for i in w.inbox.items.values() if i.to == u["id"] and i.reply is None
+                               and i.case_id} | {r.id for r in reqs if r.sender_id == u["id"] and r.id in cases
+                                                  and cases[r.id].status == RequestStatus.CLARIFICATION}),
             "published_version": cur.version if cur else None,
             "gini": ledger.gini(teaching, SEMESTER),
             "negotiations": {"agreed": sum(o.status == "agreed" for o in outcomes),
@@ -835,19 +840,10 @@ def create_web_app(world: World | None = None, *, worlds_dir: Path | None = None
 
     @app.get("/api/chat")
     def chat(after: int = 0, u: dict = Depends(user)) -> list[dict]:
-        """The signed-in person's chat, oldest first (``after``: only messages after that number). A request card
-        comes with its request's state as it is now (``status``, ``reply``, ``asks_you``)."""
-        w = W()
-        _chat_notices(w, u["id"])
-        return [_chat_out(w, m, u["id"]) for m in w.store.chat(u["id"], after)]
-
-    def _chat_notices(w: World, person: str) -> None:
-        """Messages addressed to ``person`` that wait on them (options for a time, a colleague's request that
-        clashes with their class) become cards in their chat (``kind: notice``), once each, in the order they
-        came (CHAT-PLAN step 7)."""
-        for item in sorted(w.inbox.items.values(), key=lambda i: i.created):
-            if item.to == person and not w.store.chat_has(person, "notice", "item", item.id):
-                w.store.add_chat(person, "assistant", "notice", {"item": item.id, "case": item.case_id})
+        """The signed-in person's chat, oldest first (``after``: only messages after that number). A request shows
+        only as a card with its number; what happens to it after (questions back, options, the outcome) is on
+        its page in the Requests tab. Notice cards of earlier versions are left out."""
+        return [m for m in W().store.chat(u["id"], after) if m["kind"] != "notice"]
 
     @app.post("/api/chat")
     def chat_send(body: RequestBody, u: dict = Depends(user)) -> list[dict]:
@@ -906,24 +902,7 @@ def create_web_app(world: World | None = None, *, worlds_dir: Path | None = None
             raise HTTPException(409, "duplicate request")
         card = w.store.add_chat(me, "assistant", "request", {"case": r.id})
         w.submit(r)
-        return [_chat_out(w, card, me)]
-
-    def _chat_out(w: World, m: dict, person: str) -> dict:
-        """A chat message as sent to the page: a request card with its request's state now (status, the latest
-        reply: the outcome or the question it asks, and whether it waits on this person); a notice with its
-        message as it is now (the options, and the answer once given)."""
-        if m["kind"] == "notice":
-            item = w.inbox.items.get(m["item"])
-            return m | {"inbox": _inbox_item(w, item) if item else None}
-        if m["kind"] != "request":
-            return m
-        r = w.store.request(m["case"])
-        if r is None:
-            return m | {"status": "unknown"}
-        case = w.orch.cases.get(r.id)
-        s = _summary(w, r, case)
-        return m | {"status": s["status"], "running": s["running"], "reply": case.reply if case else None,
-                    "asks_you": s["status"] == "clarification_requested" and r.sender_id == person}
+        return [card]
 
     @app.delete("/api/chat")
     def chat_clear(u: dict = Depends(user)) -> dict:
@@ -994,18 +973,25 @@ def create_web_app(world: World | None = None, *, worlds_dir: Path | None = None
 
     @app.get("/api/cases")
     def cases(scope: str = "mine", u: dict = Depends(user)) -> list[dict]:
-        """``mine``: the person's own requests, without those they took off their list, each with whether they
-        may withdraw it (the Requests table's quick actions); ``all``: every request they may see."""
+        """``mine``: the person's own requests, without those they took off their list, and others' requests that
+        wait on their answer (options sent to them); each with whether they may withdraw it and whether it waits
+        on them (``waits_on_you``: a question back, or options to choose from). ``all``: every request they may
+        see."""
         w = W()
         out = []
-        hidden = w.store.hidden(u["id"]) if scope == "mine" else set()
+        me = u["id"]
+        hidden = w.store.hidden(me) if scope == "mine" else set()
+        asked = {i.case_id for i in w.inbox.items.values() if i.to == me and i.reply is None and i.case_id}
         for r in reversed(w.store.requests()):
             case = w.orch.cases.get(r.id)
-            if scope == "mine" and (r.sender_id != u["id"] or r.id in hidden):
+            if scope == "mine" and ((r.sender_id != me and r.id not in asked) or r.id in hidden):
                 continue
-            if visible(u, case, r):
-                out.append(_summary(w, r, case) | ({"can_withdraw": bool(case and withdraws(w, u, case))}
-                                                   if scope == "mine" else {}))
+            if visible(u, case, r) or r.id in asked:
+                s = _summary(w, r, case)
+                out.append(s | ({"can_withdraw": bool(case and withdraws(w, u, case)),
+                                 "waits_on_you": r.id in asked or (r.sender_id == me
+                                                                    and s["status"] == "clarification_requested")}
+                                if scope == "mine" else {}))
         return out
 
     @app.post("/api/cases/{case_id}/hide")

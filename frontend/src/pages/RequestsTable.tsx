@@ -81,6 +81,7 @@ export default function RequestsTable() {
                     </td>
                     <td className="max-w-0 px-3 py-2.5">
                       <p className="truncate" title={r.text}>{r.text}</p>
+                      {r.waits_on_you && <p className="text-[11.5px] font-medium text-warn">Waiting on your answer</p>}
                       <p className="text-[11.5px] text-ink-3">{new Date(r.received_at).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" })}</p>
                     </td>
                     <td className="whitespace-nowrap px-3 py-2.5">

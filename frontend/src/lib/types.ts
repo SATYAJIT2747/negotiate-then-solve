@@ -61,6 +61,8 @@ export interface CaseSummary {
   running: boolean;
   /** In the person's own list (scope "mine"): they may withdraw it now. */
   can_withdraw?: boolean;
+  /** In the person's list: it waits on their answer (a question back, or options a colleague's request sent them). */
+  waits_on_you?: boolean;
 }
 
 export interface ConstraintView {
@@ -256,6 +258,8 @@ export interface Overview {
   my_decisions?: number;
   my_forwarded?: number;
   my_inbox: number;
+  /** requests waiting on this person's answer (the Requests tab's count) */
+  my_waiting?: number;
   published_version: number | null;
   gini: number;
   negotiations: { agreed: number; escalated: number; feasible: number; mean_rounds: number | null };
@@ -757,20 +761,8 @@ export type ChatMessage =
   | (ChatBase & { role: "assistant"; kind: "rule"; answer: string; rules: { id: string; title: string }[] })
   /** "send this as a request?": nothing sent until answered (POST /api/chat/confirm). */
   | (ChatBase & { role: "assistant"; kind: "confirm"; text: string; makeup?: boolean | null; answered?: ConfirmAs })
-  /** a request, once sent: its state as it is now. */
-  | (ChatBase & {
-      role: "assistant";
-      kind: "request";
-      case: string;
-      status: Status | "unknown";
-      running?: boolean;
-      /** the latest reply: the outcome, or the question it asks */
-      reply?: string | null;
-      /** it waits on this person (a question back): answered in the chat */
-      asks_you?: boolean;
-    })
-  /** a message that waits on this person (options for a time, a colleague's request that clashes with their class) */
-  | (ChatBase & { role: "assistant"; kind: "notice"; item: string; case: string | null; inbox: InboxItem | null })
+  /** a request, once sent: its number (what happens next is on its page) */
+  | (ChatBase & { role: "assistant"; kind: "request"; case: string })
   | (ChatBase & { role: "assistant"; kind: "other"; text: string });
 
 export type ConfirmAs = "request" | "question" | "cancel";

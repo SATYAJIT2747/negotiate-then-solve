@@ -4,7 +4,7 @@ import { Link, useParams } from "react-router-dom";
 import { ConversationPane, useConversation } from "../components/ConversationPane";
 import { useConversations } from "../components/Conversations";
 import { DetailsDrawer } from "../components/DetailsDrawer";
-import { Button, Card, Skeleton, StatusBadge } from "../components/ui";
+import { Button, Skeleton, StatusBadge } from "../components/ui";
 
 /** One request of a faculty member or class representative, read as a conversation (/requests/R-00025): what
  * they asked, what happened, and the answer to a question back or the options, given here. The list is the
@@ -24,12 +24,12 @@ export default function RequestChat() {
   }, [id, convs.length]); // eslint-disable-line react-hooks/exhaustive-deps
 
   return (
-    <div className="mx-auto flex w-full max-w-4xl flex-col gap-3 lg:h-full">
+    <div className="mx-auto flex w-full flex-col gap-3 lg:h-full lg:w-[88%]">
       <Link to="/requests" className="flex items-center gap-1 text-[12.5px] text-ink-3 hover:text-brand">
         <ArrowLeft size={13} /> Requests
       </Link>
-      <Card className="flex h-[640px] min-h-0 flex-col lg:h-auto lg:flex-1">
-        <div className="flex items-center gap-3 border-b border-line px-4 py-3">
+      <div className="flex h-[640px] min-h-0 min-w-0 flex-col lg:h-auto lg:flex-1">
+        <div className="flex items-center gap-3 border-b border-line pb-3">
           <div className="min-w-0 flex-1">
             {s.conv ? (
               <>
@@ -57,7 +57,7 @@ export default function RequestChat() {
         ) : (
           <ConversationPane s={s} convs={convs} wide answerOnly />
         )}
-      </Card>
+      </div>
       <DetailsDrawer id={details} onClose={() => setDetails(null)} />
     </div>
   );

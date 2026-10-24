@@ -1,22 +1,21 @@
 import clsx from "clsx";
-import { ArrowRight, Bell, BookOpen, CalendarDays, CalendarSearch, Eraser, HelpCircle, Send, Sparkles } from "lucide-react";
+import { ArrowRight, BookOpen, CalendarDays, CalendarSearch, Eraser, HelpCircle, Send, Sparkles } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Link } from "react-router-dom";
-import { Options } from "../components/RequestThread";
 import { highlightOf, TimetablePopup, type Highlight } from "../components/TimetablePopup";
-import { Button, Skeleton, StatusBadge } from "../components/ui";
+import { Button, Skeleton } from "../components/ui";
 import { api } from "../lib/api";
 import { useAuth } from "../lib/auth";
 import { chatExamples } from "../lib/examples";
 import { useApi } from "../lib/hooks";
 import { firstSlots, slotsOf, type Slot } from "../lib/slots";
-import type { CalendarView, ChatMessage, ConfirmAs, InstanceView, SliceView, Status } from "../lib/types";
+import type { CalendarView, ChatMessage, ConfirmAs, InstanceView, SliceView } from "../lib/types";
 
 const SHOWN_SLOTS = 4; // more than this: "View in Timetable" shows them all
 
 /** The home screen: one chat for everything (CHAT-PLAN.md). A timetable question is answered with the times it is
  * about; a question about the rules with the rules it cites; anything else is offered as a request, and sent
- * only when the person confirms. A sent request gets a card that follows it. */
+ * only when the person confirms. A sent request gets a card that leads to it. */
 export default function Chat() {
   const { user } = useAuth();
   const teaches = !!user && ["faculty", "hod", "guest_faculty"].includes(user.role);
@@ -229,19 +228,7 @@ function Message(props: {
   if (m.kind === "lookup") return <LookupCard answer={m.answer ?? ""} view={m.view ?? null} inst={props.inst} cal={props.cal} onView={props.onView} />;
   if (m.kind === "rule") return <RuleCard answer={m.answer} rules={m.rules} />;
   if (m.kind === "confirm") return <ConfirmCard n={m.n} text={m.text} answered={m.answered} busy={props.busy} onConfirm={props.onConfirm} />;
-  if (m.kind === "request")
-    return <RequestCard id={m.case} status={m.status} reply={m.reply ?? null} asksYou={!!m.asks_you} running={!!m.running} onChanged={props.onChanged} />;
-  if (m.kind === "notice")
-    return m.inbox ? (
-      <Card label={m.inbox.reply ? "Answered" : "Waiting on you"} icon={Bell}>
-        <Options item={m.inbox} onDone={props.onChanged} />
-        {m.case && (
-          <Link to={`/requests/${m.case}`} className="mt-2 inline-flex items-center gap-1 text-[12.5px] font-medium text-brand hover:underline">
-            Requests tab <ArrowRight size={13} />
-          </Link>
-        )}
-      </Card>
-    ) : null;
+  if (m.kind === "request") return <RequestCard id={m.case} />;
   return <Card label="Assistant">{m.text}</Card>;
 }
 
@@ -357,51 +344,14 @@ function ConfirmCard(props: { n: number; text: string; answered?: ConfirmAs; bus
   );
 }
 
-/** A sent request: its number and status as it goes, the latest reply (the outcome, or a question back, answered
- * here), and the way to it in the Requests tab. */
-function RequestCard(props: { id: string; status: Status | "unknown"; reply: string | null; asksYou: boolean; running: boolean; onChanged: () => void }) {
-  const { id, status, reply, asksYou, running, onChanged } = props;
-  const [answer, setAnswer] = useState("");
-  const [sending, setSending] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const send = async () => {
-    if (!answer.trim()) return;
-    setSending(true);
-    setError(null);
-    try {
-      await api.clarify(id, answer.trim());
-      setAnswer("");
-      onChanged();
-    } catch (e) {
-      setError((e as Error).message);
-    } finally {
-      setSending(false);
-    }
-  };
+/** A sent request: its number and the way to it. What happens to it next (questions back, options, the outcome)
+ * is on its page in the Requests tab. */
+function RequestCard({ id }: { id: string }) {
   return (
     <Card label="Request">
-      <p className="flex flex-wrap items-center gap-2 font-medium">
-        Request created – {id}
-        {status !== "unknown" && <StatusBadge status={status} live={running} />}
-      </p>
-      {reply && <p className={clsx("mt-1.5", asksYou && "text-warn")}>{reply}</p>}
-      {asksYou && (
-        <div className="mt-2 flex items-end gap-2">
-          <input
-            value={answer}
-            onChange={(e) => setAnswer(e.target.value)}
-            onKeyDown={(e) => e.key === "Enter" && void send()}
-            placeholder="Your answer…"
-            className="h-8 flex-1 rounded-md border border-line bg-panel px-2.5 text-[13px] outline-none focus:border-brand/60"
-          />
-          <Button variant="primary" size="sm" loading={sending} disabled={!answer.trim()} onClick={() => void send()}>
-            Answer
-          </Button>
-        </div>
-      )}
-      {error && <p className="mt-1 text-[12px] text-bad">{error}</p>}
+      <p className="font-medium">Request created – {id}</p>
       <Link to={`/requests/${id}`} className="mt-2 inline-flex items-center gap-1 text-[12.5px] font-medium text-brand hover:underline">
-        Requests tab <ArrowRight size={13} />
+        Open request <ArrowRight size={13} />
       </Link>
     </Card>
   );
