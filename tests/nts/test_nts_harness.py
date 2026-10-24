@@ -112,7 +112,7 @@ def test_spans_nest_and_hold_what_training_needs(store):
     assert ep.attrs["agent_version"] == READER.version(ep.attrs["tools"])
     first = by_kind["model_call"][0]
     assert first.attrs["messages"][1] == {"role": "user", "content": "which rooms?", "tool_calls": [],
-                                          "call_id": None, "name": None}
+                                          "call_id": None, "name": None, "meta": None}
     assert first.attrs["response"]["tool_calls"][0]["name"] == "describe"
     assert by_kind["tool_call"][0].attrs["result"]["ok"] is True
 

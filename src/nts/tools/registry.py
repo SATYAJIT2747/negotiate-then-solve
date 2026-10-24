@@ -18,13 +18,13 @@ from __future__ import annotations
 import inspect
 import time
 from collections.abc import Callable, Iterable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any, get_type_hints
 
 from pydantic import BaseModel, ValidationError
 
-from nts.protocol import ToolCall, ToolError, ToolResult
+from nts.protocol import UNPARSED, ToolCall, ToolError, ToolResult
 from nts.state import Draft, World
 
 
@@ -48,6 +48,7 @@ class Context:
     actor: str  # faculty id of the person asking, or "coordinator"
     week: int | None = None  # the current week of term; None outside term
     draft: Draft | None = None
+    scratch: dict[str, Any] = field(default_factory=dict)  # what tools keep between calls in one episode
 
     @property
     def state(self) -> World:
@@ -108,6 +109,11 @@ class Registry:
         if t is None or t.scope not in allowed:
             names = [n for n, x in self.tools.items() if x.scope in allowed]
             raise Refusal("unknown_tool", f"there is no tool {call.name!r}", tools=names)
+        if UNPARSED in call.arguments:
+            raise Refusal("bad_json", f"the arguments for {t.name} were not valid JSON")
+        if unknown := sorted(set(call.arguments) - set(t.args.model_fields)):  # pydantic would drop them silently
+            raise Refusal("bad_arguments", f"{t.name} has no field {', '.join(map(repr, unknown))}",
+                          fields=list(t.args.model_fields))
         try:
             args = t.args.model_validate(call.arguments)
         except ValidationError as e:

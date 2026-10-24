@@ -9,6 +9,9 @@ Every episode ends with one status:
   budget_exhausted  turns, tool calls, tokens or time ran out
   stuck             the model kept repeating calls it had already made
   model_error       the model call failed (server down, a replay that drifted, ...)
+  submitted         an end tool succeeded: the draft waits for approval (``Store.commit``)
+  declined          ... the model turned the request down, with a reason
+  escalated         ... the model passed it to a person
 
 The episode works in a draft of the store (``outcome.draft``): read tools see it, and nothing the
 episode does reaches the store. Everything is recorded as spans: the episode, each turn, each model
@@ -35,7 +38,7 @@ from nts.protocol import (
 )
 from nts.state import Draft, Store
 from nts.telemetry import Tracer, new_id
-from nts.tools import Context, Registry
+from nts.tools import Context, Registry, Scope
 
 from .agent import AgentConfig
 from .context import LAST_TURN, estimate, fit, tool_message
@@ -87,7 +90,8 @@ class Harness:
         b = run.agent.budgets
         for n in range(1, b.max_turns + 1):
             last = n == b.max_turns
-            offered = [] if last else tools
+            allowed = {Scope.END} & run.agent.scopes if last else run.agent.scopes  # the last turn can still end it
+            offered = [t for t in tools if self.registry.tools[t["function"]["name"]].scope in allowed]
             sent = list(run.transcript) + ([Message(role="user", content=LAST_TURN)] if last else [])  # Qwen allows one system message, first
             sent = fit(sent, b.context_tokens, b.keep_recent)
             with self.tracer.span("turn", f"turn {n}", index=n, last=last,
@@ -101,12 +105,19 @@ class Harness:
                     span.attrs["answered"] = True
                     run.stop("answered", text=reply.text)
                     return
+                for i, call in enumerate(reply.tool_calls):
+                    if run.status:  # an end tool already ended it: answer the rest so the transcript stays whole
+                        result = _refuse(call, "episode_ended", "the request was already ended")
+                    else:
+                        result = self._call(run, call, allowed, extra=i >= b.max_calls_per_turn)
+                        if result.ok and self.registry.tools[call.name].scope == Scope.END:
+                            run.stop(result.content["status"], text=result.content["message"])
+                    run.transcript.append(tool_message(result))
+                if run.status:
+                    return
                 if last:
                     run.stop("budget_exhausted", "the model still called tools on its last turn")
                     return
-                for i, call in enumerate(reply.tool_calls):
-                    result = self._call(run, call, extra=i >= b.max_calls_per_turn)
-                    run.transcript.append(tool_message(result))
                 if reason := run.over_budget():
                     run.stop("budget_exhausted", reason)
                     return
@@ -130,7 +141,7 @@ class Harness:
         run.usage.completion_tokens += reply.usage.completion_tokens
         return reply
 
-    def _call(self, run: _Run, call: ToolCall, *, extra: bool) -> ToolResult:
+    def _call(self, run: _Run, call: ToolCall, allowed: set[Scope], *, extra: bool) -> ToolResult:
         key = (call.name, json.dumps(call.arguments, sort_keys=True, default=str), run.ctx.state.version)
         with self.tracer.span("tool_call", call.name, call=call.model_dump(mode="json"),
                               state_version=run.ctx.state.version) as span:
@@ -142,7 +153,7 @@ class Harness:
                 result = _refuse(call, "repeated_call", "you already made this exact call; its result is above")
             else:
                 run.seen[key] += 1
-                result = self.registry.run(call, run.ctx, run.agent.scopes)
+                result = self.registry.run(call, run.ctx, allowed)
             span.attrs["result"] = result.model_dump(mode="json")
             span.attrs["ok"] = result.ok
         run.calls.append(result)

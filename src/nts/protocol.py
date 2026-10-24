@@ -13,15 +13,7 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
-
-def request_hash(messages: Sequence[Message], tools: Sequence[dict]) -> str:
-    """One hash for everything a model call is asked with: the same hash means the same request."""
-    body = json.dumps([[m.model_dump(mode="json") for m in messages], list(tools)], sort_keys=True)
-    return hashlib.sha256(body.encode()).hexdigest()[:16]
-
-
-def tools_hash(tools: Sequence[dict]) -> str:
-    return hashlib.sha256(json.dumps(list(tools), sort_keys=True).encode()).hexdigest()[:16]
+UNPARSED = "__unparsed__"  # a call's only argument when the model's arguments were not valid JSON (the raw text)
 
 
 class ToolCall(BaseModel):
@@ -53,6 +45,7 @@ class Message(BaseModel):
     tool_calls: list[ToolCall] = Field(default_factory=list)  # assistant messages
     call_id: str | None = None  # tool messages: the call they answer
     name: str | None = None  # tool messages: the tool
+    meta: dict[str, Any] | None = None  # what one provider needs back on later turns (Gemini's thought signatures)
 
 
 class Usage(BaseModel):
@@ -69,6 +62,17 @@ class AssistantTurn(BaseModel):
     model: str = ""
     usage: Usage = Field(default_factory=Usage)
     ms: float = 0.0
+    meta: dict[str, Any] | None = None
 
     def as_message(self) -> Message:
-        return Message(role="assistant", content=self.text, tool_calls=self.tool_calls)
+        return Message(role="assistant", content=self.text, tool_calls=self.tool_calls, meta=self.meta)
+
+
+def request_hash(messages: Sequence[Message], tools: Sequence[dict]) -> str:
+    """One hash for everything a model call is asked with: the same hash means the same request."""
+    body = json.dumps([[m.model_dump(mode="json") for m in messages], list(tools)], sort_keys=True)
+    return hashlib.sha256(body.encode()).hexdigest()[:16]
+
+
+def tools_hash(tools: Sequence[dict]) -> str:
+    return hashlib.sha256(json.dumps(list(tools), sort_keys=True).encode()).hexdigest()[:16]

@@ -54,20 +54,35 @@ class Draft:
         return self.world
 
 
+def touched(world: World, c: Constraint) -> set[int | None]:
+    """The timetables a constraint applies to: a permanent one the semester timetable and every week that
+    has its own; one with weeks, each of those weeks (most of them run the semester timetable)."""
+    if c.active_in(None):
+        return {None} | {w for w in world.timetables if w is not None}
+    return {w for w in range(1, world.instance.calendar.weeks + 1) if c.active_in(w)}
+
+
 def check(after: World, changes: Iterable[Change]) -> list[str]:
     """What the kernel finds wrong with ``changes``: added constraints that name unknown things or
-    impossible times, and written timetables that break a physical rule or a hard constraint in force."""
+    impossible times, and any timetable they touch or write that breaks a physical rule or a hard
+    constraint in force (so a new constraint cannot slip in under a timetable that ignores it)."""
     inst = after.instance
     problems: list[str] = []
+    weeks: set[int | None] = set()
     for ch in changes:
         if isinstance(ch, ConstraintAdded):
             problems += [f"{ch.constraint.id}: {p}" for p in validate_constraint(ch.constraint, inst)]
+            weeks |= touched(after, ch.constraint)
         elif isinstance(ch, TimetableSet):
-            tt = after.timetables[ch.week]
-            found = verify_timetable(inst, tt.assignment, after.active(ch.week), ch.week)
-            skipped = {f"{s} not scheduled" for s in tt.cancelled}
-            label = "semester timetable" if ch.week is None else f"week {ch.week}"
-            problems += [f"{label}: {p}" for p in found if p not in skipped]
+            weeks.add(ch.week)
+    for w in sorted(weeks, key=lambda w: 0 if w is None else w):
+        tt = after.timetable(w)
+        if tt is None:
+            continue
+        found = verify_timetable(inst, tt.assignment, after.active(w), w)
+        skipped = {f"{s} not scheduled" for s in tt.cancelled}
+        label = "semester timetable" if w is None else f"week {w}"
+        problems += [f"{label}: {p}" for p in found if p not in skipped]
     return problems
 
 
@@ -116,6 +131,14 @@ class Store:
             if e.hash == version:
                 return World.replay((x.change, x.hash) for x in self._events[: i + 1])
         raise KeyError(version)
+
+    def fork(self, version: str | None = None) -> Store:
+        """An in-memory copy of the log up to ``version`` (default: now), for replays and what-if runs."""
+        upto = len(self._events) if version is None else next(
+            (i + 1 for i, e in enumerate(self._events) if e.hash == version), None)
+        if upto is None:
+            raise KeyError(version)
+        return Store(list(self._events[:upto]))
 
     def draft(self, actor: str, episode: str | None = None) -> Draft:
         return Draft(self.world, actor, episode)

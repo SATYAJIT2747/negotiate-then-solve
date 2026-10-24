@@ -11,7 +11,8 @@ from collections.abc import Sequence
 
 from nts.protocol import Message, ToolResult
 
-LAST_TURN = "This is your last turn: no more tools. Answer now with what you have, or say what you could not find."
+LAST_TURN = ("This is your last turn: no more lookups or changes. Answer now with what you have, "
+             "or end the request if you can.")
 OMITTED = json.dumps({"omitted": "an older result, left out to save space; call the tool again if you need it"})
 
 

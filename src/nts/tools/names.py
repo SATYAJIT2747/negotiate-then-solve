@@ -66,15 +66,16 @@ class Directory:
                 return d
         raise Refusal("unknown_day", f"{text!r} is not a teaching day", teaching_days=[FULL_DAY[d] for d in days])
 
-    def slot(self, text: str | int) -> int:
-        """'2 pm', '2pm', '14:00', '14' or 14 -> the slot starting then."""
+    def slot(self, text: str | int, *, end: bool = False) -> int:
+        """'2 pm', '2pm', '14:00', '14' or 14 -> the slot starting then. With ``end``, an hour something ends
+        at ("until 2 pm"), which may also be the end of the teaching day."""
         m = re.fullmatch(r"\s*(\d{1,2})(?::00)?\s*(am|pm)?\s*", str(text).lower())
         h = int(m.group(1)) if m else -1
         bare_afternoon = m is not None and not m.group(2) and 1 <= h < FIRST_HOUR - 1  # "2" in teaching hours: 2 pm
         if (m is not None and m.group(2) == "pm" and h < 12) or bare_afternoon:
             h += 12
         n = self.instance.calendar.slots_per_day
-        if not FIRST_HOUR <= h < FIRST_HOUR + n:
+        if not FIRST_HOUR + end <= h < FIRST_HOUR + n + end:
             raise Refusal("unknown_hour", f"{text!r} is not a teaching hour",
                           teaching_hours=[hour(q) for q in range(n)])
         return h - FIRST_HOUR

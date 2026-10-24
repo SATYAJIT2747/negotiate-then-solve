@@ -133,3 +133,15 @@ def test_edited_log_is_detected(store, tmp_path):
     path.write_text("\n".join(lines) + "\n", encoding="utf-8")
     with pytest.raises(CorruptLog):
         Store.open(path)
+
+
+def test_fork_copies_the_log_up_to_a_version(store):
+    start = store.version
+    draft = store.draft(actor="agent")
+    draft.add(ConstraintRemoved(id=next(iter(store.world.constraints))))
+    store.commit(draft)
+    old = store.fork(start)
+    assert old.version == start and old.path is None and len(old.events) == len(store.events) - 1
+    assert store.fork().version == store.version
+    with pytest.raises(KeyError):
+        store.fork("nope")
