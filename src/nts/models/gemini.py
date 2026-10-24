@@ -1,12 +1,11 @@
 """Gemini through google-genai, with function calling.
 
-    model = GeminiChat()                      # GEMINI_API_KEY and GEMINI_MODEL from the environment
+    model = GeminiChat()      # the keys in GEMINI_API_KEY (one or more) and GEMINI_MODEL from the environment
 
 Gemini 3 models sign their function calls (``thought_signature``) and want the signed parts back on
 later turns. The reply's parts are kept in ``AssistantTurn.meta["gemini_parts"]`` (they travel with
-the transcript and the telemetry) and sent back as they came. Calls are spaced to stay under the
-requests-per-minute limit (``GEMINI_RPM``, 15 on the free tier); a rate limit is retried after the
-delay the error asks for, an overloaded server after a growing wait.
+the transcript and the telemetry) and sent back as they came. With several keys, calls rotate across
+them, each kept under its requests-per-minute limit (``GEMINI_RPM``, 15 on the free tier).
 """
 
 from __future__ import annotations
@@ -17,39 +16,81 @@ import os
 import re
 import time
 from collections.abc import Sequence
+from dataclasses import dataclass
 from typing import Any
 
 from nts.protocol import AssistantTurn, Message, ToolCall, Usage
 
 DEFAULT_MODEL = "gemini-3.5-flash-lite"
 RETRY_CODES = (429, 500, 503)
+MAX_RATE_LIMITED = 5  # per key and call: per-minute limits hit this often mean something else is wrong
 _ids = itertools.count(1)
 
 
+@dataclass
+class _Key:
+    """One API key: its client, when it may be used next, and whether its daily quota is spent."""
+
+    client: Any
+    label: str  # "key 2 of 3": what errors and logs say instead of the key
+    ready_at: float = 0.0
+    spent: bool = False
+
+
+def api_keys() -> list[str]:
+    """The keys in GEMINI_API_KEYS / GEMINI_API_KEY (separated by commas, semicolons or white space) and in
+    GEMINI_API_KEY_1, _2, ..., in that order, without repeats."""
+    out: list[str] = []
+    for name in ("GEMINI_API_KEYS", "GEMINI_API_KEY"):
+        out += re.split(r"[,;\s]+", os.environ.get(name, ""))
+    numbered = sorted((int(m.group(1)), v) for k, v in os.environ.items() if (m := re.fullmatch(r"GEMINI_API_KEY_(\d+)", k)))
+    out += [v for _, v in numbered]
+    return list(dict.fromkeys(k.strip() for k in out if k.strip()))
+
+
 class GeminiChat:
+    """Every call goes to the key that is ready soonest; each key is spaced to its own requests-per-minute
+    limit, so n keys allow n times the rate. A per-minute rate limit rests that key for the delay the
+    error asks for; a spent daily quota takes the key out until the process ends; the call moves on to
+    another key either way. An overloaded server is retried after a growing wait."""
+
     def __init__(self, model: str | None = None, *, api_key: str | None = None, temperature: float = 0.0,
-                 max_tokens: int = 2048, retries: int = 4, rpm: float | None = None, client: Any = None) -> None:
+                 max_tokens: int = 2048, retries: int = 4, rpm: float | None = None, client: Any = None,
+                 clients: Sequence[Any] | None = None) -> None:
         self.model = model or os.environ.get("GEMINI_MODEL") or DEFAULT_MODEL
         self.name = self.model
         self.temperature = temperature
         self.max_tokens = max_tokens
         self.retries = retries
-        self._client = client
-        self._key = api_key
         rpm = rpm or float(os.environ.get("GEMINI_RPM") or 15)
         self.min_interval = 60.0 / rpm
-        self._last = 0.0
+        given = list(clients or ([client] if client is not None else []))
+        self._given, self._api_key = given, api_key
+        self._keys: list[_Key] | None = None
 
     @property
-    def client(self) -> Any:
-        if self._client is None:
-            from google import genai
+    def keys(self) -> list[_Key]:
+        if self._keys is None:
+            clients = self._given
+            if not clients:
+                from google import genai
 
-            key = self._key or os.environ.get("GEMINI_API_KEY", "").split(",")[0].strip()
-            if not key:
-                raise RuntimeError("no GEMINI_API_KEY")
-            self._client = genai.Client(api_key=key)
-        return self._client
+                keys = [self._api_key] if self._api_key else api_keys()
+                if not keys:
+                    raise RuntimeError("no GEMINI_API_KEY")
+                clients = [genai.Client(api_key=k) for k in keys]
+            self._keys = [_Key(c, f"key {i + 1} of {len(clients)}") for i, c in enumerate(clients)]
+        return self._keys
+
+    def _next_key(self) -> _Key:
+        live = [k for k in self.keys if not k.spent]
+        if not live:
+            raise RuntimeError(f"{self.model}: the daily quota of all {len(self.keys)} key(s) is spent")
+        key = min(live, key=lambda k: k.ready_at)
+        if (wait := key.ready_at - time.monotonic()) > 0:
+            time.sleep(wait)
+        key.ready_at = time.monotonic() + self.min_interval
+        return key
 
     def chat(self, messages: Sequence[Message], tools: Sequence[dict]) -> AssistantTurn:
         from google.genai import errors, types
@@ -63,18 +104,30 @@ class GeminiChat:
             if tools else None,
             automatic_function_calling=types.AutomaticFunctionCallingConfig(disable=True))
         t0 = time.perf_counter()
-        for attempt in range(self.retries + 1):
-            if (wait := self._last + self.min_interval - time.monotonic()) > 0:
-                time.sleep(wait)
-            self._last = time.monotonic()
+        overloaded = limited = 0
+        while True:
+            key = self._next_key()
             try:
-                resp = self.client.models.generate_content(model=self.model, contents=contents, config=config)
+                resp = key.client.models.generate_content(model=self.model, contents=contents, config=config)
                 break
             except errors.APIError as e:
-                if e.code not in RETRY_CODES or attempt == self.retries:
+                if e.code == 429 and per_day(e):
+                    key.spent = True
+                    continue
+                if e.code == 429 and limited < MAX_RATE_LIMITED * len(self.keys):
+                    limited += 1
+                    key.ready_at = time.monotonic() + (retry_delay(e) or 60.0)
+                    continue
+                if e.code not in RETRY_CODES or overloaded == self.retries:
                     raise
-                time.sleep(retry_delay(e) or min(60, 2 ** (attempt + 1)))
+                overloaded += 1
+                time.sleep(min(60, 2 ** overloaded))
         return from_gemini(resp, self.model, round((time.perf_counter() - t0) * 1000, 1))
+
+
+def per_day(e: Exception) -> bool:
+    """Whether a rate-limit error is the daily quota (not the per-minute one)."""
+    return bool(re.search(r"PerDay|per day|daily", str(e), re.IGNORECASE))
 
 
 def retry_delay(e: Exception) -> float | None:

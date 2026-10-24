@@ -115,3 +115,66 @@ def test_gemini_chat_with_a_fake_client():
     _, _, config = Client.models.calls[0]
     assert config.tools[0].function_declarations[0].name == "find"
     assert config.automatic_function_calling.disable is True
+
+
+class _Models:
+    def __init__(self, name, fail=None):
+        self.name, self.fail, self.calls = name, list(fail or []), 0
+
+    def generate_content(self, model, contents, config):
+        self.calls += 1
+        if self.fail:
+            raise self.fail.pop(0)
+        return types.GenerateContentResponse(candidates=[types.Candidate(content=types.Content(
+            role="model", parts=[types.Part(text=self.name)]))])
+
+
+class _Client:
+    def __init__(self, name, fail=None):
+        self.models = _Models(name, fail)
+
+
+def _limit(day: bool):
+    from google.genai import errors
+
+    quota = "GenerateRequestsPerDayPerProjectPerModel-FreeTier" if day else "GenerateRequestsPerMinutePerProjectPerModel"
+    return errors.ClientError(429, {"error": {"code": 429, "status": "RESOURCE_EXHAUSTED",
+                                              "message": f"Quota exceeded: {quota}. Please retry in 0.01s."}})
+
+
+def test_gemini_keys_rotate_and_spent_keys_drop_out():
+    a, b = _Client("a", [_limit(day=True)]), _Client("b")
+    model = GeminiChat("gemini-x", clients=[a, b], rpm=60_000)
+    q = [Message(role="user", content="hi")]
+    assert model.chat(q, []).text == "b"  # a's daily quota is spent: b answers
+    assert [k.spent for k in model.keys] == [True, False]
+    assert {model.chat(q, []).text for _ in range(3)} == {"b"}
+    assert a.models.calls == 1
+
+
+def test_gemini_per_minute_limit_moves_to_another_key():
+    a, b = _Client("a", [_limit(day=False)]), _Client("b")
+    model = GeminiChat("gemini-x", clients=[a, b], rpm=60_000)
+    q = [Message(role="user", content="hi")]
+    assert model.chat(q, []).text == "b"
+    assert not any(k.spent for k in model.keys)
+    a_key, b_key = model.keys
+    assert a_key.ready_at - b_key.ready_at > 0.9  # a rests for the delay it asked for (+1 s); b takes the calls
+
+
+def test_gemini_all_keys_spent():
+    model = GeminiChat("gemini-x", clients=[_Client("a", [_limit(day=True)])], rpm=60_000)
+    with pytest.raises(RuntimeError, match="daily quota of all 1 key"):
+        model.chat([Message(role="user", content="hi")], [])
+
+
+def test_api_keys_from_the_environment(monkeypatch):
+    from nts.models.gemini import api_keys
+
+    for k in [k for k in __import__("os").environ if k.startswith("GEMINI_API_KEY")]:
+        monkeypatch.delenv(k)
+    monkeypatch.setenv("GEMINI_API_KEY", "k1, k2;k3")
+    monkeypatch.setenv("GEMINI_API_KEY_2", "k5")
+    monkeypatch.setenv("GEMINI_API_KEY_1", "k4")
+    monkeypatch.setenv("GEMINI_API_KEYS", "k1")
+    assert api_keys() == ["k1", "k2", "k3", "k4", "k5"]
