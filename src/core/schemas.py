@@ -238,6 +238,14 @@ class Request(BaseModel):
             data.pop("makeup", None)
         return data
 
+    def __setstate__(self, state: dict) -> None:
+        # pickled before a field was added (a web app's saved state): the field takes its default
+        values = state.get("__dict__", {})
+        for name, field in type(self).model_fields.items():
+            if name not in values and not field.is_required():
+                values[name] = field.get_default(call_default_factory=True)
+        super().__setstate__(state)
+
     def advance(self, new: RequestStatus) -> None:
         if new not in TRANSITIONS[self.status]:
             raise ValueError(f"illegal transition {self.status.value} -> {new.value}")
