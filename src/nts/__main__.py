@@ -60,6 +60,7 @@ def main(argv: list[str] | None = None) -> int:
     x.add_argument("--models", nargs="*", help="only episodes of these models (substring match)")
     x.add_argument("--include-unjudged", action="store_true")
     x.add_argument("--keep-errors", action="store_true")
+    x.add_argument("--stores", nargs="*", type=Path, help="only episodes run on these stores")
     for q in (a, e, x):
         q.add_argument("--telemetry", type=Path, default=DEFAULT_ROOT)
     for q in (a, e):
@@ -118,8 +119,12 @@ def evaluate(args: argparse.Namespace) -> int:
 def export_rows(args: argparse.Namespace) -> int:
     from nts.data import episodes, export
 
-    counts = export(episodes(args.telemetry / "spans"), args.out, models=args.models,
-                    include_unjudged=args.include_unjudged, keep_errors=args.keep_errors)
+    eps = episodes(args.telemetry / "spans")
+    if args.stores:  # only episodes that started on a version of these stores (keeps a held-out department out)
+        versions = {e.hash for s in args.stores for e in Store.open(s).events}
+        eps = (e for e in eps if e.episode.attrs.get("state_version") in versions)
+    counts = export(eps, args.out, models=args.models, include_unjudged=args.include_unjudged,
+                    keep_errors=args.keep_errors)
     print(json.dumps(counts))
     return 0
 

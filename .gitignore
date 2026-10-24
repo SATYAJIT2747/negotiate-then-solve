@@ -11,3 +11,4 @@ data/*.zip
 *.aux
 *.log
 *.out
+data/agent-*/
