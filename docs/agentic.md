@@ -22,9 +22,9 @@ every model mistake becomes an error the model sees (and a training example), no
 | `nts.models` | one `chat(messages, tools)` interface: scripted (tests), replay, llama.cpp (`OpenAIChat`, LoRA per request), Gemini | done |
 | `nts.harness` | the loop: budgets (turns, calls, tokens, time), repeat refusal, context trimming; pause/resume later | done |
 | `nts.telemetry` | spans episode > turn > model_call / tool_call; JSONL per day + SQLite index | done |
-| `nts.data` | labels (validator, solver, approval, judge), SFT / DPO exporters, frozen splits, replay | later |
+| `nts.data` | episodes rebuilt from telemetry, labels (scenario verdict > approval > none), SFT / DPO exporters | done |
 | `nts.agents` | agent configs: `READER` (read-only questions), `COORDINATOR` (questions and changes) | done |
-| `nts.eval` | scenarios = start state + request + checks on the committed state; paired runs vs the old pipeline | later |
+| `nts.eval` | scenario families from the department's own names; checks on the committed state; runner + report | done |
 | `nts.api` | FastAPI + server-sent events of each turn | later |
 
 ## Tools, by scope
@@ -48,7 +48,7 @@ matches nothing is refused with `did_you_mean`, so the model fixes the call on i
 1. Kernel, state store, read tools, scripted model, tests. **(done)**
 2. Harness loop + budgets, telemetry, replay model: every test deterministic. **(done)**
 3. Draft and evaluate tools; the coordinator end to end on Gemini (clean first traces). **(done)**
-4. Exporters; a 4B LoRA on the traces; the same scenarios on the local model.
+4. Exporters; a 4B LoRA on the traces; the same scenarios on the local model. **(code done; training run pending)**
 5. Talk tools, negotiation with simulators, API and UI.
 
 ## Running it
@@ -78,3 +78,26 @@ Every episode is recorded as spans under `runs/telemetry/` (gitignored: the reco
 
 `ReplayModel.from_spans(load_trace(folder, episode_id))` reruns an episode with no server; in strict mode it stops
 with `ReplayDiverged` at the first model call that is asked differently from the recorded one.
+
+## Scenarios, labels and training data
+
+`python -m nts eval --model gemini --per-family 3 --seed 0` builds a suite from the store's department (9
+families: two kinds of question, away for a day, a soft preference, moving one class, a room closed by the
+office, a request about someone else, an impossible request, an ambiguous one), runs each on a fork of the
+store, approves what is submitted, judges the committed state, and records an "approval" and an
+"evaluation" span on every episode. The report goes to `runs/eval/<model>-s<seed>.json`.
+
+An episode's label is the strongest judgement on its trace: the scenario verdict, else an approval or
+rejection (`harness.approve` / `harness.reject`, which the CLI's `--approve` uses), else none.
+`python -m nts export --out data/agent-v1 --models gemini` writes:
+
+- `sft-train.jsonl`, `sft-val.jsonl`: good episodes as `{"messages", "tools", "meta"}` (split by a hash of
+  the request); turns whose calls were all refused for a fixable reason are left out (`--keep-errors` keeps them)
+- `dpo.jsonl`: refused turn vs the turn that fixed it, with the conversation before as the prompt
+
+`notebooks/train_agent_kaggle.ipynb` trains the adapter on that: one example per assistant turn, rendered with
+the tools by Qwen's chat template, loss on the turn only.
+
+Prompt size: the tool schemas are compacted when generated (no titles, no `anyOf [X, null]`, no empty
+defaults): 2,201 tokens for the coordinator's 15 tools, down from 2,885. The context budget counts them. A
+local model gets no token budget (`--max-tokens` sets one).

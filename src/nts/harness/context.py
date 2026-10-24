@@ -29,6 +29,11 @@ def estimate(messages: Sequence[Message]) -> int:
     return chars // 4 + 4 * len(messages)
 
 
+def schema_tokens(tools: Sequence[dict]) -> int:
+    """Rough tokens of the tool schemas (JSON runs nearer 3 characters a token than 4)."""
+    return len(json.dumps(list(tools))) // 3 if tools else 0
+
+
 def fit(messages: Sequence[Message], budget: int, keep_recent: int) -> list[Message]:
     """``messages`` with the oldest tool results replaced by a note until the estimate fits ``budget``.
     The system prompt, the request, every assistant turn and the latest ``keep_recent`` results stay."""

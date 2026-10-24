@@ -41,7 +41,7 @@ from nts.telemetry import Tracer, new_id
 from nts.tools import Context, Registry, Scope
 
 from .agent import AgentConfig
-from .context import LAST_TURN, estimate, fit, tool_message
+from .context import LAST_TURN, estimate, fit, schema_tokens, tool_message
 
 
 @dataclass
@@ -93,7 +93,7 @@ class Harness:
             allowed = {Scope.END} & run.agent.scopes if last else run.agent.scopes  # the last turn can still end it
             offered = [t for t in tools if self.registry.tools[t["function"]["name"]].scope in allowed]
             sent = list(run.transcript) + ([Message(role="user", content=LAST_TURN)] if last else [])  # Qwen allows one system message, first
-            sent = fit(sent, b.context_tokens, b.keep_recent)
+            sent = fit(sent, b.context_tokens - schema_tokens(offered), b.keep_recent)
             with self.tracer.span("turn", f"turn {n}", index=n, last=last,
                                   offered=[t["function"]["name"] for t in offered]) as span:
                 run.turns = n
@@ -184,7 +184,7 @@ class _Run:
         b = self.agent.budgets
         if len(self.calls) >= b.max_tool_calls:
             return f"{b.max_tool_calls} tool calls"
-        if self.usage.prompt_tokens + self.usage.completion_tokens >= b.max_tokens:
+        if b.max_tokens is not None and self.usage.prompt_tokens + self.usage.completion_tokens >= b.max_tokens:
             return f"{b.max_tokens} tokens"
         if time.perf_counter() - self.start >= b.max_seconds:
             return f"{b.max_seconds:g} s"

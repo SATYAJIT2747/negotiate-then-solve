@@ -4,8 +4,9 @@
 
 Gemini 3 models sign their function calls (``thought_signature``) and want the signed parts back on
 later turns. The reply's parts are kept in ``AssistantTurn.meta["gemini_parts"]`` (they travel with
-the transcript and the telemetry) and sent back as they came. A rate limit or an overloaded server is
-retried a few times with a growing wait.
+the transcript and the telemetry) and sent back as they came. Calls are spaced to stay under the
+requests-per-minute limit (``GEMINI_RPM``, 15 on the free tier); a rate limit is retried after the
+delay the error asks for, an overloaded server after a growing wait.
 """
 
 from __future__ import annotations
@@ -13,6 +14,7 @@ from __future__ import annotations
 import itertools
 import json
 import os
+import re
 import time
 from collections.abc import Sequence
 from typing import Any
@@ -26,7 +28,7 @@ _ids = itertools.count(1)
 
 class GeminiChat:
     def __init__(self, model: str | None = None, *, api_key: str | None = None, temperature: float = 0.0,
-                 max_tokens: int = 2048, retries: int = 4, client: Any = None) -> None:
+                 max_tokens: int = 2048, retries: int = 4, rpm: float | None = None, client: Any = None) -> None:
         self.model = model or os.environ.get("GEMINI_MODEL") or DEFAULT_MODEL
         self.name = self.model
         self.temperature = temperature
@@ -34,6 +36,9 @@ class GeminiChat:
         self.retries = retries
         self._client = client
         self._key = api_key
+        rpm = rpm or float(os.environ.get("GEMINI_RPM") or 15)
+        self.min_interval = 60.0 / rpm
+        self._last = 0.0
 
     @property
     def client(self) -> Any:
@@ -59,14 +64,23 @@ class GeminiChat:
             automatic_function_calling=types.AutomaticFunctionCallingConfig(disable=True))
         t0 = time.perf_counter()
         for attempt in range(self.retries + 1):
+            if (wait := self._last + self.min_interval - time.monotonic()) > 0:
+                time.sleep(wait)
+            self._last = time.monotonic()
             try:
                 resp = self.client.models.generate_content(model=self.model, contents=contents, config=config)
                 break
             except errors.APIError as e:
                 if e.code not in RETRY_CODES or attempt == self.retries:
                     raise
-                time.sleep(min(60, 2 ** (attempt + 1)))
+                time.sleep(retry_delay(e) or min(60, 2 ** (attempt + 1)))
         return from_gemini(resp, self.model, round((time.perf_counter() - t0) * 1000, 1))
+
+
+def retry_delay(e: Exception) -> float | None:
+    """The wait a rate-limit error asks for ("Please retry in 26.38s", or a RetryInfo retryDelay "26s"), plus a second."""
+    m = re.search(r"retry in ([\d.]+)s", str(e), re.IGNORECASE) or re.search(r"retryDelay'?\"?:\s*'?\"?([\d.]+)s", str(e))
+    return float(m.group(1)) + 1 if m else None
 
 
 def to_gemini(messages: Sequence[Message]) -> tuple[str, list]:

@@ -1,3 +1,5 @@
+import json
+
 import pytest
 from pydantic import BaseModel
 from test_nts_state import away, busy_teacher, repair
@@ -147,3 +149,13 @@ def test_a_failing_tool_does_not_raise(store):
     assert not r.ok and r.error.code == "internal"
     with pytest.raises(ValueError):
         Registry([broken, broken])
+
+
+def test_schemas_carry_no_null_unions_or_empty_defaults():
+    from nts.tools import ALL_TOOLS
+
+    text = json.dumps(Registry(ALL_TOOLS).specs())
+    assert '{"type": "null"}' not in text and '"default": null' not in text and '"default": []' not in text
+    move = next(s for s in Registry(ALL_TOOLS).specs() if s["function"]["name"] == "move_class")["function"]
+    assert move["parameters"]["properties"]["to_hour"]["type"] == "string"
+    assert set(move["parameters"]["required"]) == {"course", "to_day"}

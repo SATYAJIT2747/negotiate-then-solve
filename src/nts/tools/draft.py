@@ -114,28 +114,28 @@ def _may(ctx: Context, scope: Who) -> None:
 
 class Constrain(BaseModel):
     rule: Literal["unavailable", "no_classes", "classes_only", "room_needed"] = Field(
-        description="unavailable: cannot teach/attend then; no_classes: keep these times free; "
-                    "classes_only: classes only at these times; room_needed: classes need a certain room")
-    teacher: str | None = Field(None, description="A teacher's name, or 'me'")
+        description="unavailable: cannot be there; no_classes: keep free; classes_only: only then; "
+                    "room_needed: needs a kind of room")
+    teacher: str | None = Field(None, description="Name, or 'me'")
     section: str | None = None
-    room: str | None = Field(None, description="With 'unavailable': the room is closed")
+    room: str | None = Field(None, description="unavailable: the room is closed")
     course: str | None = None
-    days: list[str] = Field(default_factory=list, description="Empty for every day")
-    from_hour: str | None = Field(None, description="'2 pm'; leave out for from the start of the day")
-    to_hour: str | None = Field(None, description="Until this hour ('5 pm'); leave out for to the end of the day")
-    from_week: int | None = Field(None, description="First week it applies; leave both weeks out for the whole term")
-    to_week: int | None = Field(None, description="Last week it applies (the same as from_week for one week)")
-    firm: bool = Field(True, description="false when the person said 'if possible' or 'I would prefer'")
-    reason: str | None = Field(None, description="The reason the person gave, if any")
-    room_kind: Literal["lecture", "lab"] | None = Field(None, description="room_needed: the kind of room")
-    equipment: list[str] = Field(default_factory=list, description="room_needed: equipment the room must have")
-    rooms: list[str] = Field(default_factory=list, description="room_needed: one of these rooms")
+    days: list[str] = Field(default_factory=list, description="Empty: every day")
+    from_hour: str | None = Field(None, description="'2 pm'; none: from the start of the day")
+    to_hour: str | None = Field(None, description="Until ('5 pm'); none: to the end of the day")
+    from_week: int | None = Field(None, description="No weeks: the whole term")
+    to_week: int | None = Field(None, description="= from_week for one week")
+    firm: bool = Field(True, description="false for 'if possible', 'I'd prefer'")
+    reason: str | None = Field(None, description="The person's reason, if given")
+    room_kind: Literal["lecture", "lab"] | None = None
+    equipment: list[str] = Field(default_factory=list)
+    rooms: list[str] = Field(default_factory=list, description="room_needed: one of these")
 
 
 @tool(Scope.DRAFT)
 def constrain(ctx: Context, args: Constrain) -> dict:
     """Add a rule to the draft for one teacher, section, room or course: when they cannot or should not
-    have classes, when classes must be, or what room they need. Returns the change number."""
+    have classes, when classes must be, or what room they need."""
     d = Directory(ctx.state.instance)
     named = [x for x in (args.teacher, args.section, args.room, args.course) if x]
     if len(named) != 1:
@@ -174,22 +174,22 @@ def constrain(ctx: Context, args: Constrain) -> dict:
 class MoveClass(BaseModel):
     course: str
     kind: Literal["lecture", "tutorial", "practical"] | None = None
-    section: str | None = Field(None, description="To pick one class when a course has several")
-    teacher: str | None = Field(None, description="To pick one class (the timetable office); a teacher moves their own")
-    on_day: str | None = Field(None, description="The day the class is on now, to pick one")
-    at_hour: str | None = Field(None, description="The hour the class is at now, to pick one")
+    section: str | None = None
+    teacher: str | None = None
+    on_day: str | None = Field(None, description="Where it is now (to pick one class)")
+    at_hour: str | None = None
     to_day: str
-    to_hour: str | None = Field(None, description="Start hour; leave out for any time that day")
+    to_hour: str | None = Field(None, description="None: any time that day")
     to_room: str | None = None
-    from_week: int | None = Field(None, description="First week of the move; leave both out for the whole term")
-    to_week: int | None = Field(None, description="Last week of the move (the same as from_week for one week)")
+    from_week: int | None = Field(None, description="No weeks: the whole term")
+    to_week: int | None = Field(None, description="= from_week for one week")
     firm: bool = True
 
 
 @tool(Scope.DRAFT)
 def move_class(ctx: Context, args: MoveClass) -> dict:
-    """Move one class to another day (and hour, and room) in the draft. Pick the class by course, and if it
-    has several, by kind, section, teacher or where it is now. Returns the change number."""
+    """Move one class to another day (and hour, room) in the draft. Pick it by course and, if needed,
+    kind, section, teacher or where it is now."""
     d = Directory(ctx.state.instance)
     inst = d.instance
     valid = _validity(ctx, args.from_week, args.to_week)

@@ -15,10 +15,10 @@ class Budgets:
     max_turns: int = 8  # model calls per episode; the last one is offered no tools
     max_tool_calls: int = 16
     max_calls_per_turn: int = 4  # calls past this in one turn are refused, not run
-    max_tokens: int = 24_000  # prompt + completion tokens over the episode
+    max_tokens: int | None = 24_000  # prompt + completion tokens over the episode (a cost guard); None: no limit
     max_seconds: float = 120.0
     max_repeats: int = 3  # refused repeats of an identical call before the episode counts as stuck
-    context_tokens: int = 6_000  # what one model call may be sent (estimated); older tool results are trimmed
+    context_tokens: int = 7_000  # one call's prompt, tool schemas included (estimated); old tool results are trimmed
     keep_recent: int = 4  # the latest tool results, never trimmed
 
 

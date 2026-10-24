@@ -4,6 +4,8 @@
     python -m nts ask "When am I free on Tuesday?" --as "Dr. Iyer" --week 5
     python -m nts ask "Please keep my Friday afternoons free" --as Iyer --week 5 --approve
     python -m nts ask "..." --model llama --url http://10.1.25.191:8080/v1 --adapter nts-agent-v1
+    python -m nts eval --model gemini --per-family 3 --seed 0      # a scenario suite, judged; report in runs/eval
+    python -m nts export --out data/agent-v1 --models gemini        # SFT / DPO rows from judged episodes
 """
 
 from __future__ import annotations
@@ -11,14 +13,15 @@ from __future__ import annotations
 import argparse
 import json
 import sys
+from dataclasses import replace
 from pathlib import Path
 
 from nts.agents import COORDINATOR, READER
-from nts.harness import Harness
+from nts.harness import AgentConfig, Harness, approve
 from nts.kernel.generator import generate_department
 from nts.kernel.instance import policy_constraints
-from nts.models import GeminiChat, OpenAIChat
-from nts.state import InvalidChange, Store, bootstrap
+from nts.models import GeminiChat, Model, OpenAIChat
+from nts.state import Store, bootstrap
 from nts.telemetry import DEFAULT_ROOT, default_tracer
 from nts.tools import ALL_TOOLS, Refusal, Registry
 from nts.tools.draft import OFFICE
@@ -43,17 +46,33 @@ def main(argv: list[str] | None = None) -> int:
     a.add_argument("--store", type=Path, default=DEFAULT_STORE)
     a.add_argument("--as", dest="actor", default="office", help="a teacher's name, or 'office'")
     a.add_argument("--week", type=int)
-    a.add_argument("--agent", choices=sorted(AGENTS), default="coordinator")
-    a.add_argument("--model", choices=["gemini", "llama"], default="gemini")
-    a.add_argument("--gemini-model")
-    a.add_argument("--url", default="http://10.1.25.191:8080/v1")
-    a.add_argument("--adapter")
-    a.add_argument("--env", type=Path, help="a .env file with GEMINI_API_KEY")
-    a.add_argument("--telemetry", type=Path, default=DEFAULT_ROOT)
     a.add_argument("--approve", action="store_true", help="commit a submitted draft")
     a.add_argument("--show", action="store_true", help="print every tool call and result")
+    e = sub.add_parser("eval", help="run a scenario suite and judge it")
+    e.add_argument("--store", type=Path, default=DEFAULT_STORE)
+    e.add_argument("--week", type=int, default=5)
+    e.add_argument("--per-family", type=int, default=2)
+    e.add_argument("--families", nargs="*")
+    e.add_argument("--seed", type=int, default=0)
+    e.add_argument("--out", type=Path, help="report path (default runs/eval/<model>-s<seed>.json)")
+    x = sub.add_parser("export", help="training rows from judged episodes")
+    x.add_argument("--out", type=Path, required=True)
+    x.add_argument("--models", nargs="*", help="only episodes of these models (substring match)")
+    x.add_argument("--include-unjudged", action="store_true")
+    x.add_argument("--keep-errors", action="store_true")
+    for q in (a, e, x):
+        q.add_argument("--telemetry", type=Path, default=DEFAULT_ROOT)
+    for q in (a, e):
+        q.add_argument("--agent", choices=sorted(AGENTS), default="coordinator")
+        q.add_argument("--model", choices=["gemini", "llama"], default="gemini")
+        q.add_argument("--gemini-model")
+        q.add_argument("--url", default="http://10.1.25.191:8080/v1")
+        q.add_argument("--adapter")
+        q.add_argument("--env", type=Path, help="a .env file with GEMINI_API_KEY")
+        q.add_argument("--max-tokens", type=int, help="token budget of an episode (default: the agent's for Gemini, "
+                                                       "none for a local model)")
     args = p.parse_args(argv)
-    return init(args) if args.cmd == "init" else ask(args)
+    return {"init": init, "ask": ask, "eval": evaluate, "export": export_rows}[args.cmd](args)
 
 
 def init(args: argparse.Namespace) -> int:
@@ -65,11 +84,48 @@ def init(args: argparse.Namespace) -> int:
     return 0
 
 
-def ask(args: argparse.Namespace) -> int:
+def budgeted(agent: AgentConfig, args: argparse.Namespace) -> AgentConfig:
+    """Local calls cost nothing: a local model gets no token budget (the turn budget still holds)."""
+    limit = args.max_tokens if args.max_tokens is not None else (agent.budgets.max_tokens if args.model == "gemini" else None)
+    return replace(agent, budgets=replace(agent.budgets, max_tokens=limit))
+
+
+def make_model(args: argparse.Namespace) -> Model:
     if args.env:
         from dotenv import load_dotenv
 
         load_dotenv(args.env)
+    return GeminiChat(args.gemini_model) if args.model == "gemini" else OpenAIChat(args.url, adapter=args.adapter)
+
+
+def evaluate(args: argparse.Namespace) -> int:
+    from nts.eval import build_suite, run_suite, save
+
+    model = make_model(args)
+    store = Store.open(args.store)
+    suite = build_suite(store.world, per_family=args.per_family, seed=args.seed, week=args.week, families=args.families)
+    verdicts = run_suite(suite, model, store, budgeted(AGENTS[args.agent], args), default_tracer(args.telemetry),
+                         progress=True)
+    path = args.out or Path("runs/eval") / f"{model.name.replace(':', '_').replace('+', '_')}-s{args.seed}.json"
+    report = save(path, model.name, verdicts)
+    for fam, st in report["summary"]["families"].items():
+        print(f"  {fam:12} {st['passed']}/{st['n']}  turns {st['turns']}  refused {st['refused']}")
+    a = report["summary"]["all"]
+    print(f"{model.name}: {a['passed']}/{a['n']} passed ({a['rate']:.0%}), {a['tokens']} tokens, {a['seconds']} s -> {path}")
+    return 0
+
+
+def export_rows(args: argparse.Namespace) -> int:
+    from nts.data import episodes, export
+
+    counts = export(episodes(args.telemetry / "spans"), args.out, models=args.models,
+                    include_unjudged=args.include_unjudged, keep_errors=args.keep_errors)
+    print(json.dumps(counts))
+    return 0
+
+
+def ask(args: argparse.Namespace) -> int:
+    model = make_model(args)
     store = Store.open(args.store)
     actor = OFFICE
     if args.actor.lower() not in ("office", OFFICE):
@@ -78,10 +134,9 @@ def ask(args: argparse.Namespace) -> int:
         except Refusal as r:
             print(f"--as: {r.error.message} {r.error.hint}", file=sys.stderr)
             return 2
-    model = (GeminiChat(args.gemini_model) if args.model == "gemini"
-             else OpenAIChat(args.url, adapter=args.adapter))
-    harness = Harness(Registry(ALL_TOOLS), model, default_tracer(args.telemetry))
-    out = harness.run(AGENTS[args.agent], args.text, store, actor, args.week)
+    tracer = default_tracer(args.telemetry)
+    harness = Harness(Registry(ALL_TOOLS), model, tracer)
+    out = harness.run(budgeted(AGENTS[args.agent], args), args.text, store, actor, args.week)
     if args.show:
         for m in out.transcript[2:]:
             for c in m.tool_calls:
@@ -92,10 +147,8 @@ def ask(args: argparse.Namespace) -> int:
     print(f"episode {out.episode_id}: {out.turns} turns, {out.tool_calls} calls ({out.refused} refused), "
           f"{out.usage.prompt_tokens}+{out.usage.completion_tokens} tokens, {out.seconds:.1f} s")
     if out.status == "submitted" and args.approve:
-        try:
-            store.commit(out.draft)
-        except InvalidChange as e:
-            print(f"not committed: {e}", file=sys.stderr)
+        if approve(store, out, tracer) is None:
+            print("not committed: the kernel refused it (see the approval span)", file=sys.stderr)
             return 1
         print(f"committed: version {store.version}")
     return 0

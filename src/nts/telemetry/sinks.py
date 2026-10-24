@@ -69,5 +69,6 @@ def read_spans(folder: Path | str) -> Iterator[Span]:
 
 
 def load_trace(folder: Path | str, trace_id: str) -> list[Span]:
-    """Every span of one episode from the JSONL files, in the order they started."""
-    return sorted((s for s in read_spans(folder) if s.trace_id == trace_id), key=lambda s: s.seq)
+    """Every span of one episode from the JSONL files, in the order they started (an approval may come from
+    another process, whose ``seq`` counts from 0 again: the start time orders those)."""
+    return sorted((s for s in read_spans(folder) if s.trace_id == trace_id), key=lambda s: (s.start, s.seq))

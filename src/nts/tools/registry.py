@@ -67,7 +67,7 @@ class Tool:
     def spec(self) -> dict:
         return {"type": "function",
                 "function": {"name": self.name, "description": self.description,
-                             "parameters": _without_titles(self.args.model_json_schema())}}
+                             "parameters": compact(self.args.model_json_schema())}}
 
 
 def tool(scope: Scope, name: str | None = None) -> Callable[[Callable], Tool]:
@@ -126,11 +126,24 @@ def _ms(start: float) -> float:
     return round((time.perf_counter() - start) * 1000, 3)
 
 
-def _without_titles(schema: Any) -> Any:
-    """Pydantic's schema minus the "title" keys: they repeat the field names and cost prompt tokens."""
-    if isinstance(schema, dict):
-        return {k: _without_titles(v) for k, v in schema.items()
-                if not (k == "title" and isinstance(v, str))}
+def compact(schema: Any) -> Any:
+    """Pydantic's JSON schema without what costs prompt tokens and tells the model nothing: "title" keys
+    (they repeat the field names), ``anyOf [X, null]`` for optional fields (X: a field not in "required"
+    may be left out) and ``null`` or empty defaults."""
     if isinstance(schema, list):
-        return [_without_titles(v) for v in schema]
-    return schema
+        return [compact(v) for v in schema]
+    if not isinstance(schema, dict):
+        return schema
+    out = {}
+    for k, v in schema.items():
+        if k == "title" and isinstance(v, str):
+            continue
+        if k == "default" and v in (None, [], {}):
+            continue
+        if k == "anyOf" and isinstance(v, list) and {"type": "null"} in v and len(v) == 2:
+            out.update(compact(next(x for x in v if x != {"type": "null"})))
+            continue
+        out[k] = compact(v)
+    if "properties" in out and not out["properties"]:
+        del out["properties"]
+    return out

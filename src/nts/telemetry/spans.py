@@ -24,7 +24,7 @@ from typing import Any, Literal, Protocol
 
 from pydantic import BaseModel, Field
 
-Kind = Literal["episode", "turn", "model_call", "tool_call"]
+Kind = Literal["episode", "turn", "model_call", "tool_call", "approval", "evaluation"]  # the last two judge an episode
 
 
 class Span(BaseModel):
