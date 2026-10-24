@@ -37,11 +37,12 @@ from pydantic import BaseModel, ValidationError
 from agents.documents import SUFFIXES, ingest
 from agents.explainer import TIER_NAME, describe, placement_text, session_name
 from agents.ledger import ConcessionLedger
-from agents.lookup import WeekTimetable, part_slots
+from agents.lookup import WeekTimetable
 from agents.negotiation import Message, Reply
 from agents.policy import RETRIEVERS, Rule, make_retriever, tokens
 from agents.priority import JUSTIFICATION, ROLE_AUTHORITY, Weights
 from agents.questions import Answerer
+from agents.views import free_hours_of, view_of
 from core.graph import add_conflict, build_graph
 from core.instance import Session
 from core.schemas import DAYS, Placement, Request, RequestStatus, Tier
@@ -810,16 +811,51 @@ def create_web_app(world: World | None = None, *, worlds_dir: Path | None = None
         call, reader = w.read_question(body.text, u["id"])
         if call is None:
             return {"kind": "not_a_question", "reader": reader}
+        return {"kind": "timetable", **_lookup_answer(w, call, u["id"], reader)}
+
+    # -- the chat: one conversation per person, for questions and requests alike (CHAT-PLAN.md) --------------
+
+    @app.get("/api/chat")
+    def chat(after: int = 0, u: dict = Depends(user)) -> list[dict]:
+        """The signed-in person's chat, oldest first (``after``: only messages after that number)."""
+        return W().store.chat(u["id"], after)
+
+    @app.post("/api/chat")
+    def chat_send(body: RequestBody, u: dict = Depends(user)) -> list[dict]:
+        """A message to the chat: a timetable question is answered here and now (nothing stored but the chat); anything
+        else goes in as a request, exactly as ``POST /api/requests``, and the chat keeps a card that follows it (a
+        rule question's request ends answered, and the card shows the answer). Returns the new messages."""
+        w = W()
+        call, reader = w.read_question(body.text, u["id"])
+        if call is not None:
+            mine = w.store.add_chat(u["id"], "you", "text", {"text": body.text})
+            return [mine, w.store.add_chat(u["id"], "assistant", "lookup", _lookup_answer(w, call, u["id"], reader))]
+        try:
+            r = w.intake.from_portal(u["id"], body.text, makeup=body.makeup)
+        except UnknownSender:
+            raise HTTPException(403, "unknown user") from None
+        if r is None:
+            raise HTTPException(409, "duplicate request")
+        mine = w.store.add_chat(u["id"], "you", "text", {"text": body.text})
+        card = w.store.add_chat(u["id"], "assistant", "request", {"case": r.id, "reader": reader})
+        w.submit(r)
+        return [mine, card]
+
+    @app.delete("/api/chat")
+    def chat_clear(u: dict = Depends(user)) -> dict:
+        """Empties the person's chat; their requests stay in the Requests list."""
+        return {"cleared": W().store.clear_chat(u["id"])}
+
+    def _lookup_answer(w: World, call, sender: str, reader: str) -> dict:
+        """A timetable question's answer: the reply, the lookup, who read it, the part of the timetable to draw
+        beside it (``view``, agents.views; None when there is nothing to draw), and for free hours the hours
+        themselves (``free``, for the timetable to shade)."""
         week = WeekTimetable(w.instance, w.store, call.week)
-        out = {"kind": "timetable", "answer": Answerer(w.instance, u["id"]).answer(call, week), "reader": reader,
-               "call": {"tool": call.tool, "args": call.args, "week": call.week, "confident": call.confident}}
-        if call.tool == "free_hours" and call.confident:  # the hours themselves, for the timetable to shade
-            a = call.args
-            free = week.free_hours(a.get("teachers", ()), a.get("sections", ()), a.get("rooms", ()), a.get("days"),
-                                   length=a.get("length", 1))
-            part = set(part_slots(w.instance, a["part"])) if a.get("part") else None
-            out["free"] = [{"day": d, "slot": s} for d, s in free
-                           if (not a.get("slots") or s in a["slots"]) and (part is None or s in part)]
+        out = {"answer": Answerer(w.instance, sender).answer(call, week), "reader": reader,
+               "call": {"tool": call.tool, "args": call.args, "week": call.week, "confident": call.confident},
+               "view": view_of(w.instance, call, week, sender)}
+        if call.tool == "free_hours" and call.confident:
+            out["free"] = [{"day": d, "slot": s} for d, s in free_hours_of(w.instance, call, week)]
         return out
 
     @app.post("/api/requests")

@@ -30,6 +30,10 @@ CLASSES = re.compile(r"\b(teach(es|ing)?|classes|class|lectures?|practicals?|tut
 REQUEST = re.compile(r"\b(cancel|move|reschedule|shift|swap|exchange|postpone|prepone|book|please|kindly)\b|"
                      r"\b(i|we) (want|need|would like|'d like)\b|"
                      r"\b(can|could|may) (i|we|you) (have|get|put|hold|teach|keep|take|make)\b", re.IGNORECASE)
+# a question about what the rules allow, not about what the timetable has: for the rule search, not a lookup
+RULE = re.compile(r"\b(allowed|permitted|rules?|polic(y|ies)|regulations?|approv\w*)\b|"
+                  r"\bhow (many|much|far|long|often)\b.*\b(can|may|must|should)\b|"
+                  r"\b(maximum|minimum|at most|at least)\b.*\b(can|may|must|allowed)\b", re.IGNORECASE)
 ME = re.compile(r"\b(i|me|my|mine|myself|we|us|our)\b", re.IGNORECASE)
 DAY = re.compile(r"\b(mon|tues?|wed(?:nes)?|thu(?:rs?)?|fri)(day)?s?\b", re.IGNORECASE)
 WEEK = re.compile(r"\bweek\s*(\d{1,2})\b", re.IGNORECASE)
@@ -95,6 +99,8 @@ class QuestionReader:
     def read(self, text: str) -> ToolCall | None:
         if REQUEST.search(text):
             return None  # a change is being asked for, not information
+        if RULE.search(text):
+            return None  # what the rules allow: the rule search answers it
         if PRIVATE.search(text):
             return ToolCall("unclear", week=self.current_week, confident=False, note=PRIVATE_NOTE)
         if NOT_IN_DATA.search(text):

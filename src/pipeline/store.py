@@ -39,6 +39,8 @@ CREATE TABLE IF NOT EXISTS events (n INTEGER PRIMARY KEY AUTOINCREMENT, case_id 
                                    kind TEXT NOT NULL, body TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS seen (person TEXT NOT NULL, item TEXT NOT NULL, n INTEGER NOT NULL,
                                  PRIMARY KEY (person, item));
+CREATE TABLE IF NOT EXISTS chat (n INTEGER PRIMARY KEY AUTOINCREMENT, person TEXT NOT NULL, at TEXT NOT NULL,
+                                 role TEXT NOT NULL, kind TEXT NOT NULL, body TEXT NOT NULL);
 """
 
 
@@ -251,6 +253,34 @@ class Store:
                                 "ON CONFLICT (person, item) DO UPDATE SET n=max(n, excluded.n)",
                                 [(person, i, n) for i, n in items.items()])
             self.db.commit()
+
+    # -- the chat (web.app /api/chat) -------------------------------------------------
+
+    def add_chat(self, person: str, role: str, kind: str, body: dict) -> dict:
+        """One message of ``person``'s chat: ``role`` "you" or "assistant"; ``kind`` "text" (what they wrote),
+        "lookup" (a timetable answer), "request" (a request, followed in the card), "notice" (something that
+        needs them). Returns it as ``chat`` lists it."""
+        at = datetime.now().isoformat(timespec="seconds")
+        with self._lock:
+            cur = self.db.execute("INSERT INTO chat (person, at, role, kind, body) VALUES (?,?,?,?,?)",
+                                  (person, at, role, kind, json.dumps(body)))
+            self.db.commit()
+            n = cur.lastrowid
+        return {"n": n, "at": at, "role": role, "kind": kind, **body}
+
+    def chat(self, person: str, after: int = 0) -> list[dict]:
+        """``person``'s messages after number ``after``, oldest first."""
+        rows = self._exec("SELECT n, at, role, kind, body FROM chat WHERE person=? AND n>? ORDER BY n", (person, after))
+        return [{"n": n, "at": at, "role": role, "kind": kind, **json.loads(body)} for n, at, role, kind, body in rows]
+
+    def chat_has(self, person: str, kind: str, key: str, value: str) -> bool:
+        """Whether ``person``'s chat already has a ``kind`` message with ``body[key] == value``."""
+        rows = self._exec("SELECT body FROM chat WHERE person=? AND kind=?", (person, kind))
+        return any(json.loads(b).get(key) == value for (b,) in rows)
+
+    def clear_chat(self, person: str) -> int:
+        """Empties ``person``'s chat (their requests stay, in the Requests list). Returns how many went."""
+        return len(self._exec("DELETE FROM chat WHERE person=? RETURNING n", (person,)))
 
     def versions(self) -> list[dict]:
         rows = self._exec("SELECT version, parent, approved_by, published, case_id, created_at, body "

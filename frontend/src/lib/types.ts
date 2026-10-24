@@ -699,7 +699,61 @@ export interface ClubDecision {
 export interface AskAnswer {
   kind: "timetable" | "not_a_question";
   answer?: string;
+  /** Who read the question: the model (the lookup adapter), the regex, or the request words that ruled it out. */
+  reader?: "model" | "regex" | "request words";
   call?: { tool: string; args: Record<string, unknown>; week: number; confident: boolean };
   /** For free-hour questions: the free hours, for the timetable to shade. */
   free?: { day: string; slot: number }[];
+  /** The part of the timetable the answer is about, to draw beside it; null when there is nothing to draw. */
+  view?: SliceView | null;
+}
+
+/** What a timetable slice shows (agents/views.py). Two layouts:
+ * "week": one timetable, days across and hours down (free hours, classes, the next class, a week's changes);
+ * "rows": one row per room or person, hours across, for one day (which rooms are free, who is free). */
+export type SliceView = WeekSlice | RowsSlice;
+
+export interface WeekSlice {
+  layout: "week";
+  week: number;
+  /** The columns, in calendar order: the days asked about, or the days with something on them. */
+  days: string[];
+  /** The rows: the hours from the first to the last cell (slot numbers), lunch included when it falls between. */
+  slots: number[];
+  lunch: number | null;
+  cells: SliceCell[];
+}
+
+export interface SliceCell {
+  day: string;
+  slot: number;
+  /** Hours it covers from ``slot`` (a 2-hour practical: 2). */
+  span: number;
+  /** free / busy: an hour asked about; class: a class found; cancelled / moved_from / moved_to / extra: a change. */
+  kind: "free" | "busy" | "class" | "cancelled" | "moved_from" | "moved_to" | "extra";
+  label?: string; // classes: "Data Structures lecture"
+  sub?: string; // classes: "Room 102 · Section 1 · Dr. Menon"
+  session?: string;
+}
+
+export interface RowsSlice {
+  layout: "rows";
+  week: number;
+  day: string;
+  /** The columns: the hours to show (slot numbers). */
+  slots: number[];
+  lunch: number | null;
+  /** One row per room or person, with the hours (slot numbers) they are free on ``day``. */
+  rows: { name: string; free: number[] }[];
+}
+
+/** One message of the person's chat (GET/POST /api/chat). */
+export type ChatMessage =
+  | (ChatBase & { role: "you"; kind: "text"; text: string })
+  | (ChatBase & { role: "assistant"; kind: "lookup" } & Omit<AskAnswer, "kind">)
+  | (ChatBase & { role: "assistant"; kind: "request"; case: string; reader?: string });
+
+interface ChatBase {
+  n: number;
+  at: string;
 }
