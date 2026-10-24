@@ -11,3 +11,6 @@ data/*.zip
 *.aux
 *.log
 *.out
+PROGRESS.md
+ROADMAP.md
+models

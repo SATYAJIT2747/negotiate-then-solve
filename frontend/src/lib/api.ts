@@ -1,4 +1,5 @@
 import type {
+  AskAnswer,
   CaseDetail,
   CaseSummary,
   ClubDecision,
@@ -119,6 +120,8 @@ export const api = {
   overview: () => call<Overview>("/overview"),
   instance: () => call<InstanceView>("/instance"),
   /** makeup: hold make-up classes for the ones an absence misses (otherwise they are cancelled). */
+  /** A question about the timetable ("my free slots this week"): answered, nothing stored; else "not_a_question". */
+  ask: (text: string) => post<AskAnswer>("/ask", { text }),
   submit: (text: string, makeup = false) => post<{ id: string }>("/requests", { text, makeup }),
   /** A request made with clicks: ``text`` is what people read, ``intent`` what the pipeline acts on (no parser). */
   submitForm: (text: string, intent: Record<string, unknown>) => post<{ id: string }>("/requests/form", { text, intent }),

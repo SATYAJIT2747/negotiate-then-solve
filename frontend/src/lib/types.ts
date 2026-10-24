@@ -694,3 +694,12 @@ export interface ClubDecision {
   rules: { id: string; title: string; source: string; text: string }[];
   decided_at: string;
 }
+
+/** POST /api/ask: a question about the timetable answered from it, or "not_a_question" (send it as a request). */
+export interface AskAnswer {
+  kind: "timetable" | "not_a_question";
+  answer?: string;
+  call?: { tool: string; args: Record<string, unknown>; week: number; confident: boolean };
+  /** For free-hour questions: the free hours, for the timetable to shade. */
+  free?: { day: string; slot: number }[];
+}

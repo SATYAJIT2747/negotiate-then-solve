@@ -15,7 +15,8 @@ and their cached evaluations stay as they are.
     policy = "iitx-policy"
 
 Tasks are the ``task`` of the training rows (``training.distill``): ``compile`` (reading requests),
-``policy``, ``reply`` and ``explain``. ``NTS_ADAPTERS`` names the file (the web app and
+``policy``, ``reply`` and ``explain``; and ``lookup`` (``training.lookup_data``: which timetable lookup a
+question asks for, ``agents.tool_agent``). ``NTS_ADAPTERS`` names the file (the web app and
 ``--adapters`` read it) and ``NTS_DOMAIN`` the domain. Without a file, every task goes to the one
 model the server serves, as before.
 """
@@ -30,7 +31,7 @@ from pathlib import Path
 
 from .llm import LLMError
 
-TASKS = ("compile", "policy", "reply", "explain")
+TASKS = ("compile", "policy", "reply", "explain", "lookup")  # lookup: agents.tool_agent (timetable questions)
 
 
 @dataclass

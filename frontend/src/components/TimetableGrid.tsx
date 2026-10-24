@@ -77,7 +77,7 @@ export function TimetableGrid({
                     fill ? "min-h-0 overflow-hidden" : "min-h-[64px]",
                     lunch && "hatch",
                     covered.has(`${d}:${s}`) && !list.length && "bg-panel-2/40",
-                    state === "free" && "free-slot cursor-pointer",
+                    state === "free" && (pickable ? "free-slot cursor-pointer" : "free-slot"),
                     state === "blocked" && !lunch && "bg-ink-3/10",
                   )}
                 >

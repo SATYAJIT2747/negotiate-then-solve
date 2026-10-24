@@ -5,7 +5,7 @@ import { api } from "../lib/api";
 import { useAuth } from "../lib/auth";
 import { requestExamples } from "../lib/examples";
 import { useApi } from "../lib/hooks";
-import type { InboxItem } from "../lib/types";
+import type { AskAnswer, InboxItem } from "../lib/types";
 import { ColleagueThread, groupOf, type Conversation } from "./Conversations";
 import { RequestThread } from "./RequestThread";
 import { Button, Skeleton } from "./ui";
@@ -93,7 +93,15 @@ export interface WhenHint {
 
 /** The open conversation and the composer under it. With nothing open, the composer is the full new-request
  * page: examples to start from, the week and days shown on the timetable to add, Undo and Clear. */
-export function ConversationPane({ s, convs, attachments, when, wide = false }: { s: ConversationState; convs: Conversation[]; attachments?: Attachments; when?: WhenHint; wide?: boolean }) {
+export function ConversationPane({ s, convs, attachments, when, wide = false, onAnswer }: {
+  s: ConversationState;
+  convs: Conversation[];
+  attachments?: Attachments;
+  when?: WhenHint;
+  wide?: boolean;
+  /** A timetable question was answered (e.g. to shade the free hours on the timetable). */
+  onAnswer?: (a: AskAnswer) => void;
+}) {
   const [text, setTextRaw] = useState("");
   const [history, setHistory] = useState<string[]>([]); // the text before each click-made change, for Undo
   // a change made by a click (an example, a week or day, Clear): Undo takes it back; typing is not recorded
@@ -121,6 +129,8 @@ export function ConversationPane({ s, convs, attachments, when, wide = false }: 
   const box = useRef<HTMLTextAreaElement>(null);
   useEffect(() => setReading(null), [s.selected, text]);
   const attached = attachments?.items ?? [];
+  // timetable questions answered in this session, kept until the page reloads (questions are not requests)
+  const [answers, setAnswers] = useState<{ q: string; a: AskAnswer }[]>([]);
   const backTitle = useMemo(() => convs.find((c) => c.key === s.back)?.title ?? s.back, [convs, s.back]);
 
   /** A reply to the options in the person's own words: read first, sent once they confirm the reading. */
@@ -149,6 +159,24 @@ export function ConversationPane({ s, convs, attachments, when, wide = false }: 
     const typed = text.trim();
     if (!typed) return;
     if (s.replying) return reply(false);
+    if (!s.answering && !attached.length) {
+      // a question about the timetable is answered from it; anything else goes on as a request
+      setSending(true);
+      setError(null);
+      try {
+        const got = await api.ask(typed);
+        if (got.kind === "timetable") {
+          setAnswers((x) => [...x, { q: typed, a: got }]);
+          onAnswer?.(got);
+          setText("");
+          return;
+        }
+      } catch {
+        /* the question service failing must not stop a request from being sent */
+      } finally {
+        setSending(false);
+      }
+    }
     const t = attachments ? attachments.compose(typed) : typed;
     setSending(true);
     setError(null);
@@ -187,6 +215,23 @@ export function ConversationPane({ s, convs, attachments, when, wide = false }: 
             <RequestThread c={s.shown} onChanged={s.changed} />
           ) : (
             <div className="space-y-5">
+              {answers.length > 0 && (
+                <div className="space-y-3">
+                  {answers.map((x, i) => (
+                    <div key={i} className="space-y-1.5">
+                      <div className="flex justify-end">
+                        <p className="max-w-[85%] rounded-lg rounded-br-sm bg-brand/12 px-3 py-2 text-[13.5px]">{x.q}</p>
+                      </div>
+                      <p className="max-w-[92%] rounded-lg rounded-bl-sm border border-line bg-panel-2/60 px-3 py-2 text-[13.5px] leading-relaxed">
+                        {x.a.answer}
+                      </p>
+                    </div>
+                  ))}
+                  <button onClick={() => setAnswers([])} className="text-[11.5px] text-ink-3 hover:text-ink">
+                    Clear these answers
+                  </button>
+                </div>
+              )}
               <div className="space-y-1.5">
                 {s.back && (
                   <button onClick={s.goBack} className="mb-2 flex max-w-full items-center gap-1 text-[12px] text-ink-3 hover:text-brand">
@@ -196,7 +241,8 @@ export function ConversationPane({ s, convs, attachments, when, wide = false }: 
                 )}
                 <p className="text-[15px] font-medium">New request</p>
                 <p className="text-[12.5px] leading-relaxed text-ink-3">
-                  Write it the way you would write to the timetable office: an absence, a class to move, or a question about the rules.
+                  Write it the way you would write to the timetable office: an absence, a class to move, a question about the rules, or
+                  a question about the timetable (“when is Dr. Iyer free this week?”).
                   Click a class on the timetable to cancel, move or swap it, or to name it here.
                 </p>
               </div>

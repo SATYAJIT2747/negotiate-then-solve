@@ -1,0 +1,142 @@
+{"id": "T-001", "group": "free_hours", "template": "What are my free slots {when}?", "tool": "free_hours", "args": {"teachers": ["me"]}}
+{"id": "T-002", "group": "free_hours", "template": "when am I free {when}", "tool": "free_hours", "args": {"teachers": ["me"]}}
+{"id": "T-003", "group": "free_hours", "template": "is {teacher.any} free on {day.any}?", "tool": "free_hours", "args": {"teachers": ["{teacher}"], "days": ["{day}"]}}
+{"id": "T-004", "group": "free_hours", "template": "is {teacher.any} free on {day} at {time}?", "tool": "free_hours", "args": {"teachers": ["{teacher}"], "days": ["{day}"], "slots": ["{time}"]}}
+{"id": "T-005", "group": "free_hours", "template": "{teacher.any} around {day.any} {time.any}?", "tool": "free_hours", "args": {"teachers": ["{teacher}"], "days": ["{day}"], "slots": ["{time}"]}, "also": [{"tool": "classes_of", "args": {"teacher": "{teacher}", "days": ["{day}"]}}]}
+{"id": "T-006", "group": "free_hours", "template": "When are {teacher.any} and I both free {when}?", "tool": "free_hours", "args": {"teachers": ["me", "{teacher}"]}}
+{"id": "T-007", "group": "free_hours", "template": "need a common free hour for me, {teacher.any} and {teacher2.any} on {day.any}", "tool": "free_hours", "args": {"teachers": ["me", "{teacher}", "{teacher2}"], "days": ["{day}"]}}
+{"id": "T-008", "group": "free_hours", "template": "is {lab.any} free on {day.any} at {time}", "tool": "free_hours", "args": {"rooms": ["{lab}"], "days": ["{day}"], "slots": ["{time}"]}}
+{"id": "T-009", "group": "free_hours", "template": "when is {room} empty {when}?", "tool": "free_hours", "args": {"rooms": ["{room}"]}}
+{"id": "T-010", "group": "free_hours", "template": "free periods for {section.any} {when}", "tool": "free_hours", "args": {"sections": ["{section}"]}}
+{"id": "T-011", "group": "free_hours", "template": "do I have any gaps on {day.any}?", "tool": "free_hours", "args": {"teachers": ["me"], "days": ["{day}"]}}
+{"id": "T-012", "group": "free_hours", "template": "am I free this afternoon?", "tool": "free_hours", "args": {"teachers": ["me"], "days": ["Wed"], "part": "afternoon"}}
+{"id": "T-013", "group": "free_hours", "template": "is {teacher.any} free tomorrow {part}?", "tool": "free_hours", "args": {"teachers": ["{teacher}"], "days": ["Thu"], "part": "{part}"}}
+{"id": "T-014", "group": "free_hours", "template": "when can {section.any} and I meet for 2 hours {when}?", "tool": "free_hours", "args": {"teachers": ["me"], "sections": ["{section}"], "length": 2}}
+{"id": "T-015", "group": "free_hours", "template": "need a 2 hr window with {section.any} and a lab with {equipment}", "tool": "free_hours", "args": {"teachers": ["me"], "sections": ["{section}"], "length": 2, "kind": "lab", "equipment": ["{equipment}"]}}
+{"id": "T-016", "group": "free_hours", "template": "when are {section} and {section2} both free, with a room for {seats}?", "tool": "free_hours", "args": {"sections": ["{section}", "{section2}"], "kind": "lecture", "min_capacity": "{seats}"}}
+{"id": "T-017", "group": "free_hours", "template": "are we free {day.any} afternoon?", "asker": "rep", "tool": "free_hours", "args": {"sections": ["me"], "days": ["{day}"], "part": "afternoon"}}
+{"id": "T-018", "group": "free_hours", "template": "what are our free hours {when}", "asker": "rep", "tool": "free_hours", "args": {"sections": ["me"]}}
+{"id": "T-019", "group": "free_hours", "template": "is {teacher.any} free when we are free on {day.any}?", "asker": "rep", "tool": "free_hours", "args": {"sections": ["me"], "teachers": ["{teacher}"], "days": ["{day}"]}}
+{"id": "T-020", "group": "free_hours", "template": "any free time on {day.any} morning?", "tool": "free_hours", "args": {"teachers": ["me"], "days": ["{day}"], "part": "morning"}}
+{"id": "T-021", "group": "classes_of", "template": "what do I teach on {day.any}?", "tool": "classes_of", "args": {"teacher": "me", "days": ["{day}"]}}
+{"id": "T-022", "group": "classes_of", "template": "gimme my {day.any} schedule", "tool": "classes_of", "args": {"teacher": "me", "days": ["{day}"]}}
+{"id": "T-023", "group": "classes_of", "template": "my timetable {when}", "tool": "classes_of", "args": {"teacher": "me"}}
+{"id": "T-024", "group": "classes_of", "template": "When does {teacher.any} teach {teacher.course}?", "tool": "classes_of", "args": {"teacher": "{teacher}", "course": "{teacher.course}"}}
+{"id": "T-025", "group": "classes_of", "template": "when is {course.any} {when}?", "tool": "classes_of", "args": {"course": "{course}"}}
+{"id": "T-026", "group": "classes_of", "template": "who's got {section.any} on {day.any}?", "tool": "classes_of", "args": {"section": "{section}", "days": ["{day}"]}}
+{"id": "T-027", "group": "classes_of", "template": "anyone using {lab.any} on {day.any}?", "tool": "classes_of", "args": {"room": "{lab}", "days": ["{day}"]}, "also": [{"tool": "free_hours", "args": {"rooms": ["{lab}"], "days": ["{day}"]}}]}
+{"id": "T-028", "group": "classes_of", "template": "what's on in {room.any} on {day}", "tool": "classes_of", "args": {"room": "{room}", "days": ["{day}"]}}
+{"id": "T-029", "group": "classes_of", "template": "does {teacher.any} have anything on {day.any}?", "tool": "classes_of", "args": {"teacher": "{teacher}", "days": ["{day}"]}}
+{"id": "T-030", "group": "classes_of", "template": "where's my {my_course} lecture {when}?", "tool": "classes_of", "args": {"teacher": "me", "course": "{my_course}"}}
+{"id": "T-031", "group": "classes_of", "template": "when is my next class?", "tool": "classes_of", "args": {"teacher": "me", "next": true}}
+{"id": "T-032", "group": "classes_of", "template": "where am I headed next", "tool": "classes_of", "args": {"teacher": "me", "next": true}}
+{"id": "T-033", "group": "classes_of", "template": "what's our next class", "asker": "rep", "tool": "classes_of", "args": {"section": "me", "next": true}}
+{"id": "T-034", "group": "classes_of", "template": "how many hours do I teach {when}?", "tool": "classes_of", "args": {"teacher": "me", "count": true}}
+{"id": "T-035", "group": "classes_of", "template": "how many classes does {section.any} have on {day.any}?", "tool": "classes_of", "args": {"section": "{section}", "days": ["{day}"], "count": true}}
+{"id": "T-036", "group": "classes_of", "template": "what classes do we have tomorrow?", "asker": "rep", "tool": "classes_of", "args": {"section": "me", "days": ["Thu"]}}
+{"id": "T-037", "group": "classes_of", "template": "when do I see {section.any} {when}", "tool": "classes_of", "args": {"teacher": "me", "section": "{section}"}}
+{"id": "T-038", "group": "classes_of", "template": "when is the {course.any} lab", "tool": "classes_of", "args": {"course": "{course}"}}
+{"id": "T-039", "group": "classes_of", "template": "what time does {course.any} start on {day.any}", "tool": "classes_of", "args": {"course": "{course}", "days": ["{day}"]}}
+{"id": "T-040", "group": "classes_of", "template": "what's {teacher.any} teaching {when}?", "tool": "classes_of", "args": {"teacher": "{teacher}"}}
+{"id": "T-041", "group": "free_rooms", "template": "are there any labs free on {day.any}?", "tool": "free_rooms", "args": {"kind": "lab", "days": ["{day}"]}}
+{"id": "T-042", "group": "free_rooms", "template": "which rooms are free on {day.any} at {time}", "tool": "free_rooms", "args": {"kind": "lecture", "days": ["{day}"], "slots": ["{time}"]}}
+{"id": "T-043", "group": "free_rooms", "template": "any lab with {equipment} free on {day.any}?", "tool": "free_rooms", "args": {"kind": "lab", "equipment": ["{equipment}"], "days": ["{day}"]}}
+{"id": "T-044", "group": "free_rooms", "template": "is there a free classroom for {seats} students on {day.any}", "tool": "free_rooms", "args": {"kind": "lecture", "min_capacity": "{seats}", "days": ["{day}"]}}
+{"id": "T-045", "group": "free_rooms", "template": "any room that seats {seats} open {day.any} {time.any}?", "tool": "free_rooms", "args": {"kind": "lecture", "min_capacity": "{seats}", "days": ["{day}"], "slots": ["{time}"]}}
+{"id": "T-046", "group": "free_rooms", "template": "free labs {day.any} morning?", "tool": "free_rooms", "args": {"kind": "lab", "days": ["{day}"], "part": "morning"}}
+{"id": "T-047", "group": "free_rooms", "template": "I'm looking for an empty lecture hall on {day.any} afternoon", "tool": "free_rooms", "args": {"kind": "lecture", "days": ["{day}"], "part": "afternoon"}}
+{"id": "T-048", "group": "free_rooms", "template": "which labs are free {when}", "tool": "free_rooms", "args": {"kind": "lab"}}
+{"id": "T-049", "group": "free_rooms", "template": "got any spare classrooms at {time.any} {day.any}", "tool": "free_rooms", "args": {"kind": "lecture", "days": ["{day}"], "slots": ["{time}"]}}
+{"id": "T-050", "group": "free_rooms", "template": "a lab with {equipment} free {day.any} {part}?", "tool": "free_rooms", "args": {"kind": "lab", "equipment": ["{equipment}"], "days": ["{day}"], "part": "{part}"}}
+{"id": "T-051", "group": "who_is_free", "template": "who is free on {day.any} at {time}?", "tool": "who_is_free", "args": {"days": ["{day}"], "slots": ["{time}"]}}
+{"id": "T-052", "group": "who_is_free", "template": "anyone free {day.any} {part}?", "tool": "who_is_free", "args": {"days": ["{day}"], "part": "{part}"}}
+{"id": "T-053", "group": "who_is_free", "template": "who can cover my {my_course} class on {day.any} at {time}?", "tool": "who_is_free", "args": {"days": ["{day}"], "slots": ["{time}"], "course": "{my_course}"}, "also": [{"tool": "who_is_free", "args": {"days": ["{day}"], "slots": ["{time}"]}}]}
+{"id": "T-054", "group": "who_is_free", "template": "somebody around at {time.any} on {day.any} who could take my class?", "tool": "who_is_free", "args": {"days": ["{day}"], "slots": ["{time}"]}}
+{"id": "T-055", "group": "who_is_free", "template": "which teachers are free {day.any} afternoon", "tool": "who_is_free", "args": {"days": ["{day}"], "part": "afternoon"}}
+{"id": "T-056", "group": "who_is_free", "template": "which sections are free on {day.any} at {time}?", "tool": "who_is_free", "args": {"days": ["{day}"], "slots": ["{time}"], "sections": true}}
+{"id": "T-057", "group": "who_is_free", "template": "is any section free {day.any} {part} for a guest lecture?", "tool": "who_is_free", "args": {"days": ["{day}"], "part": "{part}", "sections": true}}
+{"id": "T-058", "group": "who_is_free", "template": "who else teaches {course.any} and is free on {day.any}?", "tool": "who_is_free", "args": {"days": ["{day}"], "course": "{course}"}}
+{"id": "T-059", "group": "who_is_free", "template": "who's not teaching at {time} {day.any}", "tool": "who_is_free", "args": {"days": ["{day}"], "slots": ["{time}"]}}
+{"id": "T-060", "group": "who_is_free", "template": "is anybody free tomorrow at {time}?", "tool": "who_is_free", "args": {"days": ["Thu"], "slots": ["{time}"]}}
+{"id": "T-061", "group": "describe", "template": "can you enlist all rooms with their capacities?", "tool": "describe", "args": {"what": "rooms"}}
+{"id": "T-062", "group": "describe", "template": "could u give me the room list w/ how many seats each has", "tool": "describe", "args": {"what": "rooms"}}
+{"id": "T-063", "group": "describe", "template": "list all labs", "tool": "describe", "args": {"what": "rooms", "kind": "lab"}}
+{"id": "T-064", "group": "describe", "template": "which labs have {equipment}?", "tool": "describe", "args": {"what": "rooms", "kind": "lab"}, "also": [{"tool": "free_rooms", "args": {"kind": "lab", "equipment": ["{equipment}"]}}]}
+{"id": "T-065", "group": "describe", "template": "how big is {section.any}?", "tool": "describe", "args": {"section": "{section}"}}
+{"id": "T-066", "group": "describe", "template": "how many students are in {section.any}", "tool": "describe", "args": {"section": "{section}"}}
+{"id": "T-067", "group": "describe", "template": "what's the seating capacity of {room.any}", "tool": "describe", "args": {"room": "{room}"}}
+{"id": "T-068", "group": "describe", "template": "what equipment does {lab.any} have?", "tool": "describe", "args": {"room": "{lab}"}}
+{"id": "T-069", "group": "describe", "template": "who teaches {course.any}?", "tool": "describe", "args": {"course": "{course}"}, "also": [{"tool": "classes_of", "args": {"course": "{course}"}}]}
+{"id": "T-070", "group": "describe", "template": "which courses does {teacher.any} teach?", "tool": "describe", "args": {"teacher": "{teacher}"}, "also": [{"tool": "classes_of", "args": {"teacher": "{teacher}"}}]}
+{"id": "T-071", "group": "describe", "template": "list all teachers", "tool": "describe", "args": {"what": "teachers"}}
+{"id": "T-072", "group": "describe", "template": "who are the faculty in this department?", "tool": "describe", "args": {"what": "teachers"}}
+{"id": "T-073", "group": "describe", "template": "list the courses", "tool": "describe", "args": {"what": "courses"}}
+{"id": "T-074", "group": "describe", "template": "list all sections and their sizes", "tool": "describe", "args": {"what": "sections"}}
+{"id": "T-075", "group": "describe", "template": "what week is it?", "tool": "describe", "args": {"what": "calendar"}}
+{"id": "T-076", "group": "describe", "template": "what time is lunch?", "tool": "describe", "args": {"what": "calendar"}}
+{"id": "T-077", "group": "describe", "template": "how many teaching hours a week does {teacher.any} have?", "tool": "describe", "args": {"teacher": "{teacher}"}, "also": [{"tool": "classes_of", "args": {"teacher": "{teacher}", "count": true}}]}
+{"id": "T-078", "group": "describe", "template": "what courses am I teaching this semester", "tool": "describe", "args": {"teacher": "me"}, "also": [{"tool": "classes_of", "args": {"teacher": "me"}}]}
+{"id": "T-079", "group": "changes", "template": "what changed {when}?", "tool": "changes", "args": {}}
+{"id": "T-080", "group": "changes", "template": "did anything get shuffled around {when}", "tool": "changes", "args": {}}
+{"id": "T-081", "group": "changes", "template": "was my class cancelled {when}?", "tool": "changes", "args": {"teacher": "me"}}
+{"id": "T-082", "group": "changes", "template": "anything cancelled for {section.any} {when}?", "tool": "changes", "args": {"section": "{section}"}}
+{"id": "T-083", "group": "changes", "template": "any extra classes for us {when}?", "asker": "rep", "tool": "changes", "args": {"section": "me"}}
+{"id": "T-084", "group": "changes", "template": "is {teacher.any}'s class happening {when} or not?", "tool": "changes", "args": {"teacher": "{teacher}"}, "also": [{"tool": "classes_of", "args": {"teacher": "{teacher}"}}]}
+{"id": "T-085", "group": "changes", "template": "have any of my classes moved {when}", "tool": "changes", "args": {"teacher": "me"}}
+{"id": "T-086", "group": "changes", "template": "what's different in the timetable {when}?", "tool": "changes", "args": {}}
+{"id": "T-087", "group": "request", "template": "can I have {day} off {when}?", "tool": null}
+{"id": "T-088", "group": "request", "template": "can I have {day.any} free?", "tool": null}
+{"id": "T-089", "group": "request", "template": "is it ok if I take {day}'s class on {day2} instead", "tool": null}
+{"id": "T-090", "group": "request", "template": "I'd prefer no classes before 10 am", "tool": null}
+{"id": "T-091", "group": "request", "template": "I won't be available on {day.any}, I have a conference", "tool": null}
+{"id": "T-092", "group": "request", "template": "{teacher} and I would like to swap our {day} classes", "tool": null}
+{"id": "T-093", "group": "request", "template": "I'm sick today, my {time} class won't happen", "tool": null}
+{"id": "T-094", "group": "request", "template": "could we hold an extra {my_course} lecture next week?", "tool": null}
+{"id": "T-095", "group": "request", "template": "put my lab session in {lab} from now on", "tool": null}
+{"id": "T-096", "group": "request", "template": "could {teacher.any} take my class on {day.any}?", "tool": null}
+{"id": "T-097", "group": "request", "template": "is it possible to shift my {my_course} class to {day}?", "tool": null}
+{"id": "T-098", "group": "request", "template": "pls drop my {day.any} {time.any} class this week", "tool": null}
+{"id": "T-099", "group": "request", "template": "book {room} on {day} at {time} for a club meeting", "tool": null}
+{"id": "T-100", "group": "request", "template": "I'd like {day.any} mornings kept free", "tool": null}
+{"id": "T-101", "group": "request", "template": "my {my_course} lab needs {equipment} from now on", "tool": null}
+{"id": "T-102", "group": "request", "template": "will be away {day.any} and {day2.any}, family function", "tool": null}
+{"id": "T-103", "group": "request", "template": "our {course} class clashes with another class on {day}", "asker": "rep", "tool": null}
+{"id": "T-104", "group": "request", "template": "make my {day} classes back to back please", "tool": null}
+{"id": "T-105", "group": "request", "template": "shift everything I have on {day} to the afternoon", "tool": null}
+{"id": "T-106", "group": "request", "template": "need {day.any} {part} off for a doctor's appointment", "tool": null}
+{"id": "T-107", "group": "rule", "template": "Is it allowed to hold classes on Saturday?", "tool": null}
+{"id": "T-108", "group": "rule", "template": "how many online classes can a course have?", "tool": null}
+{"id": "T-109", "group": "rule", "template": "how many hours in a row can a section be taught?", "tool": null}
+{"id": "T-110", "group": "rule", "template": "what's the maximum teaching load for a guest faculty?", "tool": null}
+{"id": "T-111", "group": "rule", "template": "can two teachers swap their slots without telling the coordinator?", "tool": null}
+{"id": "T-112", "group": "rule", "template": "within how many weeks must a missed class be made up?", "tool": null}
+{"id": "T-113", "group": "rule", "template": "who approves an online class?", "tool": null}
+{"id": "T-114", "group": "rule", "template": "can the lunch break be skipped for a lab?", "tool": null}
+{"id": "T-115", "group": "rule", "template": "how far in advance must the auditorium be booked?", "tool": null}
+{"id": "T-116", "group": "other", "template": "what is the wifi password for the library?", "tool": null}
+{"id": "T-117", "group": "unclear", "template": "Is {unknown_teacher} free on {day.any}?", "tool": "unclear"}
+{"id": "T-118", "group": "unclear", "template": "what does {unknown_teacher} teach?", "tool": "unclear"}
+{"id": "T-119", "group": "unclear", "template": "is {student} free on {day.any}?", "tool": "unclear"}
+{"id": "T-120", "group": "unclear", "template": "is the auditorium free on {day.any}?", "tool": "unclear"}
+{"id": "T-121", "group": "unclear", "template": "can you tell me if the seminar hall is free {day.any} {part}", "tool": "unclear"}
+{"id": "T-122", "group": "unclear", "template": "is room 999 free on {day.any}?", "tool": "unclear"}
+{"id": "T-123", "group": "unclear", "template": "when are the holidays?", "tool": "unclear"}
+{"id": "T-124", "group": "unclear", "template": "when do the mid-sem exams start?", "tool": "unclear"}
+{"id": "T-125", "group": "unclear", "template": "why is {teacher.any} absent on {day.any}?", "tool": "unclear"}
+{"id": "T-126", "group": "unclear", "template": "why was {teacher}'s class cancelled {when}?", "tool": "unclear"}
+{"id": "T-127", "group": "unclear", "template": "is {shared_first} free on {day.any}?", "tool": "unclear"}
+{"id": "T-128", "group": "unclear", "template": "what does {shared_first} teach on {day.any}?", "tool": "unclear"}
+{"id": "T-129", "group": "unclear", "template": "is {teacher.surname} on leave this week?", "tool": "unclear", "also": [{"tool": "changes", "args": {"teacher": "{teacher}"}}]}
+{"id": "T-130", "group": "unclear", "template": "is the exam hall free on {day.any}?", "tool": "unclear"}
+{"id": "T-131", "group": "dates", "template": "when is {room.any} free on {day.any}?", "tool": "free_hours", "args": {"rooms": ["{room}"], "days": ["{day}"]}}
+{"id": "T-132", "group": "dates", "template": "when is {room.any} free on {date.any}?", "week": "{date}", "tool": "free_hours", "args": {"rooms": ["{room}"], "days": ["{date}"]}}
+{"id": "T-133", "group": "dates", "template": "is {lab.any} free on {date.any} at {time}?", "week": "{date}", "tool": "free_hours", "args": {"rooms": ["{lab}"], "days": ["{date}"], "slots": ["{time}"]}}
+{"id": "T-134", "group": "dates", "template": "what do I teach on {date.any}?", "week": "{date}", "tool": "classes_of", "args": {"teacher": "me", "days": ["{date}"]}}
+{"id": "T-135", "group": "dates", "template": "any labs free on {date.any}?", "week": "{date}", "tool": "free_rooms", "args": {"kind": "lab", "days": ["{date}"]}}
+{"id": "T-136", "group": "dates", "template": "is {teacher.any} free on {date.any}?", "week": "{date}", "tool": "free_hours", "args": {"teachers": ["{teacher}"], "days": ["{date}"]}}
+{"id": "T-137", "group": "dates", "template": "need a room for {seats} on {date.any} afternoon", "week": "{date}", "tool": "free_rooms", "args": {"kind": "lecture", "min_capacity": "{seats}", "days": ["{date}"], "part": "afternoon"}}
+{"id": "T-138", "group": "dates", "template": "who is free on {date.any} at {time}?", "week": "{date}", "tool": "who_is_free", "args": {"days": ["{date}"], "slots": ["{time}"]}}
+{"id": "T-139", "group": "dates", "template": "was anything cancelled on {date.any}?", "week": "{date}", "tool": "changes", "args": {}}
+{"id": "T-140", "group": "dates", "template": "is {room.any} free on {weekend_date.any}?", "tool": "unclear"}
+{"id": "T-141", "group": "dates", "template": "what do I teach on {outside_date.any}?", "tool": "unclear"}
+{"id": "T-142", "group": "dates", "template": "can I book {room} on {date.any} from {time} for a talk?", "tool": null}

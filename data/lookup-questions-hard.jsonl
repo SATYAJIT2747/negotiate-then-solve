@@ -1,0 +1,30 @@
+{"id": "LH-01", "sender": "Dr. Menon", "question": "is Khan busy tmrw?", "tool": "free_hours", "args": {"teachers": ["Dr. Khan"], "days": ["Thu"]}, "week": "this"}
+{"id": "LH-02", "sender": "Dr. Menon", "question": "gimme my thursday schedule", "tool": "classes_of", "args": {"teacher": "me", "days": ["Thu"]}, "week": "this"}
+{"id": "LH-03", "sender": "Dr. Menon", "question": "who's got section 3 on tuesday?", "tool": "classes_of", "args": {"section": "Section 3", "days": ["Tue"]}, "week": "this"}
+{"id": "LH-04", "sender": "Dr. Menon", "question": "anyone using lab 3 on wednesday?", "tool": "classes_of", "args": {"room": "Lab 3", "days": ["Wed"]}, "week": "this"}
+{"id": "LH-05", "sender": "Dr. Menon", "question": "does Sharma have anything on friday?", "tool": "classes_of", "args": {"teacher": "Dr. Sharma", "days": ["Fri"]}, "week": "this"}
+{"id": "LH-06", "sender": "Dr. Menon", "question": "where's my DS lecture on monday?", "tool": "classes_of", "args": {"teacher": "me", "course": "Data Structures", "days": ["Mon"]}, "week": "this"}
+{"id": "LH-07", "sender": "Dr. Menon", "question": "what's a good time to meet Dr. Pillai next week?", "tool": "free_hours", "args": {"teachers": ["me", "Dr. Pillai"]}, "week": "next"}
+{"id": "LH-08", "sender": "Dr. Menon", "question": "is room 103 taken at 11 am on monday?", "tool": "free_hours", "args": {"rooms": ["Room 103"], "days": ["Mon"], "slots": [2]}, "week": "this"}
+{"id": "LH-09", "sender": "Dr. Menon", "question": "any classroom that seats 80 open on thursday?", "tool": "free_rooms", "args": {"kind": "lecture", "min_capacity": 80, "days": ["Thu"]}, "week": "this"}
+{"id": "LH-10", "sender": "Dr. Menon", "question": "which lab has routers and is open on friday at 10 am", "tool": "free_rooms", "args": {"kind": "lab", "equipment": ["routers"], "days": ["Fri"], "slots": [1]}, "week": "this"}
+{"id": "LH-11", "sender": "Dr. Menon", "question": "what does Dr. Das teach?", "tool": "classes_of", "args": {"teacher": "Dr. Das"}, "week": "this"}
+{"id": "LH-12", "sender": "Dr. Menon", "question": "Who teaches Operating Systems?", "tool": "classes_of", "args": {"course": "Operating Systems"}, "week": "this"}
+{"id": "LH-13", "sender": "Dr. Menon", "question": "when do I see section 1 this week", "tool": "classes_of", "args": {"teacher": "me", "section": "Section 1"}, "week": "this"}
+{"id": "LH-14", "sender": "Dr. Menon", "question": "is Gupta around monday at 2 pm?", "tool": "free_hours", "args": {"teachers": ["Dr. Gupta"], "days": ["Mon"], "slots": [5]}, "week": "this"}
+{"id": "LH-15", "sender": "Dr. Menon", "question": "what's on in room 101 on friday", "tool": "classes_of", "args": {"room": "Room 101", "days": ["Fri"]}, "week": "this"}
+{"id": "LH-16", "sender": "Dr. Menon", "question": "free periods for Dr Rao in week 14?", "tool": "free_hours", "args": {"teachers": ["Dr. Rao"]}, "week": 14}
+{"id": "LH-17", "sender": "Dr. Menon", "question": "when is the compiler design lab", "tool": "classes_of", "args": {"course": "Compiler Design"}, "week": "this"}
+{"id": "LH-18", "sender": "Dr. Menon", "question": "Is Prof. Bose free tomorrow?", "tool": "unclear"}
+{"id": "LH-19", "sender": "Dr. Menon", "question": "can you tell me if the seminar hall is free on monday", "tool": "unclear"}
+{"id": "LH-20", "sender": "Dr. Menon", "question": "what time does AI start on tuesday", "tool": "classes_of", "args": {"course": "Artificial Intelligence", "days": ["Tue"]}, "week": "this"}
+{"id": "LH-21", "sender": "Dr. Menon", "question": "can I have Friday free?", "tool": null}
+{"id": "LH-22", "sender": "Dr. Menon", "question": "is it ok if I take Tuesday's class on Thursday instead", "tool": null}
+{"id": "LH-23", "sender": "Dr. Menon", "question": "I'd prefer no classes before 10 am", "tool": null}
+{"id": "LH-24", "sender": "Dr. Menon", "question": "I won't be available on monday, I have a conference", "tool": null}
+{"id": "LH-25", "sender": "Dr. Menon", "question": "Dr. Iyer and I would like to swap our Thursday classes", "tool": null}
+{"id": "LH-26", "sender": "Dr. Menon", "question": "I'm sick today, my 3 pm class won't happen", "tool": null}
+{"id": "LH-27", "sender": "Dr. Menon", "question": "could we hold an extra DS lecture next week?", "tool": null}
+{"id": "LH-28", "sender": "Dr. Menon", "question": "put my lab session in lab 2 from now on", "tool": null}
+{"id": "LH-29", "sender": "Dr. Menon", "question": "Is it allowed to hold classes on Saturday?", "tool": null}
+{"id": "LH-30", "sender": "Dr. Menon", "question": "how many online classes can a course have?", "tool": null}
