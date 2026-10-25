@@ -10,6 +10,7 @@ import { Button, LiveDot } from "./ui";
 
 /** Steps worth a line in the conversation; the rest (parsing, compiling, solving) stay on the case page. */
 const SHOWN = new Set([
+  "held",
   "policy_checked",
   "choice_offered",
   "choice_made",
@@ -77,7 +78,9 @@ export function RequestThread({ c, onChanged }: { c: CaseDetail; onChanged: () =
             </>
           ) : (
             <>
-              <LiveDot tone="warn" pulse /> {c.status === "negotiating" ? "Waiting for a colleague's reply…" : "Working on it…"}
+              <LiveDot tone="warn" pulse /> {c.held
+                ? "Waiting for the model that reads requests; nothing is done with it until then…"
+                : c.status === "negotiating" ? "Waiting for a colleague's reply…" : "Working on it…"}
             </>
           )}
         </p>

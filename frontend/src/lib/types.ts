@@ -59,6 +59,8 @@ export interface CaseSummary {
   type: string | null;
   rounds: number;
   running: boolean;
+  /** Waiting for the model to read it (the server holds a change while the model is away). */
+  held?: boolean;
 }
 
 export interface ConstraintView {

@@ -68,6 +68,8 @@ export const TIER: Record<number, { name: string; who: string; tone: Tone }> = {
 
 export const EVENT_LABEL: Record<string, string> = {
   received: "Request received",
+  held: "Waiting for the request reader (busy or away)",
+  released: "Read",
   classified: "Classified and parsed",
   policy_checked: "Policy checked",
   compiled: "Compiled into constraints",
