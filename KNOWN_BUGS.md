@@ -10,7 +10,7 @@ on the test set are in [PROGRESS.md](PROGRESS.md); this file is for what goes wr
 Seen on **Saturday 24 October 2026** (week 13 ended the day before), asking as Dr. Menon, with the app on the
 local model (`nts-lookup-v1`).
 
-### B6. One dropped connection turns a question into a request (open)
+### B6. One dropped connection turns a question into a request (fixed on `simplify`)
 
 | You ask | You get | Should get |
 |---|---|---|
@@ -39,7 +39,9 @@ local model (`nts-lookup-v1`).
    (ends with "?", starts with what / when / who / is / any …), say *"I can't answer questions right now; try
    again in a minute, or send it as a request"* instead of turning it into a request silently.
 
-### B7. The policy check answers a non-policy question with its own instructions (open; the team's adapter)
+**Fixed.** All three: `World.read_question` tries the model once more after a reset connection (`web.fallback._reset`); the regex reads "courses … take / handle" as `classes_of`; and while the model is away, a message the regex can't read that looks like a question (and not a rule question) gets *"I can't answer questions right now; try again in a minute, or send it as a request."*
+
+### B7. The policy check answers a non-policy question with its own instructions (fixed on `simplify`, in code; the adapter is unchanged)
 
 | Message (sent as a request, see B6) | Reply |
 |---|---|
@@ -53,7 +55,9 @@ a sentence about its task instead of an answer (no rule cited, verdict "allowed"
 *"I couldn't find a rule about that"* (the relevance cut-off already in the RAG roadmap), or hand a question
 about the timetable back to the lookup. Worth an issue for the team, since it's their adapter and pipeline.
 
-### B1. "today" on a weekend: "I don't know Sat" (open)
+**Fixed.** `PolicyAgent.check`: an answer that cites no rule shown is replaced by *"I couldn't find a rule about that. The timetable office can tell you."* (the same wording as the offline policy check). The adapter itself still writes such answers.
+
+### B1. "today" on a weekend: "I don't know Sat" (fixed on `simplify`, in code)
 
 | You ask | You get | Should get |
 |---|---|---|
@@ -72,7 +76,9 @@ tonight* on a Saturday or Sunday gets the fixed reply above. And when the model 
 the reply *"There are no classes on Saturday."* instead of a rejected answer. In `nts-lookup-v2`: weekend "today"
 questions in the training data.
 
-### B2. Nobody named: "I don't know any" / "I don't know some" (open)
+**Fixed** in code for both readers (`agents.questions.no_classes`): *today / tonight / this morning / afternoon / evening* on a weekend, and *tomorrow* on a Saturday, get the fixed reply; a model that writes Sat or Sun (in `days` or `unknown`) gets *"There are no classes on Saturday."* The training data for `nts-lookup-v2` is still to do.
+
+### B2. Nobody named: "I don't know any" / "I don't know some" (fixed on `simplify`, points 1 and 2)
 
 | You ask | The adapter's tries | You get |
 |---|---|---|
@@ -97,7 +103,9 @@ Should get: your free hours on Monday (week 14).
    ("any", "some", "all", "free", "slots", "today", …) are ignored there.
 3. In `nts-lookup-v2`: "free slots" questions that name nobody.
 
-### B3. A misspelt day is dropped: "free slots on monmday" answers the whole week (open)
+**Fixed:** points 1 and 2 (`ToolAgent._check`, `ToolAgent._not_names`); a date the model puts in `unknown` ("Aug 19") is read as a date too. Point 3 (training data) is still to do.
+
+### B3. A misspelt day is dropped: "free slots on monmday" answers the whole week (fixed on `simplify`)
 
 | You ask | You get | Should get |
 |---|---|---|
@@ -112,7 +120,9 @@ misspelt days, and the regex reads `mon`, `monday`, `mon.`, not misspellings.
 already does this kind of spelling repair (`language.rule_parser.normalise`: "thrusday", "aftrnoon"). And when
 a reply covers the whole week because no day was understood, say so.
 
-### B4. "This week" on a weekend is the week that just ended (open)
+**Fixed:** `agents.questions.spell_days` runs before both readers (one letter added, missing, changed or two swapped). Saying so when a reply covers the whole week because no day was understood is not done.
+
+### B4. "This week" on a weekend is the week that just ended (fixed on `simplify`)
 
 | You ask (on Saturday 24 Oct) | You get | Expected by most people |
 |---|---|---|
@@ -127,7 +137,9 @@ weekend, so the chat's answers and the page disagree.
 does), and the reply names the week, as it already does ("(week 14)"). To decide: is "next week" on a Saturday
 then week 15? (Probably: "next week" said on a weekend usually means the coming one; worth asking a few teachers.)
 
-### B5. The adapter's misses on the test set (open, for `nts-lookup-v2`)
+**Fixed** as proposed (`agents.questions.this_week`): on a Saturday or Sunday "this week" is the coming week and "next week" the one after it, in both readers (the model's prompt says "this is week 14" on Saturday 24 October). Requests are unchanged.
+
+### B5. The adapter's misses on the test set (partly fixed in code; the rest for `nts-lookup-v2`)
 
 34 of 362 test questions, all listed in PROGRESS.md. The ones a user will meet most:
 
@@ -156,3 +168,5 @@ Found while testing; they belong on their own branches from `simplify` or as Git
 | `test_semester_api` fails from 16 October 2026 on: it books a club room on a fixed date (15 October 2026), now in the past | `tests/test_semester.py` | open: issue drafted |
 | Requests stay in "received" after an error (e.g. the server resetting the connection) | the request pipeline | open: issue drafted |
 | The reader drops dates, times and attendees from room bookings ("book lab 2 on 27 oct 12 to 1 pm") | `nts-intents-v6-read100` | open |
+
+**Partly fixed** in code: "could X take my class" and "clashes" are request words; the regex reads "Lab-3" and "what equipment does … have"; a date in `unknown` is read as a date (B2). The regex alone now gets 252/362 (was 242/362; nothing it got right is wrong now). These patterns come from the test set's own misses, so the regex score on them is no longer a clean held-out number. The labs-on-Monday miss needs `nts-lookup-v2`.

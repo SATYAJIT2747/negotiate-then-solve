@@ -68,15 +68,14 @@ def test_a_wrong_name_is_sent_back_and_corrected(world):
 
 
 def test_after_the_last_try_it_says_so_and_guesses_nothing(world):
-    wrong = Choice(tool="free_hours", days=["Sat"], teachers=["me"], week=WEEK)
+    wrong = Choice(tool="free_hours", days=["Someday"], teachers=["me"], week=WEEK)
     a = agent(world, *[wrong] * MAX_TRIES)
-    call = a.read("am I free on saturday")
+    call = a.read("am I free someday")
     assert not call.confident and "couldn't work out" in call.note
     assert len(a.client.prompts) == MAX_TRIES and all(t["problem"] for t in a.trace)
 
 
 @pytest.mark.parametrize("choice, problem", [
-    (Choice(tool="free_hours", week=WEEK), "needs at least one teacher"),
     (Choice(tool="free_rooms", week=WEEK), "needs kind"),
     (Choice(tool="free_rooms", kind="lab", equipment=["laser"], week=WEEK), "equipment ['laser']"),
     (Choice(tool="free_hours", teachers=["me"], hours=[4], week=WEEK), "not lunch"),
@@ -177,3 +176,75 @@ def test_free_rooms_and_classes_of_take_the_regex_shapes(world):
     assert call.args == {"kind": "lab", "equipment": ["gpu"], "days": ["Tue"], "slots": [5, 6]} and call.week == WEEK + 1
     call = agent(world, Choice(tool="classes_of", course="ML", week=WEEK)).read("when's ML?")
     assert call.args == {"course": next(c for c, t in world.instance.course_titles.items() if t == "Machine Learning")}
+
+
+# -- KNOWN_BUGS.md B1-B4 -----------------------------------------------------------------------------------------
+
+SATURDAY, SUNDAY = date(2026, 10, 24), date(2026, 10, 25)  # week 13 ended on Friday 23 October
+
+
+def on(world, today, *choices):
+    return ToolAgent(world.instance, FakeModel(*choices), person(world, "Dr. Menon"), WEEK, today=today)
+
+
+def test_nobody_named_is_the_person_asking(world):
+    """B2: "any free slots next monday?" names nobody: the asker, as the regex reads it."""
+    me = person(world, "Dr. Menon")
+    call = agent(world, Choice(tool="free_hours", days=["Mon"], week=WEEK + 1)).read("any free slots next monday ??")
+    assert call.confident and call.args == {"teachers": [me], "days": ["Mon"]} and call.week == WEEK + 1
+    call = agent(world, Choice(tool="classes_of", days=["Tue"], week=WEEK)).read("what classes on tuesday?")
+    assert call.args == {"teacher": me, "days": ["Tue"]}
+    rep = agent(world, Choice(tool="free_hours", week=WEEK), sender="ST-G-04").read("free slots this week?")
+    assert rep.args == {"sections": ["G-04"]}
+
+
+@pytest.mark.parametrize("unknown", [["any"], ["some"], ["Mon"], ["free", "slots"], ["today"]])
+def test_ordinary_words_are_not_unknown_names(world, unknown):
+    """B2: "I don't know any" came from a word of the question put in ``unknown``."""
+    call = agent(world, Choice(tool="free_hours", days=["Mon"], unknown=unknown, week=WEEK)).read("any free slots?")
+    assert call.confident and call.tool == "free_hours"
+
+
+def test_a_name_or_a_room_in_unknown_still_counts(world):
+    for unknown in (["Dr. Smith"], ["Lab 7"], ["auditorium"]):
+        call = agent(world, Choice(tool="free_hours", teachers=["me"], unknown=unknown, week=WEEK)).read("question")
+        assert not call.confident
+
+
+def test_a_date_in_unknown_is_read_as_a_date(world):
+    """B5: "any labs free on Aug 19?" -> "I don't know Aug 19"."""
+    a = ToolAgent(world.instance, FakeModel(Choice(tool="free_rooms", kind="lab", unknown=["Aug 19"], week=WEEK)),
+                  "F-102", WEEK, today=date(2026, 10, 21), semester_start=date(2026, 7, 27))
+    call = a.read("any labs free on Aug 19?")
+    assert call.confident and call.week == 4 and call.args["days"] == ["Wed"]
+
+
+@pytest.mark.parametrize("today, text, choice", [
+    (SATURDAY, "any free slots available today ??", Choice(tool="free_hours", teachers=["me"], days=["Sat"], week=WEEK)),
+    (SATURDAY, "what do I teach today?", Choice(tool="classes_of", teachers=["me"], unknown=["Sat"], week=WEEK)),
+    (SUNDAY, "am I free this afternoon?", Choice(tool="free_hours", teachers=["me"], days=["Mon"], week=WEEK)),
+])
+def test_today_on_a_weekend_has_no_classes(world, today, text, choice):
+    """B1: "I don't know Sat", or last Monday's classes without a word."""
+    call = on(world, today, choice).read(text)
+    assert not call.confident and call.note.startswith(f"Today is {today:%A}: there are no classes")
+
+
+def test_a_weekend_day_the_model_writes_has_no_classes(world):
+    call = agent(world, Choice(tool="free_hours", teachers=["me"], days=["Sat"], week=WEEK)).read("free on saturday?")
+    assert not call.confident and call.note == "There are no classes on Saturday."
+
+
+def test_this_week_on_a_weekend_is_the_coming_one(world):
+    """B4: on Saturday 24 October "this week" is week 14, not week 13 that just ended."""
+    a = on(world, SATURDAY, GrammarChoice(tool="free_hours", teachers=["me"], days=["Mon"]))  # no week written
+    assert a.read("my free slots on monday").week == WEEK + 1
+    assert "this is week 14 of" in a.client.prompts[0]
+    assert on(world, date(2026, 10, 21)).this_week == WEEK
+
+
+def test_a_misspelt_day_reaches_the_model_spelled_right(world):
+    """B3: "monmday" was dropped, and the answer covered the whole week."""
+    a = agent(world, Choice(tool="free_hours", teachers=["me"], days=["Mon"], week=WEEK))
+    a.read("free slots on monmday")
+    assert "<question>free slots on monday</question>" in a.client.prompts[0]

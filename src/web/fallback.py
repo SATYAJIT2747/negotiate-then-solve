@@ -87,6 +87,20 @@ def _outage(e: BaseException) -> bool:
                                             " 502", " 503", " 504"))
 
 
+def _reset(e: BaseException) -> bool:
+    """A connection the server closed mid-call (``ConnectionResetError``, WinError 10054): usually momentary,
+    unlike a server that is not there at all."""
+    seen: BaseException | None = e
+    while seen is not None:
+        if isinstance(seen, (ConnectionResetError, ConnectionAbortedError)) or isinstance(
+                getattr(seen, "reason", None), (ConnectionResetError, ConnectionAbortedError)):
+            return True
+        if any(w in str(seen).lower() for w in ("connection reset", "forcibly closed", "10054", "connectionreset")):
+            return True
+        seen = seen.__cause__ or seen.__context__
+    return False
+
+
 class Fallback:
     """One component: ``build(client)`` while the model is reachable, ``backup`` otherwise. A call
     that fails falls back for that call; an outage also marks the link down."""

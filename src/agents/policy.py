@@ -241,6 +241,9 @@ class Verdict(str, Enum):
     FORBIDDEN = "forbidden"
 
 
+NO_RULE = "I couldn't find a rule about that. The timetable office can tell you."
+
+
 class PolicyOutput(BaseModel):
     verdict: Literal["allowed", "needs_approval", "forbidden"]
     cited_rules: list[str] = Field(default_factory=list,
@@ -458,10 +461,13 @@ class PolicyAgent:
         uncited = verdict != Verdict.ALLOWED and not cited
         if uncited:
             verdict = Verdict.NEEDS_APPROVAL
+        # an answer resting on no rule shown is not an answer from the rules (the model may write about its task
+        # instead: "This is a policy question about ..."), so it is not passed on
+        answer = out.answer if out.answer is None or cited or obligations else NO_RULE
         return PolicyDecision(
             verdict=verdict, cited=cited, obligations=obligations, retrieved=[r.id for r in retrieved],
             hallucinated=hallucinated, explanation=out.explanation, alternative=out.alternative,
-            answer=out.answer, uncited_escalation=uncited,
+            answer=answer, uncited_escalation=uncited,
         )
 
 
@@ -495,7 +501,7 @@ class RulePolicyAgent:
         if parse is not None and parse.output is not None and parse.output.action == "answer":
             top = retrieved[0] if retrieved else None
             if top is None:
-                return decision(Verdict.ALLOWED, [], "No rule found.", answer="I could not find a rule on that.")
+                return decision(Verdict.ALLOWED, [], "No rule found.", answer=NO_RULE)
             return decision(Verdict.ALLOWED, [top.id], f"From {top.cite()}.", answer=f"{top.cite()}: {top.text}")
 
         cons = parse.constraints if parse is not None else []

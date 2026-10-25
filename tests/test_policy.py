@@ -81,6 +81,19 @@ def test_citations_must_be_retrieved_and_denials_cited(rules, instance):
     assert d.verdict == Verdict.NEEDS_APPROVAL and d.uncited_escalation  # never deny without a shown rule
 
 
+def test_an_answer_that_cites_no_rule_is_not_passed_on(rules):
+    """KNOWN_BUGS.md B7: the adapter answered "what courses does Dr. Iyer take?" with a sentence about its task."""
+    from agents.policy import NO_RULE
+
+    shown = [r for r in rules if r.id in ("P-LUNCH", "P-PREFS")]
+    task = "This is a policy question about course scheduling, which is answered by citing the relevant rules."
+    d = PolicyAgent.check(PolicyOutput(verdict="allowed", explanation="x", answer=task), shown)
+    assert d.answer == NO_RULE
+    d = PolicyAgent.check(PolicyOutput(verdict="allowed", cited_rules=["P-LUNCH"], explanation="x",
+                                       answer="No classes at 1 pm."), shown)
+    assert d.answer == "No classes at 1 pm."
+
+
 def test_hints_name_what_the_parse_implies(instance):
     req = request("I have a hospital visit on Tuesday of week 5.")
     absence = DraftConstraint(type="unavailable", hard=True, scope_kind="faculty", scope_id="F-105",

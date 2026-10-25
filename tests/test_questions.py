@@ -279,3 +279,64 @@ def test_changes_reply(world):
         f"Changes in week {WEEK}: {what} on {FULL_DAY[p.day]} {hour(p.slot)} is not held."
     assert a.answer(ToolCall("changes", {}, WEEK + 1), WeekTimetable(world.instance, store, WEEK + 1)) == \
         f"No changes in week {WEEK + 1}: the timetable is as planned."
+
+
+# -- KNOWN_BUGS.md -------------------------------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("typo, day", [("monmday", "Mon"), ("tuseday", "Tue"), ("wendesday", "Wed"),
+                                       ("thrusday", "Thu"), ("firday", "Fri"), ("Mondya", "Mon")])
+def test_a_misspelt_day_is_read(reader, typo, day):
+    """B3: "free slots on monmday" answered for the whole week."""
+    assert reader.read(f"free slots on {typo}").args["days"] == [day]
+
+
+def test_spelling_leaves_other_words_alone():
+    from agents.questions import spell_days
+
+    text = "Dr. Iyer's money, someday, Sunday and the fridge: Monday"
+    assert spell_days(text) == text
+
+
+@pytest.mark.parametrize("today", [date(2026, 10, 24), date(2026, 10, 25)])
+def test_today_on_a_weekend_has_no_classes(world, today):
+    """B1: on a Saturday "what do I teach today?" answered with last Monday's classes."""
+    r = QuestionReader(world.instance, person(world, "Dr. Menon"), WEEK, today=today)
+    for text in ("what do I teach today?", "any free slots available today ??"):
+        call = r.read(text)
+        assert not call.confident and call.note == f"Today is {today:%A}: there are no classes. Ask about Monday or next week."
+    saturday = QuestionReader(world.instance, person(world, "Dr. Menon"), WEEK, today=date(2026, 10, 24))
+    assert saturday.read("what do I teach tomorrow?").note.startswith("Tomorrow is Sunday")
+
+
+def test_this_week_on_a_weekend_is_the_coming_one(world):
+    """B4: week 13 ended on Friday 23 October; on the weekend "this week" is week 14, "next week" week 15."""
+    for today in (date(2026, 10, 24), date(2026, 10, 25)):
+        r = QuestionReader(world.instance, person(world, "Dr. Menon"), WEEK, today=today)
+        assert r.read("free slots on monday").week == WEEK + 1
+        assert r.read("my free slots this week").week == WEEK + 1
+        assert r.read("any free hours next week?").week == WEEK + 2
+    sunday = QuestionReader(world.instance, person(world, "Dr. Menon"), WEEK, today=date(2026, 10, 25))
+    call = sunday.read("what do I teach tomorrow?")
+    assert call.args["days"] == ["Mon"] and call.week == WEEK + 1  # not WEEK + 2
+
+
+def test_courses_someone_takes_are_their_classes(world, reader):
+    """B6: "what courses do dr.iyer take?" was "not a timetable question", then a request."""
+    for text in ("what courses do dr.iyer take ? on monday and tuesday",
+                 "what courses does Dr. Iyer take on monday and tuesday?"):
+        call = reader.read(text)
+        assert call.tool == "classes_of" and call.args == {"teacher": person(world, "Dr. Iyer"), "days": ["Mon", "Tue"]}
+
+
+@pytest.mark.parametrize("text", ["could Rao take my class on Friday?", "our AI class clashes with another class on Monday"])
+def test_cover_and_clash_are_requests(reader, text):
+    """B5: read as Rao's free hours, and as this week's changes."""
+    assert reader.read(text) is None
+
+
+def test_a_hyphenated_room_and_its_equipment(world, reader):
+    """B5: "what equipment does Lab-3 have?" could not be worked out."""
+    lab3 = next(r.id for r in world.instance.rooms if r.name == "Lab 3")
+    call = reader.read("what equipment does Lab-3 have?")
+    assert call.tool == "describe" and call.args == {"room": lab3}

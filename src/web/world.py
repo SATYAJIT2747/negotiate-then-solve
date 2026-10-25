@@ -9,6 +9,7 @@ import io
 import os
 import pickle
 import random
+import re
 import threading
 import time
 from datetime import UTC, date, datetime
@@ -98,6 +99,13 @@ VIEWS: dict[str, set[str]] = {
     "study": {"coordinator"},  # running the human study: participant codes, progress, export
 }
 OVERSIGHT = {"coordinator", "hod", "dean"}  # see every request and the whole activity log
+# a chat message the regex can't read while the model is away: a question (not a rule question) is told so,
+# not sent on as a request without a word
+LOOKS_ASKED = re.compile(r"\?\s*$|^\s*(what|when|where|who|whom|whose|which|how|is|are|am|was|were|do|does|did|"
+                         r"any|has|have)\b", re.IGNORECASE)
+ABOUT_RULES = re.compile(r"\b(allowed|allow|permitted|permission|rules?|polic(y|ies)|regulations?|maximum|minimum|"
+                         r"limit)\b", re.IGNORECASE)
+MODEL_AWAY = "I can't answer questions right now; try again in a minute, or send it as a request."
 
 
 def views_for(role: str) -> list[str]:
@@ -641,21 +649,34 @@ class World:
         week = self.current_week() or 1
         start = self.semester.state.semester_start
         start = date.fromisoformat(start) if start else None
+        unreachable = self.lookup_reader == "model"  # until the model has answered
         if self.lookup_reader == "model" and self.model_link is not None and self.model_link.usable():
-            try:
-                agent = ToolAgent(self.instance, _task(self.model_link.client, "lookup"), sender, week,
-                                  semester_start=start)
-                call = agent.read(text)
-                if call is None or call.confident or call.note != COULD_NOT:
-                    return call, "model"
-                # the model could not settle it in three tries: the regex may still read it
-            except Exception as e:  # noqa: BLE001 - the regex answers instead
-                from .fallback import _outage
+            from .fallback import _outage, _reset
 
-                if _outage(e):
-                    self.model_link.failed(e)
-                print(f"[model] lookup: {type(e).__name__}: {str(e)[:160]}; regex used", flush=True)
-        return QuestionReader(self.instance, sender, week, semester_start=start).read(text), "regex"
+            for retry in (True, False):  # a reset connection is usually momentary: once more, straight away
+                try:
+                    agent = ToolAgent(self.instance, _task(self.model_link.client, "lookup"), sender, week,
+                                      semester_start=start)
+                    call = agent.read(text)
+                    unreachable = False
+                    if call is None or call.confident or call.note != COULD_NOT:
+                        return call, "model"
+                    break  # the model could not settle it in three tries: the regex may still read it
+                except Exception as e:  # noqa: BLE001 - the regex answers instead
+                    if retry and _reset(e):
+                        print(f"[model] lookup: {type(e).__name__}: {str(e)[:160]}; trying again", flush=True)
+                        continue
+                    if _outage(e):
+                        self.model_link.failed(e)
+                    else:
+                        unreachable = False  # it answered, badly: not an outage
+                    print(f"[model] lookup: {type(e).__name__}: {str(e)[:160]}; regex used", flush=True)
+                    break
+        call = QuestionReader(self.instance, sender, week, semester_start=start).read(text)
+        if call is None and unreachable and LOOKS_ASKED.search(text) and not ABOUT_RULES.search(text):
+            # the model would have read it; without it, saying so beats sending a question on as a request
+            return ToolCall("unclear", week=week, confident=False, note=MODEL_AWAY), "regex"
+        return call, "regex"
 
     def _model_changed(self, up: bool, error: str | None) -> None:
         self.store.log(None, "model_reachable" if up else "model_unreachable", error=error)

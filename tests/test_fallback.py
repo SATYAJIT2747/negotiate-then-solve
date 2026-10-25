@@ -87,3 +87,21 @@ def test_a_world_on_the_local_model_starts_and_works_with_no_server(monkeypatch)
     case = w.orch.cases[r.id]
     assert case.status.value in ("awaiting_approval", "published"), case.reply
     assert any(e["kind"] == "model_unreachable" for e in w.store.events())
+
+
+
+def test_a_reset_connection_is_told_apart_from_an_outage():
+    import urllib.error
+
+    from web.fallback import _reset
+
+    reset = ConnectionResetError(10054, "An existing connection was forcibly closed by the remote host")
+    assert _reset(reset) and _reset(urllib.error.URLError(reset))
+    try:
+        try:
+            raise reset
+        except OSError as e:
+            raise LLMError(f"local server not reachable: {e}") from e
+    except LLMError as wrapped:
+        assert _reset(wrapped)
+    assert not _reset(ConnectionRefusedError("no server")) and not _reset(LLMError("local server 500"))

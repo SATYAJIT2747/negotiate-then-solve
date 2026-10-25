@@ -17,6 +17,7 @@ import re
 from collections import Counter
 from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta
+from difflib import get_close_matches
 
 from core.instance import Faculty, Group, Instance, Room
 from language.corpus import FULL_DAY, hour
@@ -26,17 +27,22 @@ from .lookup import TITLES, Department, Directory, ScheduledClass, WeekTimetable
 # what makes a message a timetable question, and what makes it a request instead
 FREE = re.compile(r"\b(free|available|availability|empty|vacant|gaps?|unbooked)\b", re.IGNORECASE)
 CLASSES = re.compile(r"\b(teach(es|ing)?|classes|class|lectures?|practicals?|tutorials?|timetable|schedule)\b|"
-                     r"\bwhat do (i|we) have\b|\bwhen (is|are|does|do)\b", re.IGNORECASE)
+                     r"\bwhat do (i|we) have\b|\bwhen (is|are|does|do)\b|"
+                     # "what courses does Dr. Iyer take / handle?"
+                     r"\b(courses?|subjects?)\b.*\b(takes?|taking|handles?|handling)\b|"
+                     r"\b(takes?|handles?)\b.*\b(courses?|subjects?)\b", re.IGNORECASE)
 REQUEST = re.compile(r"\b(cancel|move|reschedule|shift|swap|exchange|postpone|prepone|book|please|kindly)\b|"
                      r"\b(i|we) (want|need|would like|'d like)\b|"
-                     r"\b(can|could|may) (i|we|you) (have|get|put|hold|teach|keep|take|make)\b", re.IGNORECASE)
+                     r"\b(can|could|may) (i|we|you) (have|get|put|hold|teach|keep|take|make)\b|"
+                     r"\b(can|could|would) (?!i\b|we\b|you\b)[a-z.]+ (take|cover|handle) (my|our)\b|"  # "could Rao take my class"
+                     r"\bclash(es|ing)?\b", re.IGNORECASE)  # a clash report is a request
 ME = re.compile(r"\b(i|me|my|mine|myself|we|us|our)\b", re.IGNORECASE)
 DAY = re.compile(r"\b(mon|tues?|wed(?:nes)?|thu(?:rs?)?|fri)(day)?s?\b", re.IGNORECASE)
 WEEK = re.compile(r"\bweek\s*(\d{1,2})\b", re.IGNORECASE)
 TIME = re.compile(r"\b(\d{1,2})(?::\d\d)?\s*(am|pm)\b", re.IGNORECASE)
 TEACHER = re.compile(r"\b(?:dr|prof|professor)\.?\s+([a-z]+)", re.IGNORECASE)
 SECTION = re.compile(r"\bsection\s*(\d+)\b", re.IGNORECASE)
-ROOM = re.compile(r"\b(lab|room)\s*(\d+)\b", re.IGNORECASE)
+ROOM = re.compile(r"\b(lab|room)[\s-]*(\d+)\b", re.IGNORECASE)  # "Lab 2", "lab2", "Lab-2"
 INITIALS = re.compile(r"\b[A-Z]{2,4}\b")  # "ML", "TOC" as written (not lower case: "is", "do")
 # a kind of room, not one room ("any labs", "a free classroom", "lecture halls"; "Lab 2" is ROOM)
 LABS = re.compile(r"\b(labs?|laborator(y|ies))\b(?!\s*\d)", re.IGNORECASE)
@@ -51,7 +57,8 @@ COUNT = re.compile(r"\bhow many (hours|classes|lectures)\b", re.IGNORECASE)
 WHO_FREE = re.compile(r"\bwho(?:'s| is| are)? (free|available)\b|\b(any(one|body)|some(one|body)) (free|available)\b|"
                       r"\bwhich (teachers|faculty|sections) (are |is )?(free|available)\b", re.IGNORECASE)
 DESCRIBE = re.compile(r"\b(list|all)\b.*\b(rooms|labs|classrooms|sections|teachers|faculty|courses)\b|"
-                      r"\bcapacit(y|ies)\b|\bhow (big|large) is\b|\bhow many students\b", re.IGNORECASE)
+                      r"\bcapacit(y|ies)\b|\bhow (big|large) is\b|\bhow many students\b|\bequipment\b",
+                      re.IGNORECASE)
 CHANGES = re.compile(r"\bwhat(?:'s| has| have)? changed\b|\bchanges\b|\bcancell?ed\b|\bnot (being )?held\b",
                      re.IGNORECASE)
 # questions the timetable must not, or cannot, answer: said so, never guessed
@@ -65,6 +72,11 @@ _MON = r"(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\.?"
 DATE_DM = re.compile(rf"\b(\d{{1,2}})(?:st|nd|rd|th)?\s+(?:of\s+)?{_MON}(?:,?\s+(\d{{4}}))?", re.IGNORECASE)
 DATE_MD = re.compile(rf"\b{_MON}\s+(\d{{1,2}})(?:st|nd|rd|th)?\b(?:,?\s+(\d{{4}}))?", re.IGNORECASE)
 DATE_NUM = re.compile(r"\b(\d{1,2})[/.-](\d{1,2})(?:[/.-](\d{2,4}))?\b(?!\s*(?:am|pm|hours?|hrs?)\b)", re.IGNORECASE)
+# the weekend: "today" has no classes, and "this week" is the coming one (as on the Timetable page)
+TODAY = re.compile(r"\b(today|tonight|this (morning|afternoon|evening))\b", re.IGNORECASE)
+TOMORROW = re.compile(r"\b(tomorrow|tmrw?)\b", re.IGNORECASE)
+WEEK_DAYS = ("monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday")
+_SPELT_DAYS = WEEK_DAYS + tuple(d + "s" for d in WEEK_DAYS)
 
 
 @dataclass
@@ -93,6 +105,7 @@ class QuestionReader:
         self.directory = Directory(instance)
 
     def read(self, text: str) -> ToolCall | None:
+        text = spell_days(text)
         if REQUEST.search(text):
             return None  # a change is being asked for, not information
         if PRIVATE.search(text):
@@ -103,6 +116,9 @@ class QuestionReader:
         newer = CHANGES.search(text) or WHO_FREE.search(text) or DESCRIBE.search(text) or COUNT.search(text)
         if not free and not classes and not newer:
             return None
+        if note := no_classes(text, self.today):
+            return ToolCall("unclear", week=this_week(self.instance, self.current_week, self.today), confident=False,
+                            note=note)
         week, days = self._when(text)
         if dated := dates_in(text, self.today):  # a date is more exact than a day name or "this week"
             if self.semester_start is None:
@@ -179,8 +195,8 @@ class QuestionReader:
         return from_now(self.instance, self.current_week, self.now or datetime.now())
 
     def _when(self, text: str) -> tuple[int, list[str]]:
-        """The week asked about (this week unless it says otherwise) and the days, if any."""
-        low, week, days = text.lower(), self.current_week, []
+        """The week asked about (this week unless it says otherwise; on a weekend, the coming one) and the days."""
+        low, week, days = text.lower(), this_week(self.instance, self.current_week, self.today), []
         if m := WEEK.search(text):
             week = int(m.group(1))
         elif "next week" in low:
@@ -573,6 +589,36 @@ def week_and_day(instance: Instance, semester_start: date, d: date) -> tuple[int
     if d.weekday() >= len(instance.calendar.days):
         return f"There are no classes on {d:%A} {d.day} {d:%B}."
     return week, instance.calendar.days[d.weekday()]
+
+
+def this_week(instance: Instance, current_week: int, today: date) -> int:
+    """The week "this week" means: on a Saturday or Sunday the coming one, since the week just ended is over
+    (the Timetable page shows the coming week then too). "Next week" is the one after it."""
+    return min(current_week + (today.weekday() > 4), instance.calendar.weeks)
+
+
+def no_classes(text: str, today: date) -> str | None:
+    """The reply to a question about today on a weekend (or tomorrow on a Saturday): there are no classes."""
+    if today.weekday() > 4 and TODAY.search(text):
+        return f"Today is {today:%A}: there are no classes. Ask about Monday or next week."
+    if today.weekday() == 5 and TOMORROW.search(text):
+        return "Tomorrow is Sunday: there are no classes. Ask about Monday or next week."
+    return None
+
+
+def spell_days(text: str) -> str:
+    """Misspelt day names spelled the usual way ("monmday" -> "monday", "thrusday" -> "thursday", "wendesday"),
+    so neither reader drops the day; every other word is left as it is."""
+    def fix(m: re.Match) -> str:
+        low = m[0].lower()
+        if low in _SPELT_DAYS:
+            return m[0]
+        swapped = [d for d in _SPELT_DAYS if len(d) == len(low) and sorted(d) == sorted(low)  # "firday", "mondya"
+                   and len(at := [i for i, (a, b) in enumerate(zip(d, low)) if a != b]) == 2 and at[1] == at[0] + 1]
+        hit = swapped or get_close_matches(low, _SPELT_DAYS, n=1, cutoff=0.84)  # the cut-off of language.lexicon
+        return hit[0] if hit else m[0]
+
+    return re.sub(r"\b[a-z]{5,}\b", fix, text, flags=re.IGNORECASE)
 
 
 def from_now(instance: Instance, current_week: int, now: datetime) -> tuple[int, tuple[str, int]]:

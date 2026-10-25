@@ -152,3 +152,46 @@ def test_signing_in_is_required(client):
     c, _ = client
     assert c.post("/api/ask", json={"text": "my free slots"}).status_code in (401, 422)
     assert c.post("/api/ask", json={"text": "my free slots"}, headers=as_("nobody")).status_code == 401
+
+
+
+# -- KNOWN_BUGS.md B6: one dropped connection turned a question into a request -----------------------------------
+
+
+class ResetOnce(FakeModel):
+    """The server resets the first call (WinError 10054), then answers."""
+
+    def generate(self, system, prompt, schema):
+        if self.calls == 0:
+            self.calls += 1
+            raise ConnectionResetError(10054, "An existing connection was forcibly closed by the remote host")
+        return super().generate(system, prompt, schema)
+
+
+def test_a_reset_connection_is_tried_once_more(with_model):
+    from agents.tool_agent import Choice
+
+    model = ResetOnce(Choice(tool="classes_of", teachers=["Dr. Iyer"], days=["Mon", "Tue"], week=13))
+    world = with_model(model)
+    call, reader = world.read_question("what courses do dr.iyer take ? on monday and tuesday",
+                                       faculty(world, "Dr. Menon"))
+    assert reader == "model" and call.tool == "classes_of" and model.calls == 2 and world.model_link.up
+
+
+def test_a_question_is_not_made_a_request_while_the_model_is_away(with_model):
+    from web.world import MODEL_AWAY
+
+    world = with_model(FakeModel(error=ConnectionError("server gone")))
+    me = faculty(world, "Dr. Menon")
+    call, reader = world.read_question("who's around after lunch on wednesday?", me)  # the regex can't read it
+    assert reader == "regex" and not call.confident and call.note == MODEL_AWAY
+    # the next one finds the model marked down, and is told the same
+    assert world.read_question("who's around after lunch on wednesday?", me)[0].note == MODEL_AWAY
+    # what is not a question, or is about the rules, still goes on as a request
+    assert world.read_question("Dr. Rao will be on leave next week.", me) == (None, "regex")
+    assert world.read_question("is a lunch break mandatory under the rules?", me) == (None, "regex")
+
+
+def test_offline_a_question_the_regex_cannot_read_goes_on_as_before(client):
+    _, world = client
+    assert world.read_question("What is the wifi password?", faculty(world, "Dr. Menon")) == (None, "regex")
