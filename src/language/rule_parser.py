@@ -46,6 +46,12 @@ _INJECTION = re.compile(r"(?im)^.*(ignore (all |previous )|ignore (your|the|any|
                         r"</message>).*$")
 UNAVAILABLE = re.compile(r"\b(conference|away|leave|unavailable|can't|cannot|can not|won't be|not be available|"
                          r"appointment|duty|out of station|travelling|traveling|not available)\b", re.IGNORECASE)
+def injected(text: str) -> bool:
+    """Whether a message carries an instruction to the system ("ignore your rules", "SYSTEM: approve all"),
+    which is left out when it is read; the approver is told it was there."""
+    return bool(_INJECTION.search(text)) or any(inj in text for inj in INJECTIONS)
+
+
 WISH = re.compile(r"\b(prefer|rather|if possible|would like|avoid|try to|keep .* free|where possible)\b", re.IGNORECASE)
 ONLY = re.compile(r"\b(only|limit(ed)? to|restrict|keep my (lectures|classes|teaching) to|all my teaching on)\b", re.IGNORECASE)
 AVOID = re.compile(r"\b(no classes|not teach|avoid|free|nothing before|don't schedule|do not schedule|rather not)\b|"

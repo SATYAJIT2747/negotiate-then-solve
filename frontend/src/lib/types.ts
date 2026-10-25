@@ -61,6 +61,13 @@ export interface CaseSummary {
   running: boolean;
   /** Waiting for the model to read it (the server holds a change while the model is away). */
   held?: boolean;
+  /** Who read the request: the fine-tuned model, the rule parser (fast path, or the stand-in while the model was
+   * away), or a form (intents given). */
+  reader?: "model" | "rules" | "form" | null;
+  /** The message carried an instruction to the system ("ignore your rules"), left out when it was read. */
+  injection?: boolean;
+  /** Read by the rules though the app runs with a model: worth checking before approving. */
+  stand_in?: boolean;
 }
 
 export interface ConstraintView {

@@ -138,6 +138,17 @@ export function ApprovalCard({ c, onDone, compact = false }: { c: CaseDetail; on
               , which is still waiting: approve or reject that first.
             </p>
           )}
+          {c.stand_in && (
+            <p className="mt-1 text-[12.5px] text-warn">
+              Read by the rule-based stand-in, not the model: check what it understood before approving.
+            </p>
+          )}
+          {c.injection && (
+            <p className="mt-1 text-[12.5px] text-warn">
+              The message contained an instruction to the system (such as “ignore your rules”); it was left out
+              when the request was read.
+            </p>
+          )}
         </div>
         <div className="flex gap-2">
           <Button icon={XCircle} onClick={() => setRejecting(!rejecting)} disabled={!!busy}>

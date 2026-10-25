@@ -71,7 +71,7 @@ from language.intents import ClubRef, Compiled, IntentOutput, compile_intents
 from language.intents import ExtraClass as ExtraIntent
 from language.intents import Swap as SwapIntent
 from language.parsing import ParseResult
-from language.rule_parser import RuleParser
+from language.rule_parser import RuleParser, injected
 
 from .store import EXTRA_PREFIX, Store
 
@@ -257,6 +257,19 @@ class Orchestrator:
         case.route = "system_two"
         return self._read(case, self.parser)
 
+    def _reader(self, case: Case) -> str:
+        """Who read the request: "form" (intents given), "rules" (the rule parser: the fast path, or the stand-in
+        while the model is away) or "model". A parser that does not say counts as the model unless it is the
+        rule parser itself (offline)."""
+        if case.form is not None:
+            return "form"
+        if case.route.startswith("fast"):
+            return "rules"
+        said = getattr(self.parser, "reader", None)
+        if callable(said) and (who := said()):
+            return who
+        return "rules" if isinstance(self.parser, RuleParser) else "model"
+
     def _read(self, case: Case, parser) -> ParseResult:
         """Intents resolved against the published timetable when ``parser`` reads them, else the plain parse."""
         compile_ = getattr(parser, "compile", None)
@@ -282,6 +295,9 @@ class Orchestrator:
         t = time.perf_counter()
         case.parse = self._parse(case)
         case.timings["parse"] = time.perf_counter() - t
+        case.routing["reader"] = self._reader(case)
+        if injected(request.raw_text):
+            case.routing["injection"] = True
         self._advance(case, S.CLASSIFIED, route=case.route, action=case.parse.action.value,
                       routing=case.routing, seconds=round(case.timings["parse"], 3))
         action = case.parse.action

@@ -109,6 +109,7 @@ class Fallback:
         self.link, self.build, self.backup, self.name = link, build, backup, name
         self._primary: Any = None
         self._for: Any = None  # the client the primary was built on
+        self._used = threading.local()  # who answered this thread's last call: "model" or "rules"
 
     def primary(self) -> Any | None:
         if not self.link.usable():
@@ -121,13 +122,20 @@ class Fallback:
         p = self.primary()
         if p is not None:
             try:
-                return getattr(p, method)(*args, **kwargs)
+                out = getattr(p, method)(*args, **kwargs)
+                self._used.who = "model"
+                return out
             except Exception as e:  # noqa: BLE001 - the stand-in answers instead
                 if _outage(e):
                     self.link.failed(e)
                 print(f"[model] {self.name}: {type(e).__name__}: {str(e)[:160]}; rule-based stand-in used",
                       flush=True)
+        self._used.who = "rules"
         return getattr(self.backup, method)(*args, **kwargs)
+
+    def reader(self) -> str | None:
+        """Who answered this thread's last call: "model", or "rules" (the stand-in)."""
+        return getattr(self._used, "who", None)
 
     # the methods the pipeline calls
     def parse(self, *args, **kwargs):
@@ -140,7 +148,10 @@ class Fallback:
         if p is None or not hasattr(p, "compile"):
             return None
         try:
-            return p.compile(*args, **kwargs)
+            out = p.compile(*args, **kwargs)
+            if out is not None:
+                self._used.who = "model"
+            return out
         except Exception as e:  # noqa: BLE001 - the plain parse (and its stand-in) answers instead
             if _outage(e):
                 self.link.failed(e)

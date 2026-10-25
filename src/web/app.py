@@ -140,7 +140,12 @@ def _summary(w: World, r: Request, case: Case | None) -> dict:
             "escalated_to": case.outcome.escalation.to if case and case.outcome and case.outcome.escalation else None,
             # who a forwarded message went to, and whether the coordinator has answered it yet
             "forwarded_to": case.forwarded_to if case else None,
-            "handled": bool(case and case.handled)}
+            "handled": bool(case and case.handled),
+            # who read the request ("model", "rules", "form"), and whether it carried an instruction to the system
+            "reader": case.routing.get("reader") if case else None,
+            "injection": bool(case and case.routing.get("injection")),
+            # read by the rules though the app runs with a model (offline, the rules read everything)
+            "stand_in": bool(case and case.routing.get("reader") == "rules" and w.parser_mode in ("gemini", "local"))}
 
 
 def _case_detail(w: World, case: Case) -> dict:
