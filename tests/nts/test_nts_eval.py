@@ -119,3 +119,25 @@ def test_hours_in_text():
 def test_hours_said_as_free_skip_busy_sentences():
     text = "You are free at:\n* 9 am\n* 11 am\nYou are busy at 1 pm and 4 pm. Your lecture starts at 10 am."
     assert free_hours_said(text) == {0, 2}
+
+
+def test_a_spent_daily_quota_stops_the_suite(store):
+    import pytest
+
+    from nts.eval.runner import QuotaSpent
+
+    class Spent:
+        name = "spent"
+
+        def chat(self, messages, tools):
+            raise RuntimeError("gemini: the daily quota of all 4 key(s) is spent")
+
+    suite = build_suite(store.world, per_family=1, seed=0, families=["q_free", "away"])
+    with pytest.raises(QuotaSpent, match="after 0 of 2"):
+        run_suite(suite, Spent(), store, COORDINATOR, Tracer())
+
+    class Broken(Spent):
+        def chat(self, messages, tools):
+            raise RuntimeError("connection refused")
+
+    assert [v.status for v in run_suite(suite, Broken(), store, COORDINATOR, Tracer())] == ["model_error"] * 2

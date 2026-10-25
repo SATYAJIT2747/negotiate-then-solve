@@ -25,6 +25,10 @@ from nts.tools import ALL_TOOLS, Registry
 from .scenarios import Scenario
 
 
+class QuotaSpent(RuntimeError):
+    """The model's daily quota ran out mid-suite: the suite stops (no report), and is run again after the reset."""
+
+
 @dataclass
 class Verdict:
     scenario: str
@@ -54,6 +58,8 @@ def run_suite(suite: list[Scenario], model: Model, store: Store, agent: AgentCon
             fork.commit(draft)
         before = fork.world
         out = best_of(harness, best, agent, sc.request, fork, sc.actor, sc.week, people=copy.deepcopy(sc.cast))
+        if out.status == "model_error" and "daily quota" in out.detail:  # every later scenario would fail the same way
+            raise QuotaSpent(f"{out.detail} (after {i - 1} of {len(suite)} scenarios; their episodes are recorded)")
         after = approve(fork, out, tracer, by="eval") if out.status == "submitted" else None
         failures = sc.judge(out, before, after)
         v = Verdict(sc.name, sc.family, out.episode_id, out.status, not failures, failures, out.turns, out.tool_calls,
