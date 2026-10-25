@@ -574,3 +574,19 @@ def test_who_read_a_request_and_an_injected_instruction_are_recorded(world):
     orch.system_one, orch.fast_parser = Sure(), Counting(orch.parser)
     f = orch.submit(req("R-X", owners["R-B"], "REQUEST-B"))
     assert f.routing["reader"] == "rules" and "injection" not in f.routing  # the fast path is the rule parser
+
+
+def test_a_teachers_report_about_a_room_is_forwarded_not_refused(world):
+    """"The AC in Room 101 is not working": read as closing the room, which a teacher may not do; it is a report."""
+    sc, orch, store, owners = world
+    room = sc.instance.rooms[0]
+    closed = DraftConstraint(type="unavailable", hard=True, scope_kind="room", scope_id=room.id, days=["Mon"])
+    orch.parser.outputs["AC is not working"] = ParseOutput(request_type="room_issue", action="compile",
+                                                           constraints=[closed])
+    c = orch.submit(req("R-AC", owners["R-A"], "The AC is not working in there, it's too hot to teach."))
+    assert c.status == S.FORWARDED and c.forwarded_to == "coordinator" and room.name in c.reply
+    assert store.current_version().version == 1  # nothing changed
+    # a change to someone else's class is still refused
+    theirs = DraftConstraint(type="unavailable", hard=True, scope_kind="faculty", scope_id=owners["R-B"], days=["Mon"])
+    orch.parser.outputs["Dr. B away"] = ParseOutput(request_type="unavailability", action="compile", constraints=[theirs])
+    assert orch.submit(req("R-AW", owners["R-A"], "Dr. B away on Monday")).status == S.REFUSED

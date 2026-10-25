@@ -257,6 +257,19 @@ class Orchestrator:
         case.route = "system_two"
         return self._read(case, self.parser)
 
+    def _room_report(self, case: Case) -> str | None:
+        """The rooms a refused request was only about ("Room 101"), when its sender may not change a room's
+        availability (a teacher, a student): what they wrote is a report for the office. None otherwise."""
+        out = case.parse.output if case.parse else None
+        if out is None or not out.constraints or case.request.role not in (Role.FACULTY, Role.GUEST_FACULTY, Role.STUDENT):
+            return None
+        if any(c.scope_kind != "room" or c.type not in ("unavailable", "avoid") for c in out.constraints):
+            return None
+        rooms = self.instance.room_by_id
+        names = list(dict.fromkeys(rooms[c.scope_id].name if c.scope_id in rooms else c.scope_id
+                                   for c in out.constraints))
+        return " and ".join(names)
+
     def _reader(self, case: Case) -> str:
         """Who read the request: "form" (intents given), "rules" (the rule parser: the fast path, or the stand-in
         while the model is away) or "model". A parser that does not say counts as the model unless it is the
@@ -313,6 +326,12 @@ class Orchestrator:
         if case.intents(CancelIntent) and action != ExpectedAction.REFUSE:
             return self._cancel(case)
         if action == ExpectedAction.REFUSE:
+            if rooms := self._room_report(case):
+                # "the AC in Room 101 is not working": a report about a room, not a change its sender may make
+                case.reply = (f"Thank you. Your report about {rooms} has been passed to the timetable office, "
+                              "which can close the room or move classes out of it.")
+                self._advance(case, S.FORWARDED, to="coordinator", report="room")
+                return case
             case.reply = f"Your request was not processed: {case.parse.refusal}. The timetable coordinator has been informed."
             self._advance(case, S.REFUSED, reason=case.parse.refusal)
             return case
