@@ -375,18 +375,20 @@ def _negotiation(world: World, rng: random.Random, now: int, agrees: bool) -> Sc
     if found is None:
         raise LookupError("no class to negotiate over")
     a, b, pb, target, pin = found
+    pa = world.timetable(target).assignment[a.id]
     owner = inst.faculty_by_id[b.faculty]
     text = rng.choice([
-        "Can you move my {f} {c} {k} to {d} at {h} {w}? It suits the students better.",
-        "{w}, I'd like my {c} {k} on {d} at {h} instead of {f}. Please arrange it.",
-        "Please shift my {c} {k} from {f} to {d} {h}, {w} only.",
+        "Can you move my {f} {c} {k} at {fh} to {d} at {h} {w}? It suits the students better.",
+        "{w}, I'd like my {c} {k} on {d} at {h} instead of {f} at {fh}. Please arrange it.",
+        "Please shift my {c} {k} from {f} {fh} to {d} {h}, {w} only.",
     ]).format(c=inst.course_title(a.course), k=a.kind.value, d=FULL_DAY[pb.day], h=hour(pb.slot),
-              f=FULL_DAY[world.timetable(target).assignment[a.id].day], w=week_phrase(rng, now, target))
+              f=FULL_DAY[pa.day], fh=hour(pa.slot), w=week_phrase(rng, now, target))
     text = text[0].upper() + text[1:]
     why = rng.choice(["I can take it at another hour that week."] if agrees else
                      ["I have a fixed commitment then.", "My lab assistant is only free at that time.",
                       "That hour was agreed with the students."])
-    cast = Cast(requester=Requester(f"It has to be {FULL_DAY[pb.day]} at {hour(pb.slot)}, sorry."),
+    cast = Cast(requester=Requester(f"I mean my {inst.course_title(a.course)} {a.kind.value} on {FULL_DAY[pa.day]} at "
+                                    f"{hour(pa.slot)}, and it has to be {FULL_DAY[pb.day]} at {hour(pb.slot)}, sorry."),
                 teachers={owner.id: Teacher(accept=agrees, why=why)})
     other = next(w for w in (target + 2, target - 2, target + 3) if 1 <= w <= inst.calendar.weeks)
 
@@ -459,8 +461,10 @@ def weekend(world: World, rng: random.Random, now: int) -> Scenario:
     tt = world.timetable(now)
     assert tt is not None
     s = rng.choice([s for s in inst.sessions if s.id in tt.assignment])
-    text = rng.choice(["Please move my {c} {k} on {d} to Saturday {w}.", "Can my {d} {c} {k} be on Saturday instead, {w}?"]
-                      ).format(c=inst.course_title(s.course), k=s.kind.value, d=FULL_DAY[tt.assignment[s.id].day],
+    p = tt.assignment[s.id]
+    text = rng.choice(["Please move my {c} {k} on {d} at {h} to Saturday {w}.",
+                       "Can my {d} {h} {c} {k} be on Saturday instead, {w}?"]
+                      ).format(c=inst.course_title(s.course), k=s.kind.value, d=FULL_DAY[p.day], h=hour(p.slot),
                                w=week_phrase(rng, now, now + 1))
 
     def check(out: Outcome, before: World, after: World | None) -> list[str]:

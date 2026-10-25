@@ -37,8 +37,9 @@ def negotiation_steps(sc, world, *, then):
     week = int(sc.name.rsplit("-w", 1)[1])
     owner = next(iter(sc.cast.teachers))
     day, slot = sc.setup[0].constraint.when.days[0], sc.setup[0].constraint.when.slots[0]
+    at = hour(world.timetable(week).assignment[a.id].slot)
     return [call("move_class", course=inst.course_title(a.course), kind=a.kind.value, on_day=on_day(world, a, week),
-                 to_day=FULL_DAY[day],
+                 at_hour=at, to_day=FULL_DAY[day],
                  to_hour=hour(slot), from_week=week, to_week=week),
             call("check_draft"),
             lambda m: call("make_offer", to=inst.faculty_by_id[owner].name, rule=blocking_rule(m),
