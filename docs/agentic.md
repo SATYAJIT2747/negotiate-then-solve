@@ -48,7 +48,7 @@ matches nothing is refused with `did_you_mean`, so the model fixes the call on i
 1. Kernel, state store, read tools, scripted model, tests. **(done)**
 2. Harness loop + budgets, telemetry, replay model: every test deterministic. **(done)**
 3. Draft and evaluate tools; the coordinator end to end on Gemini (clean first traces). **(done)**
-4. Exporters; a 4B LoRA on the traces; the same scenarios on the local model. **(code done; training run pending)**
+4. Exporters; a 4B LoRA on the traces; the same scenarios on the local model. **(done: `nts-agent-v1-read-100` passes 17/18 on `eval.jsonl` seed 0; base 4B 12/18, Gemini 3.5 Flash-Lite 15/18)**
 5. Talk tools, negotiation with simulators, API and UI.
 
 ## Running it
