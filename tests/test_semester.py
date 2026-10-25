@@ -163,6 +163,13 @@ def test_semester_api(tmp_path, monkeypatch):
 
     monkeypatch.setenv("NTS_SEMESTER_DIR", str(tmp_path))
     monkeypatch.setenv("NTS_SEMESTER_TIME", "20")
+
+    class Monday12October(date):  # the club booking below is three days ahead, whenever the test runs
+        @classmethod
+        def today(cls):
+            return date(2026, 10, 12)
+
+    monkeypatch.setattr("semester.clubs.date", Monday12October)
     c = TestClient(create_web_app(World(seed_history=False)))
     office, faculty, student = {"X-User": COORDINATOR}, {"X-User": "F-102"}, {"X-User": "ST-G-01"}
     assert c.get("/api/semester", headers=faculty).status_code == 403

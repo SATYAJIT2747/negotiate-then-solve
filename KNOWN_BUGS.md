@@ -165,7 +165,7 @@ Found while testing; they belong on their own branches from `simplify` or as Git
 | An answer to a clarifying question is read by the fast path, not by the model that asked it | `pipeline/orchestrator.py` `_parse` | open: issue drafted |
 | The answer to a clarifying question is shown glued to the original message | the request chat (frontend) | open: issue drafted |
 | System One's threshold is tuned on the classifier's labels, not on whether the regex reads correctly: 99% "right" vs 87% actually read right on the test split | `language/system_one.py` `tune_tau` | open; worked around on `simplify`: the web app takes the fast path only while the model is unreachable (`World._fast_path_now`). Before, "I want Mondays off" went to the rule parser and became a wish *for* Monday classes (also fixed there) |
-| `test_semester_api` fails from 16 October 2026 on: it books a club room on a fixed date (15 October 2026), now in the past | `tests/test_semester.py` | open: issue drafted |
+| `test_semester_api` fails from 16 October 2026 on: it books a club room on a fixed date (15 October 2026), now in the past | `tests/test_semester.py` | fixed on `simplify`: the test pins "today" for the club desk (12 October 2026) |
 | Requests stay in "received" after an error (e.g. the server resetting the connection) | the request pipeline | open: issue drafted |
 | The reader drops dates, times and attendees from room bookings ("book lab 2 on 27 oct 12 to 1 pm") | `nts-intents-v6-read100` | open |
 
