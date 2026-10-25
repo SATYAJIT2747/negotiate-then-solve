@@ -99,6 +99,8 @@ def main(argv: list[str] | None = None) -> int:
                                                        "none for a local model)")
         q.add_argument("--handbook", type=Path, default=DEFAULT_HANDBOOK, help="the regulations, for the rules tool")
         q.add_argument("--temperature", type=float, help="sampling (default 0, or 0.7 with --best-of)")
+        q.add_argument("--max-seconds", type=float, help="time budget of an episode (default: the agent's); the model "
+                                                          "never sees it, so a slow server need not cut episodes short")
     for q in (a, e):
         q.add_argument("--best-of", type=int, default=1, help="run each request n times and keep the run most agree on")
     args = p.parse_args(argv)
@@ -124,7 +126,8 @@ def handbook(args: argparse.Namespace):
 def budgeted(agent: AgentConfig, args: argparse.Namespace) -> AgentConfig:
     """Local calls cost nothing: a local model gets no token budget (the turn budget still holds)."""
     limit = args.max_tokens if args.max_tokens is not None else (agent.budgets.max_tokens if args.model == "gemini" else None)
-    return replace(agent, budgets=replace(agent.budgets, max_tokens=limit))
+    seconds = args.max_seconds if args.max_seconds is not None else agent.budgets.max_seconds
+    return replace(agent, budgets=replace(agent.budgets, max_tokens=limit, max_seconds=seconds))
 
 
 def make_model(args: argparse.Namespace) -> Model:
@@ -161,7 +164,8 @@ def evaluate(args: argparse.Namespace) -> int:
             from dotenv import load_dotenv
 
             load_dotenv(args.env)
-        suite = rewrite(suite, args.rewrite, GeminiChat(temperature=1.0), store.world, log=True, strict=True)
+        suite = rewrite(suite, args.rewrite, GeminiChat(args.gemini_model, temperature=1.0), store.world, log=True,
+                        strict=True)
     verdicts = run_suite(suite, model, store, budgeted(agent, args), default_tracer(args.telemetry),
                          progress=True, handbook=handbook(args), best=args.best_of)
     path = args.out or Path("runs/eval") / f"{model.name.replace(':', '_').replace('+', '_')}-s{args.seed}{f'-best{args.best_of}' * (args.best_of > 1)}{f'-{args.rewrite}' * bool(args.rewrite)}.json"
