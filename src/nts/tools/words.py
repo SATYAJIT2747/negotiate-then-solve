@@ -31,6 +31,14 @@ def days(ds: list[str] | None) -> str:
 
 
 def weeks(c: Constraint) -> str:
+    text = _weeks(c)
+    if c.valid.except_weeks:
+        text += " except week" + ("s " if len(c.valid.except_weeks) > 1 else " ") + joined(
+            [str(w) for w in sorted(c.valid.except_weeks)])
+    return text
+
+
+def _weeks(c: Constraint) -> str:
     lo, hi = c.valid.from_week, c.valid.to_week
     if c.when.weeks:
         return "week " + joined([str(w) for w in c.when.weeks]) if len(c.when.weeks) == 1 else \

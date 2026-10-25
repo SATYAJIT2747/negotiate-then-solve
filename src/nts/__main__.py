@@ -3,7 +3,8 @@
     python -m nts init --store runs/agentic/demo.jsonl                      # a generated department, solved
     python -m nts ask "When am I free on Tuesday?" --as "Dr. Iyer" --week 5
     python -m nts ask "Please keep my Friday afternoons free" --as Iyer --week 5 --approve
-    python -m nts ask "..." --model llama --url http://10.1.25.191:8080/v1 --adapter nts-agent-v1
+    python -m nts ask "Please move my class to Friday" --as Iyer --week 5 --talk   # you answer the agent's questions
+    python -m nts ask "..." --model llama --url http://10.1.25.191:8080/v1 --adapter nts-agent-v1-read-100 --agent coordinator-v1
     python -m nts eval --model gemini --per-family 3 --seed 0      # a scenario suite, judged; report in runs/eval
     python -m nts export --out data/agent-v1 --models gemini        # SFT / DPO rows from judged episodes
 """
@@ -16,7 +17,7 @@ import sys
 from dataclasses import replace
 from pathlib import Path
 
-from nts.agents import COORDINATOR, READER
+from nts.agents import COORDINATOR, COORDINATOR_V1, READER
 from nts.harness import AgentConfig, Harness, approve
 from nts.kernel.generator import generate_department
 from nts.kernel.instance import policy_constraints
@@ -28,7 +29,7 @@ from nts.tools.draft import OFFICE
 from nts.tools.names import Directory
 
 DEFAULT_STORE = Path("runs/agentic/demo.jsonl")
-AGENTS = {"coordinator": COORDINATOR, "reader": READER}
+AGENTS = {"coordinator": COORDINATOR, "coordinator-v1": COORDINATOR_V1, "reader": READER}
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -48,11 +49,12 @@ def main(argv: list[str] | None = None) -> int:
     a.add_argument("--week", type=int)
     a.add_argument("--approve", action="store_true", help="commit a submitted draft")
     a.add_argument("--show", action="store_true", help="print every tool call and result")
+    a.add_argument("--talk", action="store_true", help="answer the agent's questions and offers at the terminal")
     e = sub.add_parser("eval", help="run a scenario suite and judge it")
     e.add_argument("--store", type=Path, default=DEFAULT_STORE)
     e.add_argument("--week", type=int, default=5)
     e.add_argument("--per-family", type=int, default=2)
-    e.add_argument("--families", nargs="*")
+    e.add_argument("--families", nargs="*", help="default: every family (coordinator-v1: the nine without talk)")
     e.add_argument("--seed", type=int, default=0)
     e.add_argument("--out", type=Path, help="report path (default runs/eval/<model>-s<seed>.json)")
     x = sub.add_parser("export", help="training rows from judged episodes")
@@ -100,11 +102,12 @@ def make_model(args: argparse.Namespace) -> Model:
 
 
 def evaluate(args: argparse.Namespace) -> int:
-    from nts.eval import build_suite, run_suite, save
+    from nts.eval import V1_FAMILIES, build_suite, run_suite, save
 
     model = make_model(args)
     store = Store.open(args.store)
-    suite = build_suite(store.world, per_family=args.per_family, seed=args.seed, week=args.week, families=args.families)
+    families = args.families or (V1_FAMILIES if args.agent == "coordinator-v1" else None)
+    suite = build_suite(store.world, per_family=args.per_family, seed=args.seed, week=args.week, families=families)
     verdicts = run_suite(suite, model, store, budgeted(AGENTS[args.agent], args), default_tracer(args.telemetry),
                          progress=True)
     path = args.out or Path("runs/eval") / f"{model.name.replace(':', '_').replace('+', '_')}-s{args.seed}.json"
@@ -141,7 +144,12 @@ def ask(args: argparse.Namespace) -> int:
             return 2
     tracer = default_tracer(args.telemetry)
     harness = Harness(Registry(ALL_TOOLS), model, tracer)
-    out = harness.run(budgeted(AGENTS[args.agent], args), args.text, store, actor, args.week)
+    people = None
+    if args.talk:
+        from nts.people import Terminal
+
+        people = Terminal()
+    out = harness.run(budgeted(AGENTS[args.agent], args), args.text, store, actor, args.week, people=people)
     if args.show:
         for m in out.transcript[2:]:
             for c in m.tool_calls:
@@ -149,6 +157,8 @@ def ask(args: argparse.Namespace) -> int:
             if m.role == "tool":
                 print(f"  <- {m.content[:400]}")
     print(f"[{out.status}] {out.text or out.detail}")
+    if out.pending:
+        print(f"  {out.pending.kind} to {out.pending.to_name}: {out.pending.text}  (--talk to answer it)")
     print(f"episode {out.episode_id}: {out.turns} turns, {out.tool_calls} calls ({out.refused} refused), "
           f"{out.usage.prompt_tokens}+{out.usage.completion_tokens} tokens, {out.seconds:.1f} s")
     if out.status == "submitted" and args.approve:

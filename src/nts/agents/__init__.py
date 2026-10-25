@@ -14,7 +14,7 @@ READER = AgentConfig(
 - Answer briefly, in plain sentences.""",
 )
 
-COORDINATOR = AgentConfig(
+COORDINATOR_V1 = AgentConfig(  # no talk tools: what nts-agent-v1 was trained with
     name="coordinator",
     scopes=frozenset({Scope.READ, Scope.DRAFT, Scope.EVALUATE, Scope.END}),
     budgets=Budgets(max_turns=12, max_tool_calls=24),
@@ -43,4 +43,20 @@ Use names as people write them ("Dr. Iyer", "Lab 2", "Tuesday", "2 pm"); "me" is
 If a tool refuses a name, use a name it suggests. Keep messages short and plain.""",
 )
 
-__all__ = ["COORDINATOR", "READER"]
+_UNCLEAR = "4. If the request is unclear (which class? which week?), do not guess: answer with your question instead."
+assert _UNCLEAR in COORDINATOR_V1.prompt
+
+COORDINATOR = AgentConfig(
+    name="coordinator",
+    scopes=frozenset({Scope.READ, Scope.DRAFT, Scope.EVALUATE, Scope.TALK, Scope.END}),
+    budgets=Budgets(max_turns=14, max_tool_calls=28, max_tokens=40_000),  # asks and offers take more turns
+    prompt=COORDINATOR_V1.prompt.replace(_UNCLEAR, """4. If the request is unclear (which class? which week?), do not guess: ask_requester one short question,
+   then go on with the answer.
+5. If check_draft says a rule another teacher set blocks it (it gives who set it and a number), you may
+   make_offer to that teacher: ask them to waive it for those weeks, and say why. If they agree, call
+   check_draft again and submit. If they say no, do not ask again: decline, or ask the requester whether
+   another time would do. Rules marked "already agreed" are not offered: escalate those.
+6. message_party only to tell a teacher something they must know; it gets no answer."""),
+)
+
+__all__ = ["COORDINATOR", "COORDINATOR_V1", "READER"]

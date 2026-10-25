@@ -7,6 +7,11 @@ day asked about, a class that exists), worded from several templates, so the sam
 as varied training requests. The checks look at the outcome and, when the episode was submitted and
 committed, at the committed state: what the timetable now is, not what the model said it did. Only
 the question families look at the reply's text.
+
+A scenario can add rules to the store before it runs (``setup``: another teacher's firm rule that
+blocks the request) and bring the people the agent may talk to (``cast``: a requester who knows what
+they meant, a teacher who agrees to waive their rule or does not). Without a cast an ask pauses the
+episode ("waiting").
 """
 
 from __future__ import annotations
@@ -17,11 +22,24 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 
 from nts.harness import Outcome
-from nts.kernel.schemas import ConstraintType
-from nts.state import World
+from nts.kernel.instance import Session
+from nts.kernel.schemas import (
+    Constraint,
+    ConstraintType,
+    Placement,
+    Source,
+    Tier,
+    Validity,
+    When,
+)
+from nts.kernel.schemas import Scope as Who
+from nts.kernel.solver import TimetableSolver
+from nts.people import Cast, Requester, Teacher
+from nts.state import Change, ConstraintAdded, World
 from nts.tools.draft import OFFICE
 from nts.tools.names import FULL_DAY, hour
 from nts.tools.read import _Week
+from nts.tools.talk import REQUESTER
 
 Check = Callable[[Outcome, World, World | None], list[str]]  # (outcome, world before, world committed) -> failures
 
@@ -35,6 +53,8 @@ class Scenario:
     request: str
     expect: frozenset[str]  # statuses that can pass
     checks: list[Check] = field(default_factory=list)
+    setup: list[Change] = field(default_factory=list)  # committed to the store's fork before the episode
+    cast: Cast | None = None  # who answers the agent's asks
 
     def judge(self, out: Outcome, before: World, after: World | None) -> list[str]:
         failures = [] if out.status in self.expect else [f"status {out.status}, expected {' or '.join(sorted(self.expect))}"]
@@ -279,13 +299,135 @@ def ambiguous(world: World, rng: random.Random, now: int) -> Scenario:
     def check(out: Outcome, before: World, after: World | None) -> list[str]:
         return ["drafted a change without asking which class"] if added(out) else []
 
-    return Scenario(f"ambiguous-{t.id}", "ambiguous", t.id, now, text, frozenset({"answered", "declined"}), [check])
+    return Scenario(f"ambiguous-{t.id}", "ambiguous", t.id, now, text, frozenset({"answered", "declined", "waiting"}),
+                    [check])
+
+
+def asked(out: Outcome, to: str, kind: str) -> bool:
+    return any(a.to == to and a.kind == kind for a, _ in out.asks)
+
+
+def clarify(world: World, rng: random.Random, now: int) -> Scenario:
+    """An unclear request, and a requester who says which class when asked."""
+    inst = world.instance
+    tt = world.timetable(now)
+    assert tt is not None
+    t = rng.choice([f for f in inst.faculty if len(classes(world, f.id, now)) > 2])
+    s = rng.choice([s for s in inst.sessions if s.faculty == t.id and s.duration == 1 and s.id in tt.assignment])
+    p = tt.assignment[s.id]
+    to_day = rng.choice([d for d in inst.calendar.days if d != p.day])
+    text = rng.choice(["Please move my class to {t}.", "Can one of my classes go to {t} this week?",
+                       "I need a class shifted to {t}."]).format(t=FULL_DAY[to_day])
+    answer = (f"I mean my {inst.course_title(s.course)} {s.kind.value} on {FULL_DAY[p.day]} at {hour(p.slot)}. "
+              f"Any time on {FULL_DAY[to_day]} is fine, just this week.")
+
+    def check(out: Outcome, before: World, after: World | None) -> list[str]:
+        if after is None:
+            return ["not committed"]
+        bad = [] if asked(out, REQUESTER, "question") else ["did not ask which class"]
+        got = after.timetable(now).assignment.get(s.id)
+        if not got or got.day != to_day:
+            bad.append(f"the class is on {got.day if got else 'no day'} in week {now}")
+        other = now + 2
+        if after.timetable(other).assignment.get(s.id) != before.timetable(other).assignment.get(s.id):
+            bad.append(f"moved in week {other} too")
+        return bad
+
+    return Scenario(f"clarify-{s.id}", "clarify", t.id, now, text, frozenset({"submitted"}), [check],
+                    cast=Cast(requester=Requester(answer)))
+
+
+def _blocked(world: World, rng: random.Random, now: int) -> tuple[Session, Session, Placement, int, Constraint] | None:
+    """A class of one teacher (a) the requester wants moved to the hour of another teacher's class (b) in
+    the same section, which b's owner pinned there with a firm rule; solvable once the pin is waived."""
+    inst = world.instance
+    target = rng.choice([now, now + 1])
+    tt = world.timetable(target)
+    assert tt is not None
+    same = [s for s in inst.sessions if s.duration == 1 and s.id in tt.assignment
+            and all(t.assignment.get(s.id) == tt.assignment[s.id] for t in world.timetables.values())]
+    pairs = [(a, b) for a in same for b in same if a.faculty != b.faculty and set(a.groups) & set(b.groups)
+             and tt.assignment[a.id].day != tt.assignment[b.id].day]
+    rng.shuffle(pairs)
+    for a, b in pairs[:30]:
+        pb = tt.assignment[b.id]
+        busy = any(x.faculty == a.faculty and (q := tt.assignment.get(x.id)) and q.day == pb.day
+                   and q.slot <= pb.slot < q.slot + x.duration for x in inst.sessions)
+        if busy:
+            continue
+        pin = Constraint(id=f"pin-{b.id}", type=ConstraintType.PREFER, hard=True, tier=Tier.OPERATIONAL,
+                         owner=b.faculty, scope=Who(session=b.id), when=When(days=[pb.day], slots=[pb.slot]),
+                         source=Source(request="the only hour that suits my class"))
+        want = Constraint(id="want", type=ConstraintType.PREFER, hard=True, tier=Tier.OPERATIONAL, owner=a.faculty,
+                          scope=Who(session=a.id), when=When(days=[pb.day], slots=[pb.slot]),
+                          valid=Validity(from_week=target, to_week=target))
+        waived = pin.model_copy(update={"valid": Validity(except_weeks=[target])})
+        solver = TimetableSolver(inst, [*world.constraints.values(), waived, want], week=target,
+                                 baseline=tt.assignment, skip=tt.cancelled, time_limit=10, presolve=False)
+        if solver.solve().ok:
+            return a, b, pb, target, pin
+    return None
+
+
+def _negotiation(world: World, rng: random.Random, now: int, agrees: bool) -> Scenario:
+    inst = world.instance
+    found = _blocked(world, rng, now)
+    if found is None:
+        raise LookupError("no class to negotiate over")
+    a, b, pb, target, pin = found
+    owner = inst.faculty_by_id[b.faculty]
+    text = rng.choice([
+        "Can you move my {f} {c} {k} to {d} at {h} {w}? It suits the students better.",
+        "{w}, I'd like my {c} {k} on {d} at {h} instead of {f}. Please arrange it.",
+        "Please shift my {c} {k} from {f} to {d} {h}, {w} only.",
+    ]).format(c=inst.course_title(a.course), k=a.kind.value, d=FULL_DAY[pb.day], h=hour(pb.slot),
+              f=FULL_DAY[world.timetable(target).assignment[a.id].day], w=week_phrase(rng, now, target))
+    text = text[0].upper() + text[1:]
+    why = rng.choice(["I can take it at another hour that week."] if agrees else
+                     ["I have a fixed commitment then.", "My lab assistant is only free at that time.",
+                      "That hour was agreed with the students."])
+    cast = Cast(requester=Requester(f"It has to be {FULL_DAY[pb.day]} at {hour(pb.slot)}, sorry."),
+                teachers={owner.id: Teacher(accept=agrees, why=why)})
+    other = next(w for w in (target + 2, target - 2, target + 3) if 1 <= w <= inst.calendar.weeks)
+
+    def check(out: Outcome, before: World, after: World | None) -> list[str]:
+        bad = [] if asked(out, owner.id, "offer") else [f"did not ask {owner.name}"]
+        if not agrees:
+            return bad
+        if after is None:
+            return [*bad, "not committed"]
+        got = after.timetable(target).assignment.get(a.id)
+        if not got or (got.day, got.slot) != (pb.day, pb.slot):
+            bad.append(f"the class is not on {pb.day} at {hour(pb.slot)} in week {target}")
+        if not any(c.hard and c.scope.session == b.id and c.active_in(other) for c in after.constraints.values()):
+            bad.append(f"{owner.name}'s rule is gone in week {other} too")
+        if after.timetable(other).assignment.get(b.id) != before.timetable(other).assignment.get(b.id):
+            bad.append(f"{owner.name}'s class moved in week {other} too")
+        return bad
+
+    family = "negotiate" if agrees else "negotiate_refused"
+    expect = frozenset({"submitted"}) if agrees else frozenset({"declined", "escalated", "answered"})
+    return Scenario(f"{family}-{a.id}-w{target}", family, a.faculty, now, text, expect, [check],
+                    setup=[ConstraintAdded(constraint=pin)], cast=cast)
+
+
+def negotiate(world: World, rng: random.Random, now: int) -> Scenario:
+    """Another teacher's firm rule blocks the request, and they agree to waive it for that week."""
+    return _negotiation(world, rng, now, agrees=True)
+
+
+def negotiate_refused(world: World, rng: random.Random, now: int) -> Scenario:
+    """... and they do not: the agent should ask, then decline or escalate."""
+    return _negotiation(world, rng, now, agrees=False)
 
 
 FAMILIES: dict[str, Callable[[World, random.Random, int], Scenario]] = {
     "q_free": q_free, "q_classes": q_classes, "away": away, "preference": preference, "move": move,
     "room_closed": room_closed, "not_allowed": not_allowed, "impossible": impossible, "ambiguous": ambiguous,
+    # with talk tools (appended, so the suites of the families above stay as they were)
+    "clarify": clarify, "negotiate": negotiate, "negotiate_refused": negotiate_refused,
 }
+V1_FAMILIES = list(FAMILIES)[:9]  # what coordinator-v1 (no talk tools) was evaluated on
 
 
 def build_suite(world: World, *, per_family: int = 2, seed: int = 0, week: int = 5,
@@ -297,7 +439,10 @@ def build_suite(world: World, *, per_family: int = 2, seed: int = 0, week: int =
         for _ in range(per_family * 5):
             if sum(s.family == name for s in out) == per_family:
                 break
-            s = FAMILIES[name](world, rng, week)
+            try:
+                s = FAMILIES[name](world, rng, week)
+            except LookupError:  # nothing in this department fits the family this time
+                continue
             if s.name not in seen:
                 seen.add(s.name)
                 out.append(s)

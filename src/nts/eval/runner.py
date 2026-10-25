@@ -1,6 +1,7 @@
 """Run a suite of scenarios with one model, judge each episode, and record the verdicts as telemetry.
 
-Each scenario runs on a fork of the same store, so every one starts from the same state. A submitted
+Each scenario runs on a fork of the same store, so every one starts from the same state (plus the
+scenario's own setup), with a fresh copy of its cast to answer the agent's asks. A submitted
 draft is approved (committed through the kernel) so the checks can look at the committed state; the
 approval and the verdict are both recorded on the episode's trace ("approval", "evaluation" spans),
 which is what labels the episode for training.
@@ -8,6 +9,7 @@ which is what labels the episode for training.
 
 from __future__ import annotations
 
+import copy
 import json
 from collections import defaultdict
 from dataclasses import asdict, dataclass
@@ -43,8 +45,13 @@ def run_suite(suite: list[Scenario], model: Model, store: Store, agent: AgentCon
     verdicts = []
     for i, sc in enumerate(suite, 1):
         fork = store.fork()
+        if sc.setup:
+            draft = fork.draft("system", f"setup-{sc.name}")
+            for ch in sc.setup:
+                draft.add(ch)
+            fork.commit(draft)
         before = fork.world
-        out = harness.run(agent, sc.request, fork, sc.actor, sc.week)
+        out = harness.run(agent, sc.request, fork, sc.actor, sc.week, people=copy.deepcopy(sc.cast))
         after = approve(fork, out, tracer, by="eval") if out.status == "submitted" else None
         failures = sc.judge(out, before, after)
         v = Verdict(sc.name, sc.family, out.episode_id, out.status, not failures, failures, out.turns, out.tool_calls,

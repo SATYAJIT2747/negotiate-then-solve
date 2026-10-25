@@ -2,7 +2,8 @@
 
 ``check_draft`` re-solves every timetable the draft's new rules touch, as a repair of the timetable
 that runs there now (moving as few classes as it can), and says in words what moves, who else it
-affects, which wishes are not met, or, when it cannot be done, which rules clash. The timetables it
+affects, which wishes are not met, or, when it cannot be done, which rules clash. A clashing rule
+another teacher set is numbered, so the agent can ask them to waive it (``make_offer``). The timetables it
 found are kept (``ctx.scratch["check"]``) for ``submit``, which accepts them only for the exact draft
 version they were solved for.
 """
@@ -15,12 +16,13 @@ from pydantic import BaseModel
 
 from nts.kernel.schemas import Placement
 from nts.kernel.solver import SolverTimeout, TimetableSolver
-from nts.state import TimetableSet, World
+from nts.state import TimetableSet
 from nts.state.store import touched
 
 from . import words
 from .read import _at
 from .registry import Context, Refusal, Scope, tool
+from .talk import number_theirs, waived
 
 TIME_LIMIT = 20.0
 MAX_LISTED = 15  # moves listed one by one; past that, a count
@@ -49,7 +51,8 @@ def check_draft(ctx: Context, args: CheckDraft) -> dict:
     if not added and not removed:
         raise Refusal("empty_draft", "the draft has no changes yet")
     ours = {c.id: n for n, ids in ctx.scratch.get("changes", {}).items() for c in added if c.id in ids}
-    weeks = set().union(*(touched(after, c) for c in added))  # removing a rule never breaks a timetable
+    # removing or waiving a rule never breaks a timetable
+    weeks = set().union(*(touched(after, c) for c in added if not waived(c.id)))
     if not weeks:
         ctx.scratch["check"] = Checked(after.version, True, [])
         return {"ok": True, "applies_to": "no timetable changes", "classes_moved": 0, "moves": [],
@@ -75,7 +78,7 @@ def check_draft(ctx: Context, args: CheckDraft) -> dict:
             return {"ok": False, "why": "the solver ran out of time; try a smaller change"}
         if not result.ok:
             ctx.scratch["check"] = Checked(after.version, False, [])
-            return _clash(after, solver, ours, ws)
+            return _clash(ctx, solver, ours, ws)
         assert result.assignment is not None
         sets += [TimetableSet(week=x, assignment=result.assignment, cancelled=sorted(now.cancelled)) for x in ws]
         for sid, p in result.assignment.items():
@@ -97,18 +100,29 @@ def check_draft(ctx: Context, args: CheckDraft) -> dict:
     return out
 
 
-def _clash(after: World, solver: TimetableSolver, ours: dict[str, int], ws: list[int | None]) -> dict:
+def _clash(ctx: Context, solver: TimetableSolver, ours: dict[str, int], ws: list[int | None]) -> dict:
     try:
         core = solver.core(solver.hard_ids) or []
     except SolverTimeout:
         core = []
+    after = ctx.state
     inst = after.instance
-    rules = [{"rule": words.constraint(inst, after.constraints[c]),
-              **({"your_change": ours[c]} if c in ours else {"set_by": "already agreed"})} for c in core]
+    blocked = [] if None in ws else sorted(w for w in ws if w is not None)  # [] : the whole term
+
+    def by(cid: str) -> dict:
+        if cid in ours:
+            return {"your_change": ours[cid]}
+        owner = after.constraints[cid].owner
+        if owner in inst.faculty_by_id and owner != ctx.actor:
+            return {"set_by": inst.faculty_by_id[owner].name, "number": number_theirs(ctx, cid, blocked)}
+        return {"set_by": "already agreed"}
+
+    rules = [{"rule": words.constraint(inst, after.constraints[c]), **by(c)} for c in core]
     return {"ok": False, "applies_to": _span([ws]),
             "why": "these rules cannot all hold at once" if rules else "the draft cannot be done",
             "clashing": rules,
-            "next": "retract or soften (firm=false) one of your changes, or decline or escalate the request"}
+            "next": "retract or soften (firm=false) one of your changes, ask the owner of a numbered rule to waive it "
+                    "(make_offer), or decline or escalate the request"}
 
 
 def _span(groups) -> str:

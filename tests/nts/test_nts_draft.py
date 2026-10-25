@@ -3,7 +3,7 @@ from dataclasses import replace
 import pytest
 from test_nts_state import away, busy_teacher
 
-from nts.agents import COORDINATOR
+from nts.agents import COORDINATOR, COORDINATOR_V1
 from nts.harness import Budgets, Harness
 from nts.models import ScriptedModel, call, say
 from nts.protocol import UNPARSED, ToolCall
@@ -180,4 +180,5 @@ def test_calls_after_an_end_tool_are_not_run(store):
 
 
 def test_scopes_of_the_coordinator():
-    assert COORDINATOR.scopes == {Scope.READ, Scope.DRAFT, Scope.EVALUATE, Scope.END}
+    assert COORDINATOR_V1.scopes == {Scope.READ, Scope.DRAFT, Scope.EVALUATE, Scope.END}
+    assert COORDINATOR.scopes == COORDINATOR_V1.scopes | {Scope.TALK}

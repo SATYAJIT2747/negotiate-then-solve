@@ -70,6 +70,8 @@ def episodes(folder: Path | str) -> Iterator[Episode]:
         top = next((s for s in spans if s.kind == "episode"), None)
         if top is None:
             continue
+        for r in (s for s in spans if s.kind == "resume"):  # a paused episode ends where its last resume did
+            top = top.model_copy(update={"attrs": {**top.attrs, **r.attrs}})
         ep = Episode(top)
         for s in spans:
             {"model_call": ep.model_calls, "tool_call": ep.tool_calls, "approval": ep.approvals,

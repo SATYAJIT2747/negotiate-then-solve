@@ -5,7 +5,7 @@ from __future__ import annotations
 from datetime import datetime
 from enum import Enum, IntEnum
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, model_serializer, model_validator
 
 DAYS = ("Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun")
 
@@ -94,6 +94,7 @@ class Source(BaseModel):
 class Validity(BaseModel):
     from_week: int | None = None
     to_week: int | None = None
+    except_weeks: list[int] = Field(default_factory=list)  # waived in these weeks (its owner agreed)
 
     @property
     def is_permanent(self) -> bool:
@@ -102,7 +103,14 @@ class Validity(BaseModel):
     def covers(self, week: int) -> bool:
         lo = self.from_week if self.from_week is not None else 1
         hi = self.to_week if self.to_week is not None else 10**6
-        return lo <= week <= hi
+        return lo <= week <= hi and week not in self.except_weeks
+
+    @model_serializer(mode="wrap")
+    def _omit_no_exceptions(self, handler):  # so the records (and hashes) of rules without exceptions do not change
+        out = handler(self)
+        if isinstance(out, dict) and not out.get("except_weeks"):
+            out.pop("except_weeks", None)
+        return out
 
 
 class Constraint(BaseModel):
