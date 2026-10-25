@@ -40,8 +40,8 @@ class Verdict:
 
 
 def run_suite(suite: list[Scenario], model: Model, store: Store, agent: AgentConfig, tracer: Tracer,
-              *, progress: bool = False) -> list[Verdict]:
-    harness = Harness(Registry(ALL_TOOLS), model, tracer)
+              *, progress: bool = False, handbook=None) -> list[Verdict]:
+    harness = Harness(Registry(ALL_TOOLS), model, tracer, handbook=handbook)
     verdicts = []
     for i, sc in enumerate(suite, 1):
         fork = store.fork()

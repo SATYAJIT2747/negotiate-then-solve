@@ -7,9 +7,9 @@ from dataclasses import dataclass, field
 from types import MappingProxyType
 
 from nts.kernel.instance import Instance
-from nts.kernel.schemas import Constraint, Placement
+from nts.kernel.schemas import ConcessionEntry, Constraint, Placement
 
-from .events import Change, ConstraintAdded, ConstraintRemoved, TimetableSet
+from .events import Change, Conceded, ConstraintAdded, ConstraintRemoved, TimetableSet
 
 
 @dataclass(frozen=True)
@@ -26,6 +26,7 @@ class World:
     version: str
     constraints: Mapping[str, Constraint] = field(default_factory=dict)  # by id, in the order added
     timetables: Mapping[int | None, Timetable] = field(default_factory=dict)  # None: the semester timetable
+    concessions: tuple[ConcessionEntry, ...] = ()  # who gave way to whom, in order
 
     @classmethod
     def replay(cls, changes: Iterable[tuple[Change, str]]) -> World:
@@ -43,7 +44,7 @@ class World:
         return world
 
     def apply(self, change: Change, version: str) -> World:
-        constraints, timetables = dict(self.constraints), dict(self.timetables)
+        constraints, timetables, concessions = dict(self.constraints), dict(self.timetables), self.concessions
         if change.kind == "created":
             raise ValueError("the department already exists")
         if isinstance(change, ConstraintAdded):
@@ -55,7 +56,9 @@ class World:
                 raise ValueError(f"no constraint {change.id}")
         elif isinstance(change, TimetableSet):
             timetables[change.week] = Timetable(MappingProxyType(dict(change.assignment)), frozenset(change.cancelled))
-        return World(self.instance, version, MappingProxyType(constraints), MappingProxyType(timetables))
+        elif isinstance(change, Conceded):
+            concessions = (*concessions, change.entry)
+        return World(self.instance, version, MappingProxyType(constraints), MappingProxyType(timetables), concessions)
 
     def timetable(self, week: int | None = None) -> Timetable | None:
         """The timetable that runs in ``week``: its own one if it was repaired, else the semester one."""

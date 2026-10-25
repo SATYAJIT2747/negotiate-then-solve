@@ -2,6 +2,7 @@
 
 from .events import (
     Change,
+    Conceded,
     ConstraintAdded,
     ConstraintRemoved,
     Created,
@@ -12,6 +13,6 @@ from .store import CorruptLog, Draft, InvalidChange, StaleDraft, Store, bootstra
 from .world import Timetable, World
 
 __all__ = [
-    "Change", "ConstraintAdded", "ConstraintRemoved", "CorruptLog", "Created", "Draft", "Event",
+    "Change", "Conceded", "ConstraintAdded", "ConstraintRemoved", "CorruptLog", "Created", "Draft", "Event",
     "InvalidChange", "StaleDraft", "Store", "Timetable", "TimetableSet", "World", "bootstrap", "check",
 ]

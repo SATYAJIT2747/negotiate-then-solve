@@ -421,13 +421,66 @@ def negotiate_refused(world: World, rng: random.Random, now: int) -> Scenario:
     return _negotiation(world, rng, now, agrees=False)
 
 
+# -- the regulations (data/handbook.md: the synthetic handbook's rule ids) -------------
+
+QUESTIONS = [
+    ("P-LUNCH", "2.2", ["Can I hold a class from 1 pm to 2 pm?", "Is the lunch hour ever used for teaching?",
+                        "Could my tutorial go in the lunch break?"]),
+    ("P-HOURS", "2.1", ["Are classes allowed on Saturdays?", "Can I teach after 5 pm?",
+                        "What are the teaching hours of the department?"]),
+    ("P-MAXCONSEC", "2.3", ["How many hours can I teach back to back?",
+                            "Is there a limit on consecutive classes for a section?"]),
+    ("P-MAKEUP", "3.2", ["If I miss a class for a conference, do I have to make it up?",
+                         "Within how long must a missed class be made up?"]),
+]
+
+
+def cites(text: str, rid: str, number: str) -> bool:
+    return rid in text or re.search(rf"(?<![\d.]){re.escape(number)}(?![\d])", text) is not None
+
+
+def rules_question(world: World, rng: random.Random, now: int) -> Scenario:
+    """A question about the regulations: the answer should cite the rule."""
+    inst = world.instance
+    t = rng.choice(inst.faculty)
+    rid, number, asks = rng.choice(QUESTIONS)
+    text = rng.choice(asks)
+
+    def check(out: Outcome, before: World, after: World | None) -> list[str]:
+        return [] if cites(out.text, rid, number) else [f"does not cite {rid} ({number})"]
+
+    return Scenario(f"rules_question-{rid}-{t.id}", "rules_question", t.id, now, text, frozenset({"answered"}),
+                    [check])
+
+
+def weekend(world: World, rng: random.Random, now: int) -> Scenario:
+    """A move to a Saturday: no rule can be drafted for it, and the refusal should cite the working hours."""
+    inst = world.instance
+    tt = world.timetable(now)
+    assert tt is not None
+    s = rng.choice([s for s in inst.sessions if s.id in tt.assignment])
+    text = rng.choice(["Please move my {c} {k} on {d} to Saturday {w}.", "Can my {d} {c} {k} be on Saturday instead, {w}?"]
+                      ).format(c=inst.course_title(s.course), k=s.kind.value, d=FULL_DAY[tt.assignment[s.id].day],
+                               w=week_phrase(rng, now, now + 1))
+
+    def check(out: Outcome, before: World, after: World | None) -> list[str]:
+        bad = ["drafted a change"] if added(out) else []
+        return bad + ([] if cites(out.text, "P-HOURS", "2.1") else ["does not cite P-HOURS (2.1)"])
+
+    return Scenario(f"weekend-{s.id}", "weekend", s.faculty, now, text, frozenset({"declined", "escalated", "answered"}),
+                    [check])
+
+
 FAMILIES: dict[str, Callable[[World, random.Random, int], Scenario]] = {
     "q_free": q_free, "q_classes": q_classes, "away": away, "preference": preference, "move": move,
     "room_closed": room_closed, "not_allowed": not_allowed, "impossible": impossible, "ambiguous": ambiguous,
     # with talk tools (appended, so the suites of the families above stay as they were)
     "clarify": clarify, "negotiate": negotiate, "negotiate_refused": negotiate_refused,
+    # with the rules tool
+    "rules_question": rules_question, "weekend": weekend,
 }
 V1_FAMILIES = list(FAMILIES)[:9]  # what coordinator-v1 (no talk tools) was evaluated on
+V2_FAMILIES = list(FAMILIES)[:12]  # ... coordinator-v2 (talk, no rules)
 
 
 def build_suite(world: World, *, per_family: int = 2, seed: int = 0, week: int = 5,

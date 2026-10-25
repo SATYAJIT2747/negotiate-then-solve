@@ -33,6 +33,7 @@ class Scope(str, Enum):
     DRAFT = "draft"  # changes the episode's draft
     EVALUATE = "evaluate"  # asks the kernel about the draft
     TALK = "talk"  # sends a message to a person (the episode waits for the answer)
+    POLICY = "policy"  # looks up the department's regulations
     END = "end"  # ends the episode: submit, decline, escalate
 
 
@@ -49,6 +50,7 @@ class Context:
     week: int | None = None  # the current week of term; None outside term
     draft: Draft | None = None
     scratch: dict[str, Any] = field(default_factory=dict)  # what tools keep between calls in one episode
+    handbook: Any = None  # the department's regulations (nts.policy.Handbook), for the rules tool
 
     @property
     def state(self) -> World:

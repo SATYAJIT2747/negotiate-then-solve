@@ -19,7 +19,8 @@ from typing import Literal
 
 from pydantic import BaseModel, Field
 
-from nts.state import ConstraintAdded, ConstraintRemoved
+from nts.fairness import entry
+from nts.state import Conceded, ConstraintAdded, ConstraintRemoved
 
 from . import words
 from .draft import _draft
@@ -149,6 +150,7 @@ def settle(ctx: Context, ask: Ask, reply: Reply) -> dict:
             out["draft"] = f"now: {words.constraint(draft.world.instance, waived)}"
         else:
             out["draft"] = f"dropped: {ask.rule_text}"
+        draft.add(Conceded(entry=entry(c, ctx.actor, ask.weeks)))
         ctx.scratch.setdefault("waivers", []).append(out["draft"])
         out["next"] = "call check_draft again"
     return out

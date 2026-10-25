@@ -72,16 +72,17 @@ class Outcome:
 
 
 class Harness:
-    def __init__(self, registry: Registry, model: Model, tracer: Tracer | None = None) -> None:
+    def __init__(self, registry: Registry, model: Model, tracer: Tracer | None = None, *, handbook=None) -> None:
         self.registry = registry
         self.model = model
         self.tracer = tracer or Tracer()
+        self.handbook = handbook  # the department's regulations, for the rules tool (nts.policy.Handbook)
 
     def run(self, agent: AgentConfig, request: str, store: Store, actor: str, week: int | None = None,
             *, episode_id: str | None = None, people: People | None = None) -> Outcome:
         eid = episode_id or new_id("ep-")
         draft = store.draft(actor, eid)
-        ctx = Context(store.world, actor, week, draft)
+        ctx = Context(store.world, actor, week, draft, handbook=self.handbook)
         tools = self.registry.specs(agent.scopes)
         transcript = [Message(role="system", content=agent.system(ctx)), Message(role="user", content=request)]
         run = _Run(eid, agent, ctx, transcript, tools, people)

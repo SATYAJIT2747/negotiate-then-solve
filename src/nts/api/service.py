@@ -121,7 +121,7 @@ def to_event(span: Span) -> dict | None:
 
 class Service:
     def __init__(self, store: Store, model: Model, tracer: Tracer | None = None, *, agent: AgentConfig | None = None,
-                 simulate: bool = False) -> None:
+                 simulate: bool = False, handbook=None) -> None:
         from nts.agents import COORDINATOR
 
         self.store = store
@@ -129,7 +129,8 @@ class Service:
         self.simulate = simulate
         self.episodes: dict[str, Episode] = {}
         self.tracer = Tracer([*(tracer.sinks if tracer else []), _Events(self)])
-        self.harness = Harness(Registry(ALL_TOOLS), model, self.tracer)
+        self.handbook = handbook
+        self.harness = Harness(Registry(ALL_TOOLS), model, self.tracer, handbook=handbook)
         self.lock = threading.Lock()  # one commit at a time; drafts are private and need none
 
     # -- episodes -----------------------------------------------------------------

@@ -18,7 +18,13 @@ import sys
 from dataclasses import replace
 from pathlib import Path
 
-from nts.agents import COORDINATOR, COORDINATOR_V1, READER
+from nts.agents import (
+    COORDINATOR,
+    COORDINATOR_V1,
+    COORDINATOR_V2,
+    COORDINATOR_V3,
+    READER,
+)
 from nts.harness import AgentConfig, Harness, approve
 from nts.kernel.generator import generate_department
 from nts.kernel.instance import policy_constraints
@@ -26,12 +32,14 @@ from nts.models import GeminiChat, Model, OpenAIChat
 from nts.protocol import tools_hash
 from nts.state import Store, bootstrap
 from nts.telemetry import DEFAULT_ROOT, default_tracer
-from nts.tools import ALL_TOOLS, Refusal, Registry
+from nts.tools import ALL_TOOLS, Refusal, Registry, Scope
 from nts.tools.draft import OFFICE
 from nts.tools.names import Directory
 
 DEFAULT_STORE = Path("runs/agentic/demo.jsonl")
-AGENTS = {"coordinator": COORDINATOR, "coordinator-v1": COORDINATOR_V1, "reader": READER}
+DEFAULT_HANDBOOK = Path("data/handbook.md")
+AGENTS = {"coordinator": COORDINATOR, "coordinator-v1": COORDINATOR_V1, "coordinator-v2": COORDINATOR_V2,
+          "coordinator-v3": COORDINATOR_V3, "reader": READER}
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -56,7 +64,7 @@ def main(argv: list[str] | None = None) -> int:
     e.add_argument("--store", type=Path, default=DEFAULT_STORE)
     e.add_argument("--week", type=int, default=5)
     e.add_argument("--per-family", type=int, default=2)
-    e.add_argument("--families", nargs="*", help="default: every family (coordinator-v1: the nine without talk)")
+    e.add_argument("--families", nargs="*", help="default: the families the agent has the tools for")
     e.add_argument("--seed", type=int, default=0)
     e.add_argument("--out", type=Path, help="report path (default runs/eval/<model>-s<seed>.json)")
     x = sub.add_parser("export", help="training rows from judged episodes")
@@ -82,6 +90,7 @@ def main(argv: list[str] | None = None) -> int:
         q.add_argument("--env", type=Path, help="a .env file with GEMINI_API_KEY")
         q.add_argument("--max-tokens", type=int, help="token budget of an episode (default: the agent's for Gemini, "
                                                        "none for a local model)")
+        q.add_argument("--handbook", type=Path, default=DEFAULT_HANDBOOK, help="the regulations, for the rules tool")
     args = p.parse_args(argv)
     return {"init": init, "ask": ask, "eval": evaluate, "export": export_rows, "serve": serve}[args.cmd](args)
 
@@ -93,6 +102,12 @@ def init(args: argparse.Namespace) -> int:
     print(f"{args.store}: {len(inst.faculty)} teachers, {len(inst.groups)} sections, {len(inst.sessions)} classes, "
           f"version {store.version}")
     return 0
+
+
+def handbook(args: argparse.Namespace):
+    from nts.policy import Handbook
+
+    return Handbook.load(args.handbook) if args.handbook and args.handbook.exists() else None
 
 
 def budgeted(agent: AgentConfig, args: argparse.Namespace) -> AgentConfig:
@@ -110,14 +125,23 @@ def make_model(args: argparse.Namespace) -> Model:
 
 
 def evaluate(args: argparse.Namespace) -> int:
-    from nts.eval import V1_FAMILIES, build_suite, run_suite, save
+    from nts.eval import (
+        FAMILIES,
+        V1_FAMILIES,
+        V2_FAMILIES,
+        build_suite,
+        run_suite,
+        save,
+    )
 
     model = make_model(args)
     store = Store.open(args.store)
-    families = args.families or (V1_FAMILIES if args.agent == "coordinator-v1" else None)
+    agent = AGENTS[args.agent]
+    families = args.families or (V1_FAMILIES if Scope.TALK not in agent.scopes else
+                                 V2_FAMILIES if Scope.POLICY not in agent.scopes else list(FAMILIES))
     suite = build_suite(store.world, per_family=args.per_family, seed=args.seed, week=args.week, families=families)
-    verdicts = run_suite(suite, model, store, budgeted(AGENTS[args.agent], args), default_tracer(args.telemetry),
-                         progress=True)
+    verdicts = run_suite(suite, model, store, budgeted(agent, args), default_tracer(args.telemetry),
+                         progress=True, handbook=handbook(args))
     path = args.out or Path("runs/eval") / f"{model.name.replace(':', '_').replace('+', '_')}-s{args.seed}.json"
     report = save(path, model.name, verdicts)
     for fam, st in report["summary"]["families"].items():
@@ -155,7 +179,7 @@ def ask(args: argparse.Namespace) -> int:
             print(f"--as: {r.error.message} {r.error.hint}", file=sys.stderr)
             return 2
     tracer = default_tracer(args.telemetry)
-    harness = Harness(Registry(ALL_TOOLS), model, tracer)
+    harness = Harness(Registry(ALL_TOOLS), model, tracer, handbook=handbook(args))
     people = None
     if args.talk:
         from nts.people import Terminal
@@ -187,7 +211,7 @@ def serve(args: argparse.Namespace) -> int:
     from nts.api import Service, create_app
 
     service = Service(Store.open(args.store), make_model(args), default_tracer(args.telemetry),
-                      agent=budgeted(AGENTS[args.agent], args), simulate=args.simulate)
+                      agent=budgeted(AGENTS[args.agent], args), simulate=args.simulate, handbook=handbook(args))
     print(f"{args.store} at {service.store.version}; {service.harness.model.name}, agent {service.agent.name}: "
           f"http://{args.host}:{args.port}/")
     uvicorn.run(create_app(service), host=args.host, port=args.port, log_level="warning")

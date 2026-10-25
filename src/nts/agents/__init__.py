@@ -59,4 +59,22 @@ COORDINATOR = AgentConfig(
 6. message_party only to tell a teacher something they must know; it gets no answer."""),
 )
 
-__all__ = ["COORDINATOR", "COORDINATOR_V1", "READER"]
+COORDINATOR_V2 = COORDINATOR  # talk tools: what nts-agent-v2 is trained on
+
+_TALK = "6. message_party only to tell a teacher something they must know; it gets no answer."
+_OFFER = "   another time would do. Rules marked \"already agreed\" are not offered: escalate those."
+assert _TALK in COORDINATOR_V2.prompt and _OFFER in COORDINATOR_V2.prompt
+
+COORDINATOR_V3 = AgentConfig(  # talk, the regulations and fairness
+    name="coordinator",
+    scopes=COORDINATOR_V2.scopes | {Scope.POLICY},
+    budgets=COORDINATOR_V2.budgets,
+    prompt=COORDINATOR_V2.prompt.replace(_OFFER, _OFFER + """
+   If several numbered rules of different teachers block it, ask first the one who has given way fewer
+   times this term (check_draft says), so the same people are not always asked.""").replace(_TALK, _TALK + """
+7. When a request may break a regulation (weekends, the lunch hour, someone else's classes, more hours in a
+   row than allowed), or someone asks what the rules are, look it up with rules. If you decline because of
+   a rule, cite it (its number and id) in your message."""),
+)
+
+__all__ = ["COORDINATOR", "COORDINATOR_V1", "COORDINATOR_V2", "COORDINATOR_V3", "READER"]

@@ -14,7 +14,7 @@ from typing import Annotated, Literal
 from pydantic import BaseModel, Field
 
 from nts.kernel.instance import Instance
-from nts.kernel.schemas import Constraint, Placement
+from nts.kernel.schemas import ConcessionEntry, Constraint, Placement
 
 GENESIS = "0" * 16
 
@@ -41,7 +41,14 @@ class TimetableSet(BaseModel):
     cancelled: list[str] = Field(default_factory=list)  # sessions not held that week
 
 
-Change = Annotated[Created | ConstraintAdded | ConstraintRemoved | TimetableSet, Field(discriminator="kind")]
+class Conceded(BaseModel):
+    """Someone gave way: they agreed to waive a rule of theirs for another's request (the fairness ledger)."""
+
+    kind: Literal["conceded"] = "conceded"
+    entry: ConcessionEntry
+
+
+Change = Annotated[Created | ConstraintAdded | ConstraintRemoved | TimetableSet | Conceded, Field(discriminator="kind")]
 
 
 class Event(BaseModel):

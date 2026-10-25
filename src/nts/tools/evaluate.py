@@ -114,7 +114,9 @@ def _clash(ctx: Context, solver: TimetableSolver, ours: dict[str, int], ws: list
             return {"your_change": ours[cid]}
         owner = after.constraints[cid].owner
         if owner in inst.faculty_by_id and owner != ctx.actor:
-            return {"set_by": inst.faculty_by_id[owner].name, "number": number_theirs(ctx, cid, blocked)}
+            given = sum(e.stakeholder == owner for e in after.concessions)
+            return {"set_by": inst.faculty_by_id[owner].name, "number": number_theirs(ctx, cid, blocked),
+                    "has_given_way": f"{given} time{'s' * (given != 1)} this term"}
         return {"set_by": "already agreed"}
 
     rules = [{"rule": words.constraint(inst, after.constraints[c]), **by(c)} for c in core]

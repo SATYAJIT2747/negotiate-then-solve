@@ -5,7 +5,7 @@ import pytest
 
 from nts.agents import COORDINATOR
 from nts.data import episodes
-from nts.eval import build_suite, run_suite
+from nts.eval import V2_FAMILIES, build_suite, run_suite
 from nts.eval.scenarios import ambiguous, clarify, negotiate, negotiate_refused
 from nts.harness import Harness
 from nts.kernel.schemas import Validity
@@ -47,8 +47,9 @@ def negotiation_steps(sc, world, *, then):
 
 
 def test_the_v1_suite_is_unchanged_and_the_talk_families_come_after(store):
-    suite = build_suite(store.world, per_family=1, seed=0)
+    suite = build_suite(store.world, per_family=1, seed=0, families=V2_FAMILIES)
     assert [s.family for s in suite][-3:] == ["clarify", "negotiate", "negotiate_refused"]
+    assert [s.name for s in build_suite(store.world, per_family=1, seed=0)][:len(suite)] == [s.name for s in suite]
     assert all(s.cast is not None for s in suite[-3:]) and suite[-1].setup
 
 
