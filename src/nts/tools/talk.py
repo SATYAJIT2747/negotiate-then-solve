@@ -136,6 +136,9 @@ def settle(ctx: Context, ask: Ask, reply: Reply) -> dict:
     if ask.kind != "offer":
         return out
     assert ask.rule is not None
+    if reply.answer == "said":  # they answered without deciding (a question back, a condition): not a no
+        return {**out, "answer": "undecided",
+                "next": "answer what they said and make the offer again, or decline or escalate"}
     ctx.scratch.setdefault("answers", set()).add((ask.rule, "yes" if reply.answer == "yes" else "no"))
     out["answer"] = "yes" if reply.answer == "yes" else "no"
     if reply.answer == "yes":

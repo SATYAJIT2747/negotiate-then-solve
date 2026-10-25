@@ -67,6 +67,8 @@ def main(argv: list[str] | None = None) -> int:
     e.add_argument("--families", nargs="*", help="default: the families the agent has the tools for")
     e.add_argument("--seed", type=int, default=0)
     e.add_argument("--out", type=Path, help="report path (default runs/eval/<model>-s<seed>.json)")
+    e.add_argument("--rewrite", choices=["train", "heldout"],
+                   help="requests rewritten by Gemini in this style set (cached; needs GEMINI_API_KEY the first time)")
     x = sub.add_parser("export", help="training rows from judged episodes")
     x.add_argument("--out", type=Path, required=True)
     x.add_argument("--models", nargs="*", help="only episodes of these models (substring match)")
@@ -152,9 +154,17 @@ def evaluate(args: argparse.Namespace) -> int:
     families = args.families or (V1_FAMILIES if Scope.TALK not in agent.scopes else
                                  V2_FAMILIES if Scope.POLICY not in agent.scopes else list(FAMILIES))
     suite = build_suite(store.world, per_family=args.per_family, seed=args.seed, week=args.week, families=families)
+    if args.rewrite:
+        from nts.eval.rewrite import rewrite
+
+        if args.env:
+            from dotenv import load_dotenv
+
+            load_dotenv(args.env)
+        suite = rewrite(suite, args.rewrite, GeminiChat(temperature=1.0), store.world, log=True)
     verdicts = run_suite(suite, model, store, budgeted(agent, args), default_tracer(args.telemetry),
                          progress=True, handbook=handbook(args), best=args.best_of)
-    path = args.out or Path("runs/eval") / f"{model.name.replace(':', '_').replace('+', '_')}-s{args.seed}{f'-best{args.best_of}' * (args.best_of > 1)}.json"
+    path = args.out or Path("runs/eval") / f"{model.name.replace(':', '_').replace('+', '_')}-s{args.seed}{f'-best{args.best_of}' * (args.best_of > 1)}{f'-{args.rewrite}' * bool(args.rewrite)}.json"
     report = save(path, model.name, verdicts)
     for fam, st in report["summary"]["families"].items():
         print(f"  {fam:12} {st['passed']}/{st['n']}  turns {st['turns']}  refused {st['refused']}")

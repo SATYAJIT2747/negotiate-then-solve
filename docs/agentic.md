@@ -197,3 +197,27 @@ the tools by Qwen's chat template, loss on the turn only.
 Prompt size: the tool schemas are compacted when generated (no titles, no `anyOf [X, null]`, no empty
 defaults): 2,201 tokens for the coordinator's 15 tools, down from 2,885. The context budget counts them. A
 local model gets no token budget (`--max-tokens` sets one).
+
+## Harder scenarios, rewritten requests, and the v3 training setup
+
+Five families after the first 14 (so earlier suites build as they did): `clarify_negotiate` (an unclear request
+that, once explained, needs another teacher to give way), `hedged_yes` (the owner answers the first offer with a
+question and agrees when asked again; an offer answered without a yes or no comes back "undecided" and may be
+made again), `no_reply` (the owner never answers: ask, then decline or escalate, never move the class elsewhere
+unasked), `two_changes` (away one day and a class moved, in one message) and `away_days` (several days in a
+row). `runs/agentic/eval-big.jsonl` is a 20-teacher, 6-section eval department (`nts init --seed 21 --faculty 20
+--sections 6 --rooms 8 --labs 5`).
+
+`eval --rewrite train|heldout` rewrites the requests with Gemini (`nts.eval.rewrite`) in one of five styles per set
+(chat, email, terse, ... for train; non-native, apologetic, bulleted, ... for heldout), keeping a rewrite only if
+every day, hour, week and name survives and a must still reads as a must. Rewrites are cached in
+`runs/eval/rewrites-<set>.json`.
+
+The agents the adapters were trained on are pinned in `tests/nts/test_nts_frozen.py` (v1, v2, and v3 =
+`696ca57090f2`), with the harness's turn notes: change a trained agent and the test fails.
+
+The notebook trains 2 epochs (adapters after each), then DPO on the outcome pairs of `dpo.jsonl` when there are
+at least 40: the SFT adapter is the reference, chosen and rejected run as one batch of two, a tenth of the
+pairs is held out, and `<ADAPTER>-dpo` is exported beside the SFT adapter. `python scripts/check_agent_dpo.py`
+runs the notebook's training script in DPO mode on a tiny random model (torch, transformers, peft, datasets,
+accelerate). Gemini episodes so far are at most 5.3k tokens (negotiations), under MAX_LEN 12288.

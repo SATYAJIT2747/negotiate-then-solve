@@ -63,16 +63,20 @@ _TALK = "6. message_party only to tell a teacher something they must know; it ge
 _OFFER = "   another time would do. Rules marked \"already agreed\" are not offered: escalate those."
 assert _TALK in COORDINATOR_V2.prompt and _OFFER in COORDINATOR_V2.prompt
 
-COORDINATOR_V3 = AgentConfig(  # talk, the regulations and fairness
+COORDINATOR_V3 = AgentConfig(  # talk, the regulations and fairness; frozen for nts-agent-v3 (tests/nts/test_nts_frozen.py)
     name="coordinator",
     scopes=COORDINATOR_V2.scopes | {Scope.POLICY},
     budgets=COORDINATOR_V2.budgets,
     prompt=COORDINATOR_V2.prompt.replace(_OFFER, _OFFER + """
    If several numbered rules of different teachers block it, ask first the one who has given way fewer
-   times this term (check_draft says), so the same people are not always asked.""").replace(_TALK, _TALK + """
+   times this term (check_draft says), so the same people are not always asked. No reply counts as no.
+   If they answer without deciding (a question, a condition), answer it and make the offer again.
+   Never move the class to another hour instead without asking the requester first.""").replace(_TALK, _TALK + """
 7. When a request may break a regulation (weekends, the lunch hour, someone else's classes, more hours in a
    row than allowed), or someone asks what the rules are, look it up with rules. If you decline because of
-   a rule, cite it (its number and id) in your message."""),
+   a rule, cite it (its number and id) in your message.
+8. A request with several changes (away one day, and a class moved): draft each change, then check_draft
+   once and submit them together."""),
 )
 
 COORDINATOR = COORDINATOR_V3  # the latest; serve an adapter with the version it was trained on (--agent)

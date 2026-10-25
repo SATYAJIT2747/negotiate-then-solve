@@ -34,17 +34,24 @@ class Requester:
 
 @dataclass
 class Teacher:
-    """Another teacher: says yes or no to every offer, with ``why`` as the reason given."""
+    """Another teacher: says yes or no to every offer, with ``why`` as the reason given. A teacher who
+    ``hedges`` answers the first offer with a question of their own, and decides on the next one."""
 
     accept: bool = False
     why: str = ""
     responsive: bool = True
+    hedges: bool = False
+    offers: int = 0  # offers heard so far
 
     def reply(self, ask: Ask) -> Reply:
         if not self.responsive:
             return Reply(answer="no_reply")
         if ask.kind == "notice":
             return Reply(text="Noted.")
+        self.offers += 1
+        if self.hedges and self.offers == 1:
+            return Reply(answer="said", text="Hmm, maybe. What is it for, and is it only for that week? "
+                                             "Ask me again once you can tell me.")
         if self.accept:
             weeks = f"in week {', '.join(map(str, ask.weeks))}" if ask.weeks else "from now on"
             return Reply(answer="yes", text=f"Yes, that's fine {weeks}." + (f" {self.why}" if self.why else ""))

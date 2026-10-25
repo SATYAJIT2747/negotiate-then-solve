@@ -369,7 +369,8 @@ def _blocked(world: World, rng: random.Random, now: int) -> tuple[Session, Sessi
     return None
 
 
-def _negotiation(world: World, rng: random.Random, now: int, agrees: bool) -> Scenario:
+def _negotiation(world: World, rng: random.Random, now: int, agrees: bool, *, family: str | None = None,
+                 vague: bool = False, hedges: bool = False, responsive: bool = True) -> Scenario:
     inst = world.instance
     found = _blocked(world, rng, now)
     if found is None:
@@ -383,17 +384,24 @@ def _negotiation(world: World, rng: random.Random, now: int, agrees: bool) -> Sc
         "Please shift my {c} {k} from {f} {fh} to {d} {h}, {w} only.",
     ]).format(c=inst.course_title(a.course), k=a.kind.value, d=FULL_DAY[pb.day], h=hour(pb.slot),
               f=FULL_DAY[pa.day], fh=hour(pa.slot), w=week_phrase(rng, now, target))
+    if vague:  # the requester says which class, and that the hour matters, only when asked
+        text = rng.choice(["Please move one of my classes to {d} {w}.", "Can a class of mine go on {d} {w}?",
+                           "{w}, I need a class shifted to {d}."]).format(d=FULL_DAY[pb.day], w=week_phrase(rng, now, target))
     text = text[0].upper() + text[1:]
     why = rng.choice(["I can take it at another hour that week."] if agrees else
                      ["I have a fixed commitment then.", "My lab assistant is only free at that time.",
                       "That hour was agreed with the students."])
     cast = Cast(requester=Requester(f"I mean my {inst.course_title(a.course)} {a.kind.value} on {FULL_DAY[pa.day]} at "
                                     f"{hour(pa.slot)}, and it has to be {FULL_DAY[pb.day]} at {hour(pb.slot)}, sorry."),
-                teachers={owner.id: Teacher(accept=agrees, why=why)})
+                teachers={owner.id: Teacher(accept=agrees, why=why, hedges=hedges, responsive=responsive)})
     other = next(w for w in (target + 2, target - 2, target + 3) if 1 <= w <= inst.calendar.weeks)
 
     def check(out: Outcome, before: World, after: World | None) -> list[str]:
         bad = [] if asked(out, owner.id, "offer") else [f"did not ask {owner.name}"]
+        if vague and not asked(out, REQUESTER, "question"):
+            bad.append("did not ask which class")
+        if hedges and sum(a.to == owner.id and a.kind == "offer" for a, _ in out.asks) < 2:
+            bad.append(f"did not ask {owner.name} again after their question")
         if not agrees:
             return bad
         if after is None:
@@ -407,7 +415,7 @@ def _negotiation(world: World, rng: random.Random, now: int, agrees: bool) -> Sc
             bad.append(f"{owner.name}'s class moved in week {other} too")
         return bad
 
-    family = "negotiate" if agrees else "negotiate_refused"
+    family = family or ("negotiate" if agrees else "negotiate_refused")
     expect = frozenset({"submitted"}) if agrees else frozenset({"declined", "escalated", "answered"})
     return Scenario(f"{family}-{a.id}-w{target}", family, a.faculty, now, text, expect, [check],
                     setup=[ConstraintAdded(constraint=pin)], cast=cast)
@@ -421,6 +429,98 @@ def negotiate(world: World, rng: random.Random, now: int) -> Scenario:
 def negotiate_refused(world: World, rng: random.Random, now: int) -> Scenario:
     """... and they do not: the agent should ask, then decline or escalate."""
     return _negotiation(world, rng, now, agrees=False)
+
+
+# -- harder: several steps, people who do not simply say yes or no ------------------
+
+
+def clarify_negotiate(world: World, rng: random.Random, now: int) -> Scenario:
+    """An unclear request; once the requester says which class and hour, another teacher's rule blocks it, and
+    they agree to waive it."""
+    return _negotiation(world, rng, now, agrees=True, family="clarify_negotiate", vague=True)
+
+
+def hedged_yes(world: World, rng: random.Random, now: int) -> Scenario:
+    """The owner of the blocking rule answers the first offer with a question, and agrees when asked again."""
+    return _negotiation(world, rng, now, agrees=True, family="hedged_yes", hedges=True)
+
+
+def no_reply(world: World, rng: random.Random, now: int) -> Scenario:
+    """The owner of the blocking rule never answers: ask, then decline or escalate (never submit around them)."""
+    return _negotiation(world, rng, now, agrees=False, family="no_reply", responsive=False)
+
+
+def two_changes(world: World, rng: random.Random, now: int) -> Scenario:
+    """One message, two changes: away on one day, and one class moved to another day, the same week."""
+    inst = world.instance
+    target = rng.choice([now, now + 1])
+    tt = world.timetable(target)
+    assert tt is not None
+    options = [(f, d, s) for f in inst.faculty for d in inst.calendar.days if classes(world, f.id, target, d)
+               for s in inst.sessions if s.faculty == f.id and s.duration == 1 and s.id in tt.assignment
+               and tt.assignment[s.id].day != d]
+    if not options:
+        raise LookupError("no teacher with classes on two days")
+    t, day, s = rng.choice(options)
+    p = tt.assignment[s.id]
+    to_day = rng.choice([d for d in inst.calendar.days if d not in (day, p.day)])
+    text = rng.choice([
+        ("Two things, {w}: I'm away on {d} ({r}), so please move my classes that day; and could my {c} {k} on "
+        "{pd} at {h} go to {t} instead?"),
+        "{w} I can't be in on {d} because of {r}. Also, please move my {pd} {h} {c} {k} to {t} that week.",
+    ]).format(w=week_phrase(rng, now, target), d=FULL_DAY[day], r=rng.choice(REASONS), c=inst.course_title(s.course),
+              k=s.kind.value, pd=FULL_DAY[p.day], t=FULL_DAY[to_day], h=hour(p.slot))
+    text = text[0].upper() + text[1:]
+    cast = Cast(requester=Requester(f"I mean the {inst.course_title(s.course)} {s.kind.value} on {FULL_DAY[p.day]} at "
+                                    f"{hour(p.slot)}; any time on {FULL_DAY[to_day]} is fine."))
+
+    def check(out: Outcome, before: World, after: World | None) -> list[str]:
+        if after is None:
+            return ["not committed"]
+        bad = []
+        if left := classes(after, t.id, target, day):
+            bad.append(f"still {len(left)} class(es) on {FULL_DAY[day]} in week {target}")
+        got = after.timetable(target).assignment.get(s.id)
+        if not got or got.day != to_day:
+            bad.append(f"the {inst.course_title(s.course)} {s.kind.value} is on {got.day if got else 'no day'}")
+        other = next((w for w in (target + 2, target - 2, target + 3) if 1 <= w <= inst.calendar.weeks), None)
+        if other and classes(after, t.id, other) != classes(before, t.id, other):
+            bad.append(f"week {other} changed too")
+        return bad
+
+    return Scenario(f"two_changes-{t.id}-{day}-{s.id}-w{target}", "two_changes", t.id, now, text,
+                    frozenset({"submitted"}), [check], cast=cast)
+
+
+def away_days(world: World, rng: random.Random, now: int) -> Scenario:
+    """Away for several days in a row in one week."""
+    inst = world.instance
+    days = inst.calendar.days
+    target = rng.choice([now + 1, now + 2])
+    n = rng.choice([2, 3])
+    start = rng.randrange(len(days) - n + 1)
+    span = days[start:start + n]
+    busy = [f for f in inst.faculty if sum(bool(classes(world, f.id, target, d)) for d in span) >= 2]
+    if not busy:
+        raise LookupError("no teacher with classes on those days")
+    t = rng.choice(busy)
+    text = rng.choice([
+        "I'll be away from {a} to {b} {w} for {r}. Please move my classes on those days.",
+        "{w} I'm out {a} through {b} ({r}); can my classes then be rescheduled?",
+    ]).format(a=FULL_DAY[span[0]], b=FULL_DAY[span[-1]], w=week_phrase(rng, now, target), r=rng.choice(REASONS))
+    text = text[0].upper() + text[1:]
+
+    def check(out: Outcome, before: World, after: World | None) -> list[str]:
+        if after is None:
+            return ["not committed"]
+        bad = [f"still classes on {FULL_DAY[d]} in week {target}" for d in span if classes(after, t.id, target, d)]
+        other = next((w for w in (target + 2, target - 2, target + 3) if 1 <= w <= inst.calendar.weeks), None)
+        if other and classes(after, t.id, other) != classes(before, t.id, other):
+            bad.append(f"week {other} changed too")
+        return bad
+
+    return Scenario(f"away_days-{t.id}-{span[0]}{n}-w{target}", "away_days", t.id, now, text,
+                    frozenset({"submitted"}), [check])
 
 
 # -- the regulations (data/handbook.md: the synthetic handbook's rule ids) -------------
@@ -482,9 +582,14 @@ FAMILIES: dict[str, Callable[[World, random.Random, int], Scenario]] = {
     "clarify": clarify, "negotiate": negotiate, "negotiate_refused": negotiate_refused,
     # with the rules tool
     "rules_question": rules_question, "weekend": weekend,
+    # harder: several steps, people who hedge or do not answer
+    "clarify_negotiate": clarify_negotiate, "hedged_yes": hedged_yes, "no_reply": no_reply,
+    "two_changes": two_changes, "away_days": away_days,
 }
 V1_FAMILIES = list(FAMILIES)[:9]  # what coordinator-v1 (no talk tools) was evaluated on
 V2_FAMILIES = list(FAMILIES)[:12]  # ... coordinator-v2 (talk, no rules)
+V3_FAMILIES = list(FAMILIES)[:14]  # ... coordinator-v3, before the harder families
+HARD_FAMILIES = list(FAMILIES)[14:]
 
 
 def build_suite(world: World, *, per_family: int = 2, seed: int = 0, week: int = 5,
