@@ -4,7 +4,8 @@ Each scenario runs on a fork of the same store, so every one starts from the sam
 scenario's own setup), with a fresh copy of its cast to answer the agent's asks. A submitted
 draft is approved (committed through the kernel) so the checks can look at the committed state; the
 approval and the verdict are both recorded on the episode's trace ("approval", "evaluation" spans),
-which is what labels the episode for training.
+which is what labels the episode for training. With ``best_of`` > 1 each scenario runs that many times
+and the run they agree on is the one approved and judged (``nts.harness.best``).
 """
 
 from __future__ import annotations
@@ -15,7 +16,7 @@ from collections import defaultdict
 from dataclasses import asdict, dataclass
 from pathlib import Path
 
-from nts.harness import AgentConfig, Harness, approve
+from nts.harness import AgentConfig, Harness, approve, best_of
 from nts.models import Model
 from nts.state import Store
 from nts.telemetry import Tracer
@@ -40,7 +41,7 @@ class Verdict:
 
 
 def run_suite(suite: list[Scenario], model: Model, store: Store, agent: AgentConfig, tracer: Tracer,
-              *, progress: bool = False, handbook=None) -> list[Verdict]:
+              *, progress: bool = False, handbook=None, best: int = 1) -> list[Verdict]:
     harness = Harness(Registry(ALL_TOOLS), model, tracer, handbook=handbook)
     verdicts = []
     for i, sc in enumerate(suite, 1):
@@ -52,7 +53,7 @@ def run_suite(suite: list[Scenario], model: Model, store: Store, agent: AgentCon
                 draft.add(ch)
             fork.commit(draft)
         before = fork.world
-        out = harness.run(agent, sc.request, fork, sc.actor, sc.week, people=copy.deepcopy(sc.cast))
+        out = best_of(harness, best, agent, sc.request, fork, sc.actor, sc.week, people=copy.deepcopy(sc.cast))
         after = approve(fork, out, tracer, by="eval") if out.status == "submitted" else None
         failures = sc.judge(out, before, after)
         v = Verdict(sc.name, sc.family, out.episode_id, out.status, not failures, failures, out.turns, out.tool_calls,

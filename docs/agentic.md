@@ -162,7 +162,23 @@ rejection (`harness.approve` / `harness.reject`, which the CLI's `--approve` use
 
 - `sft-train.jsonl`, `sft-val.jsonl`: good episodes as `{"messages", "tools", "meta"}` (split by a hash of
   the request); turns whose calls were all refused for a fixable reason are left out (`--keep-errors` keeps them)
-- `dpo.jsonl`: refused turn vs the turn that fixed it, with the conversation before as the prompt
+- `dpo.jsonl`: refused turn vs the turn that fixed it, with the conversation before as the prompt; and
+  outcome pairs (`meta.source = "outcome"`): two episodes of the same request from the same state, by the
+  same person with the same tools, one good (passed, approved) and one bad (failed, rejected by the office
+  with its note, or a best-of-n run that lost the vote), split at the first turn where they part. The good
+  side is its clean path, so a pair never prefers a refused call
+
+## Best of n
+
+`--best-of 3` (on `ask` and `eval`) runs each request three times, sampling at temperature 0.7 unless
+`--temperature` says otherwise, and keeps one run (`nts.harness.best`): the ending most runs reached
+(runs that broke count only if all did), then the draft most of them wrote (the same rules, ids aside),
+then the cheapest by what the kernel says it does: 3 per other teacher whose class moves, 2 per rule
+someone was asked to waive, 1 per unmet wish and per class moved, then fewer refused calls and tokens.
+Every run is an episode (`<id>`, `<id>.2`, ...) with a "selection" span: chosen or not, the votes, its
+cost. Runs answer asks from their own copy of the cast; with no one to answer, a run that asks waits, and
+only the chosen one's ask would reach a person. The API does not use it yet: each run would stream
+its own events into the request's page.
 
 `notebooks/train_agent_kaggle.ipynb` trains the adapter on that: one example per assistant turn, rendered with
 the tools by Qwen's chat template, loss on the turn only.

@@ -74,8 +74,12 @@ def test_labels_and_export(store, tmp_path):
     assert first["name"] == "constrain" and isinstance(first["arguments"], dict)
     assert rows[0]["tools"] and rows[0]["meta"]["good"] is True
 
-    dpo = [json.loads(x) for x in (tmp_path / "out" / "dpo.jsonl").read_text().splitlines()]
+    rows = [json.loads(x) for x in (tmp_path / "out" / "dpo.jsonl").read_text().splitlines()]
+    dpo = [r for r in rows if r["meta"].get("source") != "outcome"]
     assert len(dpo) == 1 and dpo[0]["meta"]["error"] == "unknown_name"
+    assert counts["dpo_outcome"] == 1  # the same request, passed and failed: the first turns differ
+    outcome = next(r for r in rows if r["meta"].get("source") == "outcome")
+    assert "Dr. Nobody" not in json.dumps(outcome["chosen"]) and outcome["chosen"]["tool_calls"]  # never the refused call
     assert "Dr. Nobody" in json.dumps(dpo[0]["rejected"]) and dpo[0]["chosen"]["tool_calls"][0]["function"]["arguments"][
         "teacher"] == "me"
 

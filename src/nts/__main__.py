@@ -25,7 +25,7 @@ from nts.agents import (
     COORDINATOR_V3,
     READER,
 )
-from nts.harness import AgentConfig, Harness, approve
+from nts.harness import AgentConfig, Harness, approve, best_of
 from nts.kernel.generator import generate_department
 from nts.kernel.instance import policy_constraints
 from nts.models import GeminiChat, Model, OpenAIChat
@@ -96,6 +96,9 @@ def main(argv: list[str] | None = None) -> int:
         q.add_argument("--max-tokens", type=int, help="token budget of an episode (default: the agent's for Gemini, "
                                                        "none for a local model)")
         q.add_argument("--handbook", type=Path, default=DEFAULT_HANDBOOK, help="the regulations, for the rules tool")
+        q.add_argument("--temperature", type=float, help="sampling (default 0, or 0.7 with --best-of)")
+    for q in (a, e):
+        q.add_argument("--best-of", type=int, default=1, help="run each request n times and keep the run most agree on")
     args = p.parse_args(argv)
     return {"init": init, "ask": ask, "eval": evaluate, "export": export_rows, "serve": serve,
             "passwd": passwd}[args.cmd](args)
@@ -127,7 +130,10 @@ def make_model(args: argparse.Namespace) -> Model:
         from dotenv import load_dotenv
 
         load_dotenv(args.env)
-    return GeminiChat(args.gemini_model) if args.model == "gemini" else OpenAIChat(args.url, adapter=args.adapter)
+    t = args.temperature if args.temperature is not None else (0.7 if getattr(args, "best_of", 1) > 1 else 0.0)
+    if args.model == "gemini":
+        return GeminiChat(args.gemini_model, temperature=t)
+    return OpenAIChat(args.url, adapter=args.adapter, temperature=t)
 
 
 def evaluate(args: argparse.Namespace) -> int:
@@ -147,8 +153,8 @@ def evaluate(args: argparse.Namespace) -> int:
                                  V2_FAMILIES if Scope.POLICY not in agent.scopes else list(FAMILIES))
     suite = build_suite(store.world, per_family=args.per_family, seed=args.seed, week=args.week, families=families)
     verdicts = run_suite(suite, model, store, budgeted(agent, args), default_tracer(args.telemetry),
-                         progress=True, handbook=handbook(args))
-    path = args.out or Path("runs/eval") / f"{model.name.replace(':', '_').replace('+', '_')}-s{args.seed}.json"
+                         progress=True, handbook=handbook(args), best=args.best_of)
+    path = args.out or Path("runs/eval") / f"{model.name.replace(':', '_').replace('+', '_')}-s{args.seed}{f'-best{args.best_of}' * (args.best_of > 1)}.json"
     report = save(path, model.name, verdicts)
     for fam, st in report["summary"]["families"].items():
         print(f"  {fam:12} {st['passed']}/{st['n']}  turns {st['turns']}  refused {st['refused']}")
@@ -191,7 +197,11 @@ def ask(args: argparse.Namespace) -> int:
         from nts.people import Terminal
 
         people = Terminal()
-    out = harness.run(budgeted(AGENTS[args.agent], args), args.text, store, actor, args.week, people=people)
+        if args.best_of > 1:
+            print("--best-of with --talk would ask you once per run; use one or the other", file=sys.stderr)
+            return 2
+    out = best_of(harness, args.best_of, budgeted(AGENTS[args.agent], args), args.text, store, actor, args.week,
+                  people=people)
     if args.show:
         for m in out.transcript[2:]:
             for c in m.tool_calls:

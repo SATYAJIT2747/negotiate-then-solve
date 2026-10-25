@@ -6,7 +6,9 @@
 An episode's worth comes from the strongest judgement on its trace:
   1. an evaluation (a scenario's checks on the committed state)   good = passed
   2. an approval (a person, or the eval runner, approving)         good = approved and committed
-  3. nothing: an answered episode with no refused call             good = None (unknown; not exported by default)
+  3. a selection (best of n): a run not chosen that wrote a different draft than the chosen one
+                                                                  good = False (the chosen one is judged by 1 or 2)
+  4. nothing: an answered episode with no refused call             good = None (unknown; not exported by default)
 """
 
 from __future__ import annotations
@@ -27,6 +29,7 @@ class Episode:
     tool_calls: list[Span] = field(default_factory=list)
     approvals: list[Span] = field(default_factory=list)
     evaluations: list[Span] = field(default_factory=list)
+    selections: list[Span] = field(default_factory=list)
 
     @property
     def id(self) -> str:
@@ -52,6 +55,8 @@ class Episode:
             p = self.approvals[-1].attrs
             ok = bool(p.get("approved")) and bool(p.get("committed"))
             return {**out, "good": ok, "why": "approved" if ok else f"not approved: {p.get('note') or p.get('reason', '')}"}
+        if self.selections and not (s := self.selections[-1].attrs).get("chosen") and not s.get("same_draft"):
+            return {**out, "good": False, "why": f"not chosen: the chosen draft had {s.get('agree')} of {s.get('of')} runs"}
         return {**out, "good": None, "why": "not judged"}
 
     def turns(self) -> list[tuple[list[Message], AssistantTurn]]:
@@ -75,7 +80,7 @@ def episodes(folder: Path | str) -> Iterator[Episode]:
         ep = Episode(top)
         for s in spans:
             {"model_call": ep.model_calls, "tool_call": ep.tool_calls, "approval": ep.approvals,
-             "evaluation": ep.evaluations}.get(s.kind, []).append(s)
+             "evaluation": ep.evaluations, "selection": ep.selections}.get(s.kind, []).append(s)
         ep.model_calls.sort(key=lambda s: s.seq)
         ep.tool_calls.sort(key=lambda s: s.seq)
         yield ep
