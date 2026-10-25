@@ -105,3 +105,15 @@ def test_a_reset_connection_is_told_apart_from_an_outage():
     except LLMError as wrapped:
         assert _reset(wrapped)
     assert not _reset(ConnectionRefusedError("no server")) and not _reset(LLMError("local server 500"))
+
+
+def test_the_app_takes_the_fast_path_only_without_a_model():
+    """The fine-tuned reader is right on 99.8% of the test split, the fast path's rule parser on 52%."""
+    from web.world import World
+
+    w = World(parser_mode="offline", seed_history=False, deadline=60)
+    assert w._fast_path_now()  # offline: the rule parser reads everything anyway
+    w.model_link = ModelLink(lambda: object())
+    assert not w._fast_path_now()  # the model is up: it reads
+    w.model_link = ModelLink(lambda: object(), probe=lambda c: (_ for _ in ()).throw(ConnectionError("gone")))
+    assert w._fast_path_now()  # unreachable: the fast path again

@@ -156,6 +156,7 @@ class Orchestrator:
         fast_parser=None,
         system_one=None,
         tau: float = 0.9,
+        use_fast_path: Callable[[], bool] | None = None,
         policy_agent: PolicyAgent | None = None,
         responders: Mapping[str, Responder] | None = None,
         approvers: Iterable[str] = ("C-TT",),
@@ -175,6 +176,10 @@ class Orchestrator:
         swaps, extra classes, cancellations and withdrawals are routed by what it read. ``compile`` may
         return None (a stand-in without intents answers): the request is then parsed as before.
 
+        ``use_fast_path``: whether, right now, a request System One is sure of may go to ``fast_parser``
+        (always when omitted). The web app takes it only while the model is unreachable: the fine-tuned reader
+        reads far better than the fast parser, which System One's confidence does not show.
+
         ``club_desk`` books a club activity from a message (``ClubRef``) and returns the reply and the outcome
         (booked, rejected, or needs_approval: the timetable office decides); without one, club bookings go to
         the coordinator."""
@@ -184,6 +189,7 @@ class Orchestrator:
         self.fast_parser = fast_parser
         self.system_one = system_one
         self.tau = tau
+        self.use_fast_path = use_fast_path
         self.policy = policy_agent
         self.negotiator = negotiator
         self.responders = dict(responders or {})
@@ -232,10 +238,13 @@ class Orchestrator:
         if self.system_one is not None:
             d = self.system_one.decide(r)
             # plain Python values: numpy scalars from System One cannot be sent as JSON
-            fast = bool(d.fast_path(self.tau)) and self.fast_parser is not None
+            sure = bool(d.fast_path(self.tau)) and self.fast_parser is not None
+            fast = sure and (self.use_fast_path is None or self.use_fast_path())
             case.routing = {"request_type": d.request_type.value, "type_p": round(float(d.type_p), 4),
                             "action": d.action.value, "action_p": round(float(d.action_p), 4),
                             "tau": float(self.tau), "fast_path": fast, "latency_ms": round(float(d.latency_ms), 2)}
+            if sure and not fast:
+                case.routing["fast_path_skipped"] = True  # sure, but the model reads it
             if fast:
                 case.route = "fast"
                 result = self._read(case, self.fast_parser)

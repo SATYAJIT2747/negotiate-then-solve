@@ -532,3 +532,36 @@ def test_without_choices_switched_on_nobody_is_asked(world):
     orch.responders[who] = picker
     c = orch.submit(req("R-32", who, "MOVE-ANY"))
     assert c.status == S.AWAITING_APPROVAL and not picker.seen
+
+
+# -- the fast path (System One -> the rule parser) only while it is allowed -----------------------------------
+
+
+class Sure:
+    """System One, sure of every request."""
+
+    def decide(self, request):
+        from types import SimpleNamespace
+
+        kind = SimpleNamespace(value="room_issue")
+        return SimpleNamespace(request_type=kind, type_p=0.99, action=SimpleNamespace(value="compile"), action_p=0.99,
+                               latency_ms=1.0, fast_path=lambda tau: True)
+
+
+class Counting(GoldParser):
+    def __init__(self, inner):
+        self.instance, self.outputs, self.calls = inner.instance, inner.outputs, 0
+
+    def parse(self, request):
+        self.calls += 1
+        return super().parse(request)
+
+
+@pytest.mark.parametrize("allowed, route", [(None, "fast"), (lambda: True, "fast"), (lambda: False, "system_two")])
+def test_the_fast_path_is_taken_only_when_allowed(world, allowed, route):
+    _, orch, store, owners = world
+    fast = Counting(orch.parser)
+    orch.system_one, orch.fast_parser, orch.use_fast_path = Sure(), fast, allowed
+    c = orch.submit(req("R-F", owners["R-A"], "REQUEST-A"))
+    assert c.route == route and fast.calls == (route == "fast")
+    assert c.routing.get("fast_path_skipped", False) is (route == "system_two")

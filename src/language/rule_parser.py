@@ -41,13 +41,16 @@ _DAY = re.compile(r"\b(mon|tue|tues|wed|wednes|thu|thur|thurs|fri|sat|satur|sun)
 _RANGE = re.compile(r"\b(mon|tue|wed|thu|fri)\w*\s*(?:to|-|–|through|till|until)\s*(mon|tue|wed|thu|fri)\w*", re.IGNORECASE)
 _WEEKS = re.compile(r"\bweeks?\s+(\d{1,2})(?:\s*(?:-|–|to|and)\s*(\d{1,2}))?", re.IGNORECASE)
 _TIME = re.compile(r"\b(\d{1,2})(?::\d\d)?\s*(am|pm)\b", re.IGNORECASE)
-_INJECTION = re.compile(r"(?im)^.*(ignore (all |previous )|system:|admin mode|assistant[,:]|approve all|"
-                        r"publish (it |immediately|now)|override|</message>).*$")
+_INJECTION = re.compile(r"(?im)^.*(ignore (all |previous )|ignore (your|the|any|these) (rules|instructions|polic)|"
+                        r"system:|admin mode|assistant[,:]|approve all|publish (it |immediately|now)|override|"
+                        r"</message>).*$")
 UNAVAILABLE = re.compile(r"\b(conference|away|leave|unavailable|can't|cannot|can not|won't be|not be available|"
                          r"appointment|duty|out of station|travelling|traveling|not available)\b", re.IGNORECASE)
 WISH = re.compile(r"\b(prefer|rather|if possible|would like|avoid|try to|keep .* free|where possible)\b", re.IGNORECASE)
 ONLY = re.compile(r"\b(only|limit(ed)? to|restrict|keep my (lectures|classes|teaching) to|all my teaching on)\b", re.IGNORECASE)
-AVOID = re.compile(r"\b(no classes|not teach|avoid|free|nothing before|don't schedule|do not schedule|rather not)\b", re.IGNORECASE)
+AVOID = re.compile(r"\b(no classes|not teach|avoid|free|nothing before|don't schedule|do not schedule|rather not)\b|"
+                   # "Mondays off", "a day off", "Friday afternoons off": kept free, though said with "I want"
+                   r"\b(days?|mon|tue|wed|thu|fri|sat|sun|mornings?|afternoons?|evenings?)\w* off\b", re.IGNORECASE)
 QUESTION = re.compile(r"\b(rule|allowed|permitted|permissible|policy|who (has|needs) to approve|how many|"
                       r"can classes|is it ok)\b", re.IGNORECASE)
 # "it has to be on Wednesday at 2 pm": where a class should be, not when the teacher is free
