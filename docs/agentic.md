@@ -26,7 +26,7 @@ every model mistake becomes an error the model sees (and a training example), no
 | `nts.data` | episodes rebuilt from telemetry, labels (scenario verdict > approval > none), SFT / DPO exporters | done |
 | `nts.agents` | agent configs: `READER` (read-only questions), `COORDINATOR` (questions, changes, talk), `COORDINATOR_V1` (no talk) | done |
 | `nts.eval` | scenario families from the department's own names; checks on the committed state; runner + report | done |
-| `nts.api` | FastAPI + server-sent events of each turn | later |
+| `nts.api` | FastAPI: episodes in threads, their spans as server-sent events, inbox and replies, approval; one web page | done |
 
 ## Tools, by scope
 
@@ -54,8 +54,8 @@ matches nothing is refused with `did_you_mean`, so the model fixes the call on i
 5. Talk tools, negotiation with simulators, API and UI.
    - 5a. Talk tools, waiting for answers, simulated people, the `clarify` / `negotiate` / `negotiate_refused`
      families. **(done)**
-   - 5b. API: FastAPI, server-sent events of each turn, a person answering an episode that waits.
-   - 5c. UI on the API.
+   - 5b. API: FastAPI, server-sent events of each turn, a person answering an episode that waits. **(done)**
+   - 5c. UI on the API: `nts/api/static/index.html`, served at `/`. **(done)**
 
 ## Talking to people
 
@@ -80,6 +80,21 @@ teacher's draft cannot otherwise touch another teacher's rules.
 
 (`PYTHONPATH=src` and the main repo's venv when uv cannot install offline.) A recorded episode replays on the
 store as it was: `store.fork(span.attrs["state_version"])` plus `ReplayModel.from_spans(...)`.
+
+## The API and the page
+
+    python -m nts serve --store runs/agentic/demo.jsonl --model llama --adapter <lora> --port 8100
+    python -m nts serve --model gemini --env ../negotiate-then-solve/.env --simulate   # stand-ins answer asks
+
+Open http://127.0.0.1:8100/. Pick who you are (a teacher or the timetable office), send a request and watch
+the agent's turns arrive. When it asks something, the episode waits in the inbox of the person asked (the
+requester, or the teacher whose rule it wants waived), who answers on the page; the office approves a
+submitted draft, which commits it through the kernel. Each episode runs in a thread; every span the harness
+writes becomes an event (`model`, `tool`, `reply`, `waiting`, `end`, `decision`) on
+`GET /api/episodes/{id}/events` (server-sent events; the stream ends when the episode ends or waits, and the
+client reconnects with `?after=n` once it has replied). `GET /api/episodes/{id}/poll` gives the same as JSON.
+Who is calling is taken on trust (`actor`, `person`); behind a real login the server would take it from the
+session. Approving commits to the store file, so try things on a copy of a store you want to keep.
 
 ## Running the tests
 

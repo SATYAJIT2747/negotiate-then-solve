@@ -1,0 +1,320 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Timetable Office Agent</title>
+<style>
+:root {
+  --bg: #f6f5f2; --panel: #ffffff; --ink: #1d1d1b; --muted: #6b6a66; --line: #e3e1db;
+  --accent: #2f5d8a; --accent-ink: #ffffff; --ok: #2e7d4f; --warn: #a86a12; --bad: #b23a3a;
+  --soft: #eef2f6; --code: #f1efe9;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #161715; --panel: #1f201e; --ink: #ecebe6; --muted: #9c9a93; --line: #34352f;
+    --accent: #7fb0e0; --accent-ink: #10171f; --ok: #6cc28f; --warn: #e0a64c; --bad: #e07a7a;
+    --soft: #232a31; --code: #2a2b27;
+  }
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--ink); font: 14px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif; }
+header { display: flex; gap: 16px; align-items: center; padding: 10px 20px; border-bottom: 1px solid var(--line); background: var(--panel); flex-wrap: wrap; }
+header h1 { font-size: 16px; margin: 0; font-weight: 650; }
+header .meta { color: var(--muted); font-size: 12px; }
+header .me { margin-left: auto; display: flex; gap: 8px; align-items: center; }
+select, input, textarea, button { font: inherit; color: inherit; }
+select, input, textarea { background: var(--panel); border: 1px solid var(--line); border-radius: 6px; padding: 6px 8px; }
+textarea { width: 100%; resize: vertical; min-height: 64px; }
+button { border: 1px solid var(--line); background: var(--panel); border-radius: 6px; padding: 6px 12px; cursor: pointer; }
+button.primary { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); }
+button.danger { color: var(--bad); }
+button:disabled { opacity: .5; cursor: default; }
+main { display: grid; grid-template-columns: 320px 1fr; gap: 16px; padding: 16px 20px; max-width: 1500px; margin: 0 auto; }
+@media (max-width: 860px) { main { grid-template-columns: 1fr; padding: 12px 16px; } }
+.panel { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 14px; }
+.panel h2 { font-size: 13px; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); margin: 0 0 10px; font-weight: 600; }
+.stack > * + * { margin-top: 12px; }
+.row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.list { list-style: none; margin: 0; padding: 0; }
+.list li { padding: 8px; border-radius: 6px; cursor: pointer; border: 1px solid transparent; }
+.list li:hover { background: var(--soft); }
+.list li.sel { border-color: var(--accent); background: var(--soft); }
+.list .req { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.small { font-size: 12px; color: var(--muted); }
+.badge { display: inline-block; font-size: 11px; padding: 1px 7px; border-radius: 999px; border: 1px solid currentColor; }
+.s-running { color: var(--accent); } .s-waiting { color: var(--warn); } .s-submitted { color: var(--accent); }
+.s-approved, .s-answered { color: var(--ok); } .s-declined, .s-escalated { color: var(--warn); }
+.s-rejected, .s-model_error, .s-budget_exhausted, .s-stuck, .s-not_committed { color: var(--bad); }
+.tabs { display: flex; gap: 4px; margin-bottom: 12px; }
+.tabs button.on { background: var(--soft); border-color: var(--accent); }
+.turn { border-left: 3px solid var(--line); padding: 4px 0 4px 12px; margin: 8px 0; }
+.turn.model { border-color: var(--accent); }
+.turn.ask { border-color: var(--warn); }
+.turn.end { border-color: var(--ok); }
+.turn.bad { border-color: var(--bad); }
+.call { font-family: ui-monospace, "Cascadia Code", Consolas, monospace; font-size: 12px; background: var(--code); border-radius: 4px; padding: 1px 6px; }
+details summary { cursor: pointer; color: var(--muted); font-size: 12px; }
+pre { background: var(--code); padding: 8px; border-radius: 6px; overflow: auto; font-size: 12px; max-height: 260px; margin: 6px 0 0; }
+.callout { border: 1px solid var(--warn); border-radius: 8px; padding: 12px; background: color-mix(in srgb, var(--warn) 8%, transparent); }
+.callout.ok { border-color: var(--ok); background: color-mix(in srgb, var(--ok) 8%, transparent); }
+.empty { color: var(--muted); padding: 24px; text-align: center; }
+table.grid { border-collapse: collapse; width: 100%; table-layout: fixed; font-size: 12px; }
+table.grid th, table.grid td { border: 1px solid var(--line); padding: 4px; vertical-align: top; }
+table.grid th { background: var(--soft); font-weight: 600; }
+table.grid td.h { width: 64px; color: var(--muted); white-space: nowrap; }
+.cls { background: var(--soft); border-radius: 4px; padding: 3px 5px; margin-bottom: 3px; }
+.cls b { display: block; font-weight: 600; }
+.scroll { overflow-x: auto; }
+.inbox-dot { background: var(--warn); color: #fff; border-radius: 999px; padding: 0 7px; font-size: 11px; }
+</style>
+</head>
+<body>
+<header>
+  <h1>Timetable office agent</h1>
+  <span class="meta" id="meta"></span>
+  <div class="me">
+    <label class="small" for="me">You are</label>
+    <select id="me"></select>
+    <span id="inboxDot"></span>
+  </div>
+</header>
+<main>
+  <aside class="stack">
+    <section class="panel stack">
+      <h2>New request</h2>
+      <textarea id="text" placeholder="e.g. I have a conference next Tuesday, please move my classes that day."></textarea>
+      <div class="row">
+        <label class="small" for="week">Week</label>
+        <select id="week"></select>
+        <label class="small"><input type="checkbox" id="simulate"> stand-ins answer</label>
+        <button class="primary" id="send" style="margin-left:auto">Send</button>
+      </div>
+      <div class="small" id="sendErr"></div>
+    </section>
+    <section class="panel">
+      <h2>Waiting for you</h2>
+      <ul class="list" id="inbox"></ul>
+    </section>
+    <section class="panel">
+      <h2>Requests</h2>
+      <ul class="list" id="episodes"></ul>
+    </section>
+  </aside>
+  <section>
+    <div class="tabs">
+      <button id="tabEp" class="on">Request</button>
+      <button id="tabTt">Timetable</button>
+    </div>
+    <div id="viewEp" class="panel stack"><div class="empty">Send a request, or pick one on the left.</div></div>
+    <div id="viewTt" class="panel stack" hidden>
+      <div class="row">
+        <label class="small" for="ttWeek">Week</label><select id="ttWeek"></select>
+        <label class="small" for="ttWho">Show</label><select id="ttWho"></select>
+        <span class="small" id="ttNote"></span>
+      </div>
+      <div class="scroll" id="ttGrid"></div>
+    </div>
+  </section>
+</main>
+<script>
+const $ = (id) => document.getElementById(id);
+const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({"&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;"}[c]));
+const OFFICE = "office";
+let dep = null, current = null, events = [], source = null;
+
+function store(key, value) { try { value === undefined ? null : localStorage.setItem(key, value); return localStorage.getItem(key); } catch { return null; } }
+
+async function api(path, opts = {}) {
+  const r = await fetch(path, {headers: {"Content-Type": "application/json"}, ...opts});
+  const body = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error(typeof body.detail === "string" ? body.detail : (body.detail?.message || r.statusText));
+  return body;
+}
+
+function me() { return $("me").value; }
+function isOffice() { return me() === OFFICE; }
+
+async function boot() {
+  dep = await api("/api/department");
+  $("meta").textContent = `${dep.model} · ${dep.agent} · ${dep.teachers.length} teachers · version ${dep.version.slice(0, 8)}`;
+  const people = [[OFFICE, "Timetable office"], ...dep.teachers.map((t) => [t, t])];
+  $("me").innerHTML = people.map(([v, l]) => `<option value="${esc(v)}">${esc(l)}</option>`).join("");
+  $("me").value = store("nts.me") && people.some(([v]) => v === store("nts.me")) ? store("nts.me") : OFFICE;
+  const weeks = Array.from({length: dep.weeks}, (_, i) => i + 1);
+  for (const id of ["week", "ttWeek"]) $(id).innerHTML = weeks.map((w) => `<option>${w}</option>`).join("");
+  $("week").value = $("ttWeek").value = store("nts.week") || 5;
+  $("ttWho").innerHTML = `<option value="">Everyone</option>` +
+    dep.teachers.map((t) => `<option value="t:${esc(t)}">${esc(t)}</option>`).join("") +
+    dep.sections.map((s) => `<option value="s:${esc(s)}">${esc(s)}</option>`).join("");
+  $("simulate").checked = dep.simulate;
+  $("me").onchange = () => { store("nts.me", me()); refreshLists(); render(); if (!isOffice()) $("ttWho").value = `t:${me()}`; };
+  $("week").onchange = () => store("nts.week", $("week").value);
+  $("send").onclick = send;
+  $("text").onkeydown = (e) => { if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) send(); };
+  $("tabEp").onclick = () => tab("ep"); $("tabTt").onclick = () => tab("tt");
+  $("ttWeek").onchange = $("ttWho").onchange = timetable;
+  refreshLists(); setInterval(refreshLists, 4000);
+}
+
+function tab(which) {
+  $("viewEp").hidden = which !== "ep"; $("viewTt").hidden = which !== "tt";
+  $("tabEp").classList.toggle("on", which === "ep"); $("tabTt").classList.toggle("on", which === "tt");
+  if (which === "tt") timetable();
+}
+
+async function send() {
+  const text = $("text").value.trim();
+  if (!text) return;
+  $("send").disabled = true; $("sendErr").textContent = "";
+  try {
+    const ep = await api("/api/episodes", {method: "POST", body: JSON.stringify(
+      {request: text, actor: me(), week: Number($("week").value), simulate: $("simulate").checked})});
+    $("text").value = "";
+    open(ep.id);
+    refreshLists();
+  } catch (e) { $("sendErr").textContent = e.message; }
+  $("send").disabled = false;
+}
+
+async function refreshLists() {
+  try {
+    const [eps, inbox] = await Promise.all([api("/api/episodes"), api(`/api/inbox?person=${encodeURIComponent(me())}`)]);
+    $("episodes").innerHTML = eps.length ? eps.map(item).join("") : `<li class="small">None yet.</li>`;
+    $("inbox").innerHTML = inbox.length ? inbox.map(item).join("") : `<li class="small">Nothing waits for you.</li>`;
+    $("inboxDot").innerHTML = inbox.length ? `<span class="inbox-dot">${inbox.length}</span>` : "";
+    for (const li of document.querySelectorAll("li[data-id]")) li.onclick = () => open(li.dataset.id);
+  } catch { /* the server may be restarting */ }
+}
+
+function item(e) {
+  return `<li data-id="${esc(e.id)}" class="${current?.id === e.id ? "sel" : ""}">
+    <div class="req">${esc(e.request)}</div>
+    <div class="row small"><span class="badge s-${esc(e.status)}">${esc(e.status.replace("_", " "))}</span>
+    ${esc(e.actor)}${e.week ? ` · week ${e.week}` : ""}</div></li>`;
+}
+
+async function open(id) {
+  tab("ep");
+  if (source) source.close();
+  events = [];
+  current = await api(`/api/episodes/${id}`);
+  render();
+  follow();
+}
+
+function follow() {
+  if (!current) return;
+  const id = current.id;
+  source = new EventSource(`/api/episodes/${id}/events?after=${events.length}`);
+  const take = async (msg) => {
+    const e = JSON.parse(msg.data);
+    if (current?.id !== id || e.n < events.length) return;
+    events.push(e);
+    if (["end", "waiting", "decision"].includes(e.type)) {
+      current = await api(`/api/episodes/${id}`);
+      refreshLists();
+    }
+    render();
+  };
+  for (const t of ["model", "model_error", "tool", "reply", "waiting", "end", "decision"]) source.addEventListener(t, take);
+  source.onerror = () => source.close();  // the server ends the stream when the episode ends or waits: do not reconnect
+}
+
+function args(a) {
+  return Object.entries(a || {}).map(([k, v]) => `${k}: ${typeof v === "string" ? v : JSON.stringify(v)}`).join(", ");
+}
+
+function eventHtml(e) {
+  if (e.type === "model") {
+    const said = e.text ? `<div>${esc(e.text)}</div>` : "";
+    const calls = e.calls.map((c) => `<span class="call">${esc(c.name)}(${esc(args(c.arguments))})</span>`).join(" ");
+    return `<div class="turn model"><div class="small">agent · ${Math.round(e.ms)} ms</div>${said}${calls}</div>`;
+  }
+  if (e.type === "tool") {
+    return `<div class="turn ${e.ok ? "" : "bad"}"><details><summary>${esc(e.name)} ${e.ok ? "answered" : "refused: " + esc(e.result?.message || "")}</summary>
+      <pre>${esc(JSON.stringify(e.result, null, 1))}</pre></details></div>`;
+  }
+  if (e.type === "reply") {
+    const what = e.kind === "offer" ? `asked ${esc(e.to)} to waive <i>${esc(e.rule)}</i>` :
+      e.kind === "notice" ? `told ${esc(e.to)}` : `asked ${esc(e.to)}`;
+    const ans = e.kind === "notice" ? "" : `<div><b>${esc(e.to)}:</b> ${e.answer === "no_reply" ? "<i>no reply</i>" : esc(e.says)}${e.answer === "yes" || e.answer === "no" ? ` <span class="badge s-${e.answer === "yes" ? "approved" : "rejected"}">${e.answer}</span>` : ""}</div>`;
+    return `<div class="turn ask"><div class="small">${what}</div><div>“${esc(e.text)}”</div>${ans}</div>`;
+  }
+  if (e.type === "model_error") return `<div class="turn bad">The model failed: ${esc(e.error?.message || "")}</div>`;
+  if (e.type === "waiting") return `<div class="turn ask small">Waiting for an answer…</div>`;
+  if (e.type === "end") return `<div class="turn end"><span class="badge s-${esc(e.status)}">${esc(e.status.replace("_", " "))}</span> ${esc(e.text || e.detail)}
+    <div class="small">${e.turns ?? "?"} turns · ${e.tool_calls ?? "?"} tool calls · ${e.refused ?? 0} refused</div></div>`;
+  if (e.type === "decision") return `<div class="turn end small">${e.approved ? `Approved by the office: committed as version ${esc((e.version || "").slice(0, 8))}` : `Not approved${e.note ? ": " + esc(e.note) : ""}`}</div>`;
+  return "";
+}
+
+function render() {
+  for (const li of document.querySelectorAll("#episodes li, #inbox li")) li.classList.toggle("sel", li.dataset.id === current?.id);
+  if (!current) return;
+  const c = current, p = c.pending;
+  const running = c.busy || c.status === "running";
+  let html = `<div><div class="small">${esc(c.actor)}${c.week ? ` · week ${c.week}` : ""} · ${esc(c.started.replace("T", " "))}</div>
+    <div style="font-size:16px;margin-top:4px">${esc(c.request)}</div></div>`;
+  html += events.map(eventHtml).join("") + (running ? `<div class="small">The agent is working…</div>` : "");
+  if (p && !c.busy) {
+    const mine = p.to === me() || (p.to_requester && c.actor === me()) || (p.to_requester && c.actor === "the timetable office" && isOffice());
+    html += `<div class="callout stack"><div class="small">${p.kind === "offer" ? `An offer for ${esc(p.to)}` : `A question for ${esc(p.to)}`}</div>
+      <div>“${esc(p.text)}”</div>${p.rule ? `<div class="small">Their rule: ${esc(p.rule)}; waived in ${p.weeks.length ? "week " + p.weeks.join(", ") : "every week"}</div>` : ""}
+      ${mine ? "" : `<div class="small">You are not ${esc(p.to)}; you can still answer for them in this demo.</div>`}
+      <textarea id="answer" placeholder="${p.kind === "offer" ? "Say why (optional)" : "Your answer"}"></textarea>
+      <div class="row">${p.kind === "offer"
+        ? `<button class="primary" data-a="yes">Agree</button><button data-a="no">Refuse</button>`
+        : `<button class="primary" data-a="said">Answer</button>`}<button data-a="no_reply">Don't answer</button></div></div>`;
+  }
+  if (c.status === "submitted" || c.decision) {
+    html += `<div class="callout ok stack"><div class="small">The draft${c.decision ? "" : ", waiting for the office"}</div>
+      <ul>${c.draft.map((d) => `<li>${esc(d)}</li>`).join("") || "<li>(no rule changes)</li>"}</ul>
+      ${c.stale ? `<div class="small">The timetable changed since this draft was made; run the request again.</div>` : ""}
+      ${c.status === "submitted" && !c.stale ? (isOffice()
+        ? `<div class="row"><button class="primary" id="approve">Approve and commit</button><input id="note" placeholder="Note (for a rejection)"><button class="danger" id="reject">Reject</button></div>`
+        : `<div class="small">Switch to the timetable office to approve it.</div>`) : ""}</div>`;
+  }
+  $("viewEp").innerHTML = html;
+  for (const b of document.querySelectorAll("[data-a]")) b.onclick = () => answer(b.dataset.a);
+  if ($("approve")) $("approve").onclick = () => decide("approve");
+  if ($("reject")) $("reject").onclick = () => decide("reject");
+}
+
+async function answer(kind) {
+  const text = $("answer")?.value.trim() || "";
+  if (kind === "said" && !text) { $("answer").focus(); return; }
+  try {
+    current = await api(`/api/episodes/${current.id}/reply`, {method: "POST", body: JSON.stringify({answer: kind, text})});
+    render(); follow(); refreshLists();
+  } catch (e) { alert(e.message); }
+}
+
+async function decide(what) {
+  try {
+    const body = what === "reject" ? JSON.stringify({note: $("note").value}) : "{}";
+    current = await api(`/api/episodes/${current.id}/${what}`, {method: "POST", body});
+    events = []; follow(); refreshLists();
+    if (what === "approve") { dep = await api("/api/department"); $("meta").textContent = `${dep.model} · ${dep.agent} · ${dep.teachers.length} teachers · version ${dep.version.slice(0, 8)}`; }
+  } catch (e) { alert(e.message); }
+}
+
+async function timetable() {
+  const who = $("ttWho").value, q = new URLSearchParams({week: $("ttWeek").value});
+  if (who.startsWith("t:")) q.set("teacher", who.slice(2));
+  if (who.startsWith("s:")) q.set("section", who.slice(2));
+  try {
+    const t = await api(`/api/timetable?${q}`);
+    $("ttNote").textContent = t.own ? "this week has its own timetable" : "the semester timetable runs this week";
+    const hours = dep.hours.slice(0, -1);
+    const cell = (day, h) => t.classes.filter((c) => c.day === day && c.from === h).map((c) =>
+      `<div class="cls"><b>${esc(c.course)}</b>${esc(c.kind)} · ${esc(c.teacher)}<br>${esc(c.sections.join(", "))} · ${esc(c.room)}</div>`).join("");
+    $("ttGrid").innerHTML = `<table class="grid"><tr><th class="h"></th>${dep.days.map((d) => `<th>${esc(d)}</th>`).join("")}</tr>` +
+      hours.map((h) => `<tr><td class="h">${esc(h)}${h === dep.lunch ? "<br>lunch" : ""}</td>${dep.days.map((d) => `<td>${cell(d, h)}</td>`).join("")}</tr>`).join("") + "</table>";
+  } catch (e) { $("ttGrid").innerHTML = `<div class="empty">${esc(e.message)}</div>`; }
+}
+
+boot().catch((e) => { $("viewEp").innerHTML = `<div class="empty">Could not reach the API: ${esc(e.message)}</div>`; });
+</script>
+</body>
+</html>

@@ -7,6 +7,7 @@
     python -m nts ask "..." --model llama --url http://10.1.25.191:8080/v1 --adapter nts-agent-v1-read-100 --agent coordinator-v1
     python -m nts eval --model gemini --per-family 3 --seed 0      # a scenario suite, judged; report in runs/eval
     python -m nts export --out data/agent-v1 --models gemini        # SFT / DPO rows from judged episodes
+    python -m nts serve --model llama --adapter <lora> --port 8100   # the API and its page, http://127.0.0.1:8100/
 """
 
 from __future__ import annotations
@@ -63,9 +64,14 @@ def main(argv: list[str] | None = None) -> int:
     x.add_argument("--include-unjudged", action="store_true")
     x.add_argument("--keep-errors", action="store_true")
     x.add_argument("--stores", nargs="*", type=Path, help="only episodes run on these stores")
-    for q in (a, e, x):
+    v = sub.add_parser("serve", help="the API and its web page")
+    v.add_argument("--store", type=Path, default=DEFAULT_STORE)
+    v.add_argument("--host", default="127.0.0.1")
+    v.add_argument("--port", type=int, default=8100)
+    v.add_argument("--simulate", action="store_true", help="stand-ins answer the agent's asks (no one waits)")
+    for q in (a, e, x, v):
         q.add_argument("--telemetry", type=Path, default=DEFAULT_ROOT)
-    for q in (a, e):
+    for q in (a, e, v):
         q.add_argument("--agent", choices=sorted(AGENTS), default="coordinator")
         q.add_argument("--model", choices=["gemini", "llama"], default="gemini")
         q.add_argument("--gemini-model")
@@ -75,7 +81,7 @@ def main(argv: list[str] | None = None) -> int:
         q.add_argument("--max-tokens", type=int, help="token budget of an episode (default: the agent's for Gemini, "
                                                        "none for a local model)")
     args = p.parse_args(argv)
-    return {"init": init, "ask": ask, "eval": evaluate, "export": export_rows}[args.cmd](args)
+    return {"init": init, "ask": ask, "eval": evaluate, "export": export_rows, "serve": serve}[args.cmd](args)
 
 
 def init(args: argparse.Namespace) -> int:
@@ -166,6 +172,19 @@ def ask(args: argparse.Namespace) -> int:
             print("not committed: the kernel refused it (see the approval span)", file=sys.stderr)
             return 1
         print(f"committed: version {store.version}")
+    return 0
+
+
+def serve(args: argparse.Namespace) -> int:
+    import uvicorn
+
+    from nts.api import Service, create_app
+
+    service = Service(Store.open(args.store), make_model(args), default_tracer(args.telemetry),
+                      agent=budgeted(AGENTS[args.agent], args), simulate=args.simulate)
+    print(f"{args.store} at {service.store.version}; {service.harness.model.name}, agent {service.agent.name}: "
+          f"http://{args.host}:{args.port}/")
+    uvicorn.run(create_app(service), host=args.host, port=args.port, log_level="warning")
     return 0
 
 
