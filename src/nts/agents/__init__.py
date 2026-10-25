@@ -46,7 +46,7 @@ If a tool refuses a name, use a name it suggests. Keep messages short and plain.
 _UNCLEAR = "4. If the request is unclear (which class? which week?), do not guess: answer with your question instead."
 assert _UNCLEAR in COORDINATOR_V1.prompt
 
-COORDINATOR = AgentConfig(
+COORDINATOR_V2 = AgentConfig(  # talk tools: what nts-agent-v2 is trained on
     name="coordinator",
     scopes=frozenset({Scope.READ, Scope.DRAFT, Scope.EVALUATE, Scope.TALK, Scope.END}),
     budgets=Budgets(max_turns=14, max_tool_calls=28, max_tokens=40_000),  # asks and offers take more turns
@@ -58,8 +58,6 @@ COORDINATOR = AgentConfig(
    another time would do. Rules marked "already agreed" are not offered: escalate those.
 6. message_party only to tell a teacher something they must know; it gets no answer."""),
 )
-
-COORDINATOR_V2 = COORDINATOR  # talk tools: what nts-agent-v2 is trained on
 
 _TALK = "6. message_party only to tell a teacher something they must know; it gets no answer."
 _OFFER = "   another time would do. Rules marked \"already agreed\" are not offered: escalate those."
@@ -76,5 +74,7 @@ COORDINATOR_V3 = AgentConfig(  # talk, the regulations and fairness
    row than allowed), or someone asks what the rules are, look it up with rules. If you decline because of
    a rule, cite it (its number and id) in your message."""),
 )
+
+COORDINATOR = COORDINATOR_V3  # the latest; serve an adapter with the version it was trained on (--agent)
 
 __all__ = ["COORDINATOR", "COORDINATOR_V1", "COORDINATOR_V2", "COORDINATOR_V3", "READER"]

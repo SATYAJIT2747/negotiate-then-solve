@@ -181,4 +181,4 @@ def test_calls_after_an_end_tool_are_not_run(store):
 
 def test_scopes_of_the_coordinator():
     assert COORDINATOR_V1.scopes == {Scope.READ, Scope.DRAFT, Scope.EVALUATE, Scope.END}
-    assert COORDINATOR.scopes == COORDINATOR_V1.scopes | {Scope.TALK}
+    assert COORDINATOR.scopes == COORDINATOR_V1.scopes | {Scope.TALK, Scope.POLICY}

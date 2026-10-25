@@ -113,7 +113,7 @@ session. Approving commits to the store file, so try things on a copy of a store
   closed" rule in the log, so later repairs keep out of it.
 
 Agent versions: `COORDINATOR_V1` (no talk; nts-agent-v1), `COORDINATOR_V2` (talk; nts-agent-v2's data),
-`COORDINATOR_V3` (talk, rules, fairness). `COORDINATOR` is v2 while v2's episodes are collected. `nts eval`
+`COORDINATOR_V3` (talk, rules, fairness) = `COORDINATOR`. Serve an adapter with the version it was trained on (`--agent coordinator-v2`). `nts eval`
 picks the families an agent has the tools for.
 
 ## Sign-in and roles
