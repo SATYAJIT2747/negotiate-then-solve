@@ -75,10 +75,15 @@ def main(argv: list[str] | None = None) -> int:
     x.add_argument("--stores", nargs="*", type=Path, help="only episodes run on these stores")
     x.add_argument("--agent", choices=sorted(AGENTS), help="only episodes of this agent's tools")
     v = sub.add_parser("serve", help="the API and its web page")
-    v.add_argument("--store", type=Path, default=DEFAULT_STORE)
+    v.add_argument("--store", type=Path, nargs="+", default=[DEFAULT_STORE], help="one store per department")
+    v.add_argument("--users", type=Path, help="passwords (python -m nts passwd); none: sign in by name alone")
     v.add_argument("--host", default="127.0.0.1")
     v.add_argument("--port", type=int, default=8100)
     v.add_argument("--simulate", action="store_true", help="stand-ins answer the agent's asks (no one waits)")
+    w = sub.add_parser("passwd", help="set a sign-in password for the API")
+    w.add_argument("name", help="a teacher's name, or 'office'")
+    w.add_argument("--dept", default=DEFAULT_STORE.stem, help="the department: its store's file name without .jsonl")
+    w.add_argument("--users", type=Path, default=Path("runs/agentic/users.json"))
     for q in (a, e, x, v):
         q.add_argument("--telemetry", type=Path, default=DEFAULT_ROOT)
     for q in (a, e, v):
@@ -92,7 +97,8 @@ def main(argv: list[str] | None = None) -> int:
                                                        "none for a local model)")
         q.add_argument("--handbook", type=Path, default=DEFAULT_HANDBOOK, help="the regulations, for the rules tool")
     args = p.parse_args(argv)
-    return {"init": init, "ask": ask, "eval": evaluate, "export": export_rows, "serve": serve}[args.cmd](args)
+    return {"init": init, "ask": ask, "eval": evaluate, "export": export_rows, "serve": serve,
+            "passwd": passwd}[args.cmd](args)
 
 
 def init(args: argparse.Namespace) -> int:
@@ -208,13 +214,34 @@ def ask(args: argparse.Namespace) -> int:
 def serve(args: argparse.Namespace) -> int:
     import uvicorn
 
-    from nts.api import Service, create_app
+    from nts.api import Service, Users, create_app
 
-    service = Service(Store.open(args.store), make_model(args), default_tracer(args.telemetry),
-                      agent=budgeted(AGENTS[args.agent], args), simulate=args.simulate, handbook=handbook(args))
-    print(f"{args.store} at {service.store.version}; {service.harness.model.name}, agent {service.agent.name}: "
-          f"http://{args.host}:{args.port}/")
-    uvicorn.run(create_app(service), host=args.host, port=args.port, log_level="warning")
+    model, tracer, rules = make_model(args), default_tracer(args.telemetry), handbook(args)
+    depts = {path.stem: Service(Store.open(path), model, tracer, agent=budgeted(AGENTS[args.agent], args),
+                                simulate=args.simulate, handbook=rules) for path in args.store}
+    for d, svc in depts.items():
+        print(f"department {d}: {len(svc.store.world.instance.faculty)} teachers, version {svc.store.version}")
+    users = Users.load(args.users) if args.users else Users.open()
+    if not users.needs_password:
+        print("sign-in by name alone (no --users): fine on this machine, not on a network", file=sys.stderr)
+    print(f"{model.name}, agent {args.agent}: http://{args.host}:{args.port}/")
+    uvicorn.run(create_app(depts, users, telemetry=args.telemetry), host=args.host, port=args.port, log_level="warning")
+    return 0
+
+
+def passwd(args: argparse.Namespace) -> int:
+    import getpass
+
+    from nts.api import Users
+
+    users = Users.load(args.users)
+    first = getpass.getpass(f"password for {args.name} in {args.dept}: ")
+    if len(first) < 8 or first != getpass.getpass("again: "):
+        print("not set: the two differ, or it is shorter than 8 characters", file=sys.stderr)
+        return 1
+    users.set(args.dept, "office" if args.name.lower() == "office" else args.name, first)
+    users.save()
+    print(f"set in {args.users}")
     return 0
 
 

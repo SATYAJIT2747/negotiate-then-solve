@@ -3,78 +3,117 @@ import json
 import pytest
 from fastapi.testclient import TestClient
 
-from nts.api import Service, create_app
+from nts.agents import COORDINATOR_V3
+from nts.api import Service, Users, create_app
+from nts.api.auth import check_password, hash_password
 from nts.models import ScriptedModel, call, say
-from nts.telemetry import MemorySink, Tracer
+from nts.policy import Handbook
+from nts.telemetry import MemorySink, SqliteSink, Tracer
 from nts.tools.names import FULL_DAY
 
 
-def client(store, steps, **kw):
-    service = Service(store, ScriptedModel(steps), Tracer([MemorySink()]), **kw)
-    return TestClient(create_app(service)), service
+def app(store, steps, *, users=None, tmp_path=None, **kw):
+    sinks = [MemorySink()] + ([SqliteSink(tmp_path / "index.sqlite")] if tmp_path else [])
+    service = Service(store, ScriptedModel(steps), Tracer(sinks), **kw)
+    extra = {"telemetry": tmp_path, "evals": tmp_path} if tmp_path else {}
+    return create_app({"demo": service}, users, **extra), service
 
 
-def poll_until_idle(c, eid):
-    out = c.get(f"/api/episodes/{eid}/poll", params={"wait": 10}).json()
-    while out["busy"]:
-        out = c.get(f"/api/episodes/{eid}/poll", params={"after": len(out["events"]), "wait": 10}).json()
-    return c.get(f"/api/episodes/{eid}/poll").json()
+def signed_in(application, name, password=""):
+    c = TestClient(application)
+    r = c.post("/api/login", json={"dept": "demo", "name": name, "password": password})
+    assert r.status_code == 200, r.text
+    return c
+
+
+def test_nothing_without_signing_in(store):
+    a, _ = app(store, [])
+    c = TestClient(a)
+    assert c.get("/api/department").status_code == 401
+    assert c.get("/api/departments").json()["departments"][0]["id"] == "demo"
+    assert c.post("/api/login", json={"dept": "demo", "name": "Dr. Nobody"}).status_code == 401
+    assert c.post("/api/login", json={"dept": "other", "name": "office"}).status_code == 404
 
 
 def test_department_and_timetable(store):
-    c, _ = client(store, [])
+    a, _ = app(store, [])
+    t = store.world.instance.faculty[0].name
+    c = signed_in(a, t)
+    assert c.get("/api/me").json() == {"dept": "demo", "name": t, "role": "teacher"}
     dep = c.get("/api/department").json()
     assert dep["teachers"] and dep["weeks"] == 16 and dep["agent"] == "coordinator"
-    t = dep["teachers"][0]
     rows = c.get("/api/timetable", params={"week": 5, "teacher": t}).json()["classes"]
     assert rows and all(r["teacher"] == t for r in rows)
     assert c.get("/api/timetable", params={"teacher": "Dr. Nobody"}).status_code == 404
+    c.post("/api/logout")
+    assert c.get("/api/me").status_code == 401
 
 
-def test_an_ask_waits_in_the_inbox_until_answered(store):
-    teacher = store.world.instance.faculty[2]
-    c, service = client(store, [call("ask_requester", question="Which class?"), say("Thanks, noted.")])
-    ep = c.post("/api/episodes", json={"request": "move my class", "actor": teacher.name, "week": 5}).json()
+def test_passwords_when_there_is_a_users_file(store, tmp_path):
+    stored = hash_password("correct horse")
+    assert check_password("correct horse", stored) and not check_password("wrong", stored)
+    users = Users.load(tmp_path / "users.json")
+    t = store.world.instance.faculty[0].name
+    users.set("demo", t, "correct horse")
+    users.save()
+    a, _ = app(store, [], users=Users.load(tmp_path / "users.json"))
+    c = TestClient(a)
+    assert c.post("/api/login", json={"dept": "demo", "name": t, "password": "wrong"}).status_code == 401
+    assert c.post("/api/login", json={"dept": "demo", "name": "office", "password": ""}).status_code == 401
+    assert c.post("/api/login", json={"dept": "demo", "name": t, "password": "correct horse"}).status_code == 200
+    assert c.get("/api/departments").json()["passwords"] is True
+
+
+def test_an_ask_waits_for_the_person_asked_and_no_one_else(store):
+    inst = store.world.instance
+    me, other = inst.faculty[2].name, inst.faculty[3].name
+    a, service = app(store, [call("ask_requester", question="Which class?"), say("Thanks, noted.")])
+    mine, theirs, office = signed_in(a, me), signed_in(a, other), signed_in(a, "office")
+    ep = mine.post("/api/episodes", json={"request": "move my class", "week": 5}).json()
     service.wait(ep["id"])
-    got = poll_until_idle(c, ep["id"])
-    assert got["status"] == "waiting" and got["pending"]["to_requester"] and got["pending"]["text"] == "Which class?"
+    got = mine.get(f"/api/episodes/{ep['id']}/poll").json()
+    assert got["status"] == "waiting" and got["pending"]["to_requester"] and got["can"]["answer"]
     assert [e["type"] for e in got["events"]] == ["model", "waiting"]
-    inbox = c.get("/api/inbox", params={"person": teacher.name}).json()
-    assert [i["id"] for i in inbox] == [ep["id"]]
-    assert c.get("/api/inbox", params={"person": "office"}).json() == []
+    assert [i["id"] for i in mine.get("/api/inbox").json()] == [ep["id"]]
 
-    assert c.post(f"/api/episodes/{ep['id']}/reply", json={"text": "The Monday one."}).status_code == 200
+    assert theirs.get(f"/api/episodes/{ep['id']}").status_code == 404  # not theirs: not even shown
+    assert theirs.get("/api/episodes").json() == [] and theirs.get("/api/inbox").json() == []
+    assert office.get(f"/api/episodes/{ep['id']}").json()["can"]["answer"] is False  # the office sees, cannot answer
+    assert office.post(f"/api/episodes/{ep['id']}/reply", json={"text": "x"}).status_code == 403
+
+    assert mine.post(f"/api/episodes/{ep['id']}/reply", json={"text": "The Monday one."}).status_code == 200
     service.wait(ep["id"])
-    done = c.get(f"/api/episodes/{ep['id']}/poll").json()
+    done = mine.get(f"/api/episodes/{ep['id']}/poll").json()
     assert done["status"] == "answered" and done["text"] == "Thanks, noted."
-    kinds = [e["type"] for e in done["events"]]
-    assert kinds == ["model", "waiting", "reply", "model", "end"]
-    assert done["events"][2]["says"] == "The Monday one."
-    assert c.post(f"/api/episodes/{ep['id']}/reply", json={"text": "again"}).status_code == 409
+    assert [e["type"] for e in done["events"]] == ["model", "waiting", "reply", "model", "end"]
+    assert mine.post(f"/api/episodes/{ep['id']}/reply", json={"text": "again"}).status_code == 403
 
 
-def test_a_submitted_draft_is_approved_through_the_kernel(store):
+def test_only_the_office_approves(store):
     inst = store.world.instance
     t = inst.faculty[1]
-    day = next(d for d in inst.calendar.days)
-    steps = [call("constrain", rule="unavailable", teacher="me", days=[FULL_DAY[day]], from_week=6, to_week=6,
-                  reason="a conference"),
+    steps = [call("constrain", rule="unavailable", teacher="me", days=[FULL_DAY[inst.calendar.days[0]]],
+                  from_week=6, to_week=6, reason="a conference"),
              call("check_draft"), call("submit", message="Your classes that day move.")]
-    c, service = client(store, steps)
-    ep = c.post("/api/episodes", json={"request": "away Monday week 6", "actor": t.name, "week": 5}).json()
+    a, service = app(store, steps)
+    mine, office = signed_in(a, t.name), signed_in(a, "office")
+    ep = mine.post("/api/episodes", json={"request": "away Monday week 6", "week": 5}).json()
     service.wait(ep["id"])
-    got = c.get(f"/api/episodes/{ep['id']}").json()
-    assert got["status"] == "submitted" and any("not available" in d for d in got["draft"])
+    got = mine.get(f"/api/episodes/{ep['id']}").json()
+    assert got["status"] == "submitted" and any("not available" in d for d in got["draft"]) and not got["can"]["decide"]
+    assert mine.post(f"/api/episodes/{ep['id']}/approve").status_code == 403
+    assert office.get(f"/api/episodes/{ep['id']}").json()["can"]["decide"]
     before = store.version
-    done = c.post(f"/api/episodes/{ep['id']}/approve").json()
-    assert got["decision"] is None and done["status"] == "approved" and store.version != before
+    done = office.post(f"/api/episodes/{ep['id']}/approve").json()
+    assert done["status"] == "approved" and store.version != before
     assert done["decision"]["approved"] and done["decision"]["version"] == store.version
-    assert c.post(f"/api/episodes/{ep['id']}/approve").status_code == 409
+    assert office.post(f"/api/episodes/{ep['id']}/approve").status_code == 409
 
 
 def test_events_stream_as_sse_and_end_when_the_episode_does(store):
-    c, service = client(store, [call("describe", what="rooms"), say("Four rooms.")])
-    ep = c.post("/api/episodes", json={"request": "rooms?", "actor": "office"}).json()
+    a, service = app(store, [call("describe", what="rooms"), say("Four rooms.")])
+    c = signed_in(a, "office")
+    ep = c.post("/api/episodes", json={"request": "rooms?"}).json()
     service.wait(ep["id"])
     with c.stream("GET", f"/api/episodes/{ep['id']}/events") as r:
         assert r.headers["content-type"].startswith("text/event-stream")
@@ -86,15 +125,39 @@ def test_events_stream_as_sse_and_end_when_the_episode_does(store):
 
 
 def test_simulated_people_answer_at_once(store):
-    c, service = client(store, [call("ask_requester", question="Which week?"), say("I will ask the office.")],
-                        simulate=True)
-    ep = c.post("/api/episodes", json={"request": "move it", "actor": store.world.instance.faculty[0].name}).json()
+    a, service = app(store, [call("ask_requester", question="Which week?"), say("I will ask the office.")],
+                     simulate=True)
+    c = signed_in(a, store.world.instance.faculty[0].name)
+    ep = c.post("/api/episodes", json={"request": "move it"}).json()
     service.wait(ep["id"])
     got = c.get(f"/api/episodes/{ep['id']}/poll").json()
     assert got["status"] == "answered" and got["events"][1]["answer"] == "no_reply"
 
 
-@pytest.mark.parametrize("body", [{"request": " "}, {"request": "x", "actor": "Dr. Nobody"}])
+def test_fairness_rules_and_observability(store, tmp_path):
+    a, service = app(store, [call("rules", question="lunch"), say("Rule 2.2 [P-LUNCH].")], tmp_path=tmp_path,
+                     agent=COORDINATOR_V3, handbook=Handbook.load())
+    teacher, office = signed_in(a, store.world.instance.faculty[0].name), signed_in(a, "office")
+    f = teacher.get("/api/fairness").json()
+    assert len(f["teachers"]) == len(store.world.instance.faculty) and f["spread"]["gini"] == 0 and f["concessions"] == []
+    assert teacher.get("/api/rules", params={"q": "lunch break"}).json()["rules"][0]["id"] == "P-LUNCH"
+    assert len(teacher.get("/api/rules").json()["rules"]) == 16
+
+    ep = office.post("/api/episodes", json={"request": "lunch?"}).json()
+    service.wait(ep["id"])
+    assert teacher.get("/api/obs/overview").status_code == 403
+    over = office.get("/api/obs/overview").json()
+    assert over["episodes"] == 1 and over["status"] == {"answered": 1} and over["tools"] == [["rules", 1]]
+    rows = office.get("/api/obs/episodes").json()
+    assert rows[0]["id"] == ep["id"] and rows[0]["request"] == "lunch?"
+    kinds = [s["kind"] for s in office.get(f"/api/obs/trace/{ep['id']}").json()]
+    assert kinds[0] == "episode" and kinds.count("model_call") == 2
+    (tmp_path / "x-s0.json").write_text(json.dumps({"model": "m", "summary": {"all": {"n": 2, "passed": 1},
+                                                                             "families": {"away": {"n": 2, "passed": 1}}}}))
+    assert office.get("/api/obs/evals").json()[0]["families"] == {"away": "1/2"}
+
+
+@pytest.mark.parametrize("body", [{"request": " "}])
 def test_bad_starts_are_refused(store, body):
-    c, _ = client(store, [])
-    assert c.post("/api/episodes", json=body).status_code in (404, 422)
+    a, _ = app(store, [])
+    assert signed_in(a, "office").post("/api/episodes", json=body).status_code == 422
