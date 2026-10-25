@@ -180,6 +180,17 @@ cost. Runs answer asks from their own copy of the cast; with no one to answer, a
 only the chosen one's ask would reach a person. The API does not use it yet: each run would stream
 its own events into the request's page.
 
+## Ending well
+
+Two guards against the commonest ways a single run went wrong (nts-agent-v2, seed 0):
+
+- The turn before the last is told one turn is left (check the draft now, end next turn). On the last
+  turn, if the draft changed after its last check, `submit` is not offered (it would be refused) and the
+  model is told to decline or escalate with what it found, instead of running out on a refused submit.
+- `move_class` with no `to_hour`, for a request that names an hour on that day ("Tuesday at 12 pm"),
+  returns a note saying so: the solver would otherwise put the class at any hour, which quietly
+  sidesteps a clash the request ran into.
+
 `notebooks/train_agent_kaggle.ipynb` trains the adapter on that: one example per assistant turn, rendered with
 the tools by Qwen's chat template, loss on the turn only.
 

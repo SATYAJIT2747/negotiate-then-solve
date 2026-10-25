@@ -19,6 +19,10 @@ A talk tool's ask goes to ``people`` (simulators, a terminal), and the reply is 
 as the tool's result. Calls the model made in the same turn after an ask are refused: they were made
 before the answer.
 
+The turn before the last is told one turn is left; the last is offered only the end tools, and if the
+draft changed after its last check, not ``submit`` (it would be refused): the model declines or
+escalates, saying what it found, instead of ending on a refusal.
+
 The episode works in a draft of the store (``outcome.draft``): read tools see it, and nothing the
 episode does reaches the store. Everything is recorded as spans: the episode, each turn, each model
 call with the exact messages and reply, each tool call with its result, each reply to an ask, and a
@@ -44,12 +48,20 @@ from nts.protocol import (
     request_hash,
     tools_hash,
 )
-from nts.state import Draft, Store
+from nts.state import Draft, Store, TimetableSet
 from nts.telemetry import Tracer, new_id
 from nts.tools import Ask, Context, Registry, Reply, Scope, settle
 
 from .agent import AgentConfig
-from .context import LAST_TURN, estimate, fit, schema_tokens, tool_message
+from .context import (
+    LAST_TURN,
+    UNCHECKED,
+    WRAP_UP,
+    estimate,
+    fit,
+    schema_tokens,
+    tool_message,
+)
 
 
 @dataclass
@@ -82,7 +94,7 @@ class Harness:
             *, episode_id: str | None = None, people: People | None = None) -> Outcome:
         eid = episode_id or new_id("ep-")
         draft = store.draft(actor, eid)
-        ctx = Context(store.world, actor, week, draft, handbook=self.handbook)
+        ctx = Context(store.world, actor, week, draft, handbook=self.handbook, request=request)
         tools = self.registry.specs(agent.scopes)
         transcript = [Message(role="system", content=agent.system(ctx)), Message(role="user", content=request)]
         run = _Run(eid, agent, ctx, transcript, tools, people)
@@ -119,8 +131,11 @@ class Harness:
             n = run.turns + 1
             last = n == b.max_turns
             allowed = {Scope.END} & run.agent.scopes if last else run.agent.scopes  # the last turn can still end it
-            offered = [t for t in run.tools if self.registry.tools[t["function"]["name"]].scope in allowed]
-            sent = list(run.transcript) + ([Message(role="user", content=LAST_TURN)] if last else [])  # Qwen allows one system message, first
+            unchecked = last and run.unchecked()
+            offered = [t for t in run.tools if self.registry.tools[t["function"]["name"]].scope in allowed
+                       and not (unchecked and t["function"]["name"] == "submit")]  # it would be refused
+            note = (UNCHECKED if unchecked else LAST_TURN) if last else WRAP_UP if n == b.max_turns - 1 > 1 else None
+            sent = list(run.transcript) + ([Message(role="user", content=note)] if note else [])  # Qwen allows one system message, first
             sent = fit(sent, b.context_tokens - schema_tokens(offered), b.keep_recent)
             with self.tracer.span("turn", f"turn {n}", index=n, last=last,
                                   offered=[t["function"]["name"] for t in offered]) as span:
@@ -275,6 +290,14 @@ class _Run:
     def restart_clock(self) -> None:
         """The time spent waiting for an answer does not count against the time budget."""
         self.start = time.perf_counter() - self.elapsed
+
+    def unchecked(self) -> bool:
+        """The draft has rules that its last check (if any) did not see: submit would refuse it."""
+        draft = self.ctx.draft
+        if draft is None or not any(not isinstance(c, TimetableSet) for c in draft.changes):
+            return False
+        checked = self.ctx.scratch.get("check")
+        return checked is None or checked.version != draft.world.version
 
     def over_budget(self) -> str:
         b = self.agent.budgets

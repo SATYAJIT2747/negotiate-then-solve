@@ -13,6 +13,10 @@ from nts.protocol import Message, ToolResult
 
 LAST_TURN = ("This is your last turn: no more lookups or changes. Answer now with what you have, "
              "or end the request if you can.")
+UNCHECKED = ("This is your last turn, and the draft changed after its last check, so it cannot be submitted. "
+             "Decline or escalate, saying what you asked for, what you tried and what you found.")
+WRAP_UP = ("One turn left after this one. Finish what you need now (if you changed the draft, call check_draft); "
+           "next turn you answer or end the request.")
 OMITTED = json.dumps({"omitted": "an older result, left out to save space; call the tool again if you need it"})
 
 

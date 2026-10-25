@@ -4,9 +4,10 @@ import pytest
 from test_nts_state import away, busy_teacher
 
 from nts.agents import COORDINATOR, COORDINATOR_V1
-from nts.harness import Budgets, Harness
+from nts.harness import LAST_TURN, Budgets, Harness
+from nts.harness.context import UNCHECKED, WRAP_UP
 from nts.models import ScriptedModel, call, say
-from nts.protocol import UNPARSED, ToolCall
+from nts.protocol import UNPARSED, Message, ToolCall
 from nts.state import ConstraintAdded, InvalidChange, TimetableSet
 from nts.tools import ALL_TOOLS, Context, Registry, Scope
 from nts.tools.names import FULL_DAY, hour
@@ -182,3 +183,42 @@ def test_calls_after_an_end_tool_are_not_run(store):
 def test_scopes_of_the_coordinator():
     assert COORDINATOR_V1.scopes == {Scope.READ, Scope.DRAFT, Scope.EVALUATE, Scope.END}
     assert COORDINATOR.scopes == COORDINATOR_V1.scopes | {Scope.TALK, Scope.POLICY}
+
+
+def test_the_turn_before_the_last_says_so_and_an_unchecked_draft_cannot_be_submitted_last(store):
+    t = busy_teacher(store, "Tue")
+    agent = replace(COORDINATOR, budgets=replace(COORDINATOR.budgets, max_turns=3))
+    model = ScriptedModel([
+        call("constrain", rule="unavailable", teacher="me", days=["Tuesday"], from_week=7, to_week=7),
+        call("constrain", rule="unavailable", teacher="me", days=["Wednesday"], from_week=7, to_week=7),
+        call("escalate", message="Away Tuesday and Wednesday of week 7: not checked yet."),
+    ])
+    out = Harness(Registry(ALL_TOOLS), model).run(agent, "a request", store, t, 5)
+    assert model.seen[1][-1] == Message(role="user", content=WRAP_UP)
+    assert model.seen[2][-1] == Message(role="user", content=UNCHECKED)
+    assert {x["function"]["name"] for x in model.tools[2]} == {"decline", "escalate"}  # no submit: it would be refused
+    assert out.status == "escalated"
+
+    model = ScriptedModel([
+        call("constrain", rule="unavailable", teacher="me", days=["Tuesday"], from_week=7, to_week=7),
+        call("check_draft"),
+        call("submit", message="Your Tuesday classes in week 7 move."),
+    ])
+    out = Harness(Registry(ALL_TOOLS), model).run(agent, "a request", store, t, 5)
+    assert model.seen[2][-1] == Message(role="user", content=LAST_TURN) and out.status == "submitted"
+
+
+def test_a_move_without_the_hour_the_request_named_says_so(store):
+    inst, tt = store.world.instance, store.world.timetable()
+    s = next(s for s in inst.sessions if s.duration == 1 and s.kind.value == "lecture")
+    p = tt.assignment[s.id]
+    to_day = next(d for d in inst.calendar.days if d != p.day)
+    move = call("move_class", course=inst.course_title(s.course), kind="lecture", on_day=FULL_DAY[p.day],
+                at_hour=hour(p.slot), to_day=to_day, from_week=9, to_week=9)
+    for request, noted in ((f"Please move it to {FULL_DAY[to_day]} at 2 pm in week 9.", True),
+                           (f"Please move it to {FULL_DAY[to_day]} in week 9; it is at {hour(p.slot)} now.", False)):
+        out = Harness(Registry(ALL_TOOLS), ScriptedModel([move, say("ok")])).run(COORDINATOR, request, store, s.faculty, 5)
+        result = out.calls[0].content
+        assert ("note" in result) == noted, result
+        if noted:
+            assert f"{FULL_DAY[to_day]} at 2 pm" in result["note"] and "to_hour" in result["note"]

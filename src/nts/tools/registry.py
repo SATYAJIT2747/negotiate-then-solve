@@ -51,6 +51,7 @@ class Context:
     draft: Draft | None = None
     scratch: dict[str, Any] = field(default_factory=dict)  # what tools keep between calls in one episode
     handbook: Any = None  # the department's regulations (nts.policy.Handbook), for the rules tool
+    request: str = ""  # what the person asked, as they wrote it
 
     @property
     def state(self) -> World:

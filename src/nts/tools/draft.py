@@ -8,6 +8,7 @@ what is decided here too: a teacher changes only their own classes and times; th
 
 from __future__ import annotations
 
+import re
 from typing import Literal
 
 from pydantic import BaseModel, Field
@@ -30,7 +31,7 @@ from nts.kernel.semantics import room_compatible
 from nts.state import ConstraintAdded, ConstraintRemoved, Draft
 
 from . import words
-from .names import Directory, hour
+from .names import FULL_DAY, Directory, hour
 from .read import _class
 from .registry import Context, Refusal, Scope, tool
 
@@ -240,7 +241,18 @@ def move_class(ctx: Context, args: MoveClass) -> dict:
                           + (f" with {words.joined(s.equipment)}" if s.equipment else "") + ")")
         out.append(Constraint(id="new", type=ConstraintType.REQUIRE_ROOM, hard=args.firm, tier=tier, owner=s.faculty,
                               scope=scope, room=RoomRequirement(rooms=[room.id]), justification=why, valid=valid))
-    return _record(ctx, out, None)
+    result = _record(ctx, out, None)
+    if args.to_hour is None and (asked := _hour_asked(ctx.request, day)):
+        result["note"] = (f"the request says {FULL_DAY[day]} at {asked}, and this change has no to_hour, so the class "
+                          f"may land at any hour that day; retract it and give to_hour if they asked for {asked}")
+    return result
+
+
+def _hour_asked(request: str, day: str) -> str | None:
+    """The hour a request names right after ``day`` ("Tuesday at 12 pm"), if it names one."""
+    m = re.search(rf"\b(?:{FULL_DAY[day]}|{day})\w*\b[^.;,]{{0,12}}?\b(\d{{1,2}}(?::\d\d)?\s*[ap]\.?m\b\.?|noon)",
+                  request, re.IGNORECASE)
+    return m.group(1) if m else None
 
 
 class Retract(BaseModel):
