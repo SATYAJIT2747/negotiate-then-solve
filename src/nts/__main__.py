@@ -161,7 +161,7 @@ def evaluate(args: argparse.Namespace) -> int:
             from dotenv import load_dotenv
 
             load_dotenv(args.env)
-        suite = rewrite(suite, args.rewrite, GeminiChat(temperature=1.0), store.world, log=True)
+        suite = rewrite(suite, args.rewrite, GeminiChat(temperature=1.0), store.world, log=True, strict=True)
     verdicts = run_suite(suite, model, store, budgeted(agent, args), default_tracer(args.telemetry),
                          progress=True, handbook=handbook(args), best=args.best_of)
     path = args.out or Path("runs/eval") / f"{model.name.replace(':', '_').replace('+', '_')}-s{args.seed}{f'-best{args.best_of}' * (args.best_of > 1)}{f'-{args.rewrite}' * bool(args.rewrite)}.json"

@@ -90,11 +90,13 @@ def keeps(rewritten: str, patterns: list[str]) -> list[str]:
 
 
 def rewrite(suite: list[Scenario], style: str, model: Model, world: World, *, cache: Path | None = None,
-            log: bool = False) -> list[Scenario]:
+            log: bool = False, strict: bool = False) -> list[Scenario]:
+    """``strict``: raise if a batch could not be rewritten (the model failed), instead of keeping its templates."""
     styles = STYLES[style]
     cache = cache or Path(f"runs/eval/rewrites-{style}.json")
     known: dict[str, str] = json.loads(cache.read_text(encoding="utf-8")) if cache.exists() else {}
     todo = list(dict.fromkeys(s.request for s in suite if s.request not in known))
+    failed = 0
     for i in range(0, len(todo), BATCH):
         batch = todo[i:i + BATCH]
         items = [{"id": k, "style": style_of(r, styles), "request": r} for k, r in enumerate(batch)]
@@ -105,6 +107,7 @@ def rewrite(suite: list[Scenario], style: str, model: Model, world: World, *, ca
         except Exception as e:  # noqa: BLE001 -- a failed batch keeps its templates, and is tried again next time
             if log:
                 print(f"rewrite: batch {i // BATCH + 1} failed: {type(e).__name__}: {e}")
+            failed += len(batch)
             continue
         for k, original in enumerate(batch):
             new = got.get(k, "").strip()
@@ -116,6 +119,8 @@ def rewrite(suite: list[Scenario], style: str, model: Model, world: World, *, ca
                 print(f"rewrite kept the template ({', '.join(lost)}): {original}")
     cache.parent.mkdir(parents=True, exist_ok=True)
     cache.write_text(json.dumps(known, indent=1, ensure_ascii=False), encoding="utf-8")
+    if strict and failed:
+        raise RuntimeError(f"{failed} of {len(todo)} requests could not be rewritten (the rewrites so far are cached)")
     return [dataclasses.replace(s, request=known.get(s.request, s.request)) for s in suite]
 
 
