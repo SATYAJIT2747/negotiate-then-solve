@@ -56,8 +56,12 @@ def test_an_agreed_waiver_lets_the_move_through_for_that_week_only(store):
     sc = negotiate(store.world, random.Random(1), 5)
     inst = store.world.instance
     model = ScriptedModel(negotiation_steps(sc, store.world, then=[call("check_draft"), call("submit", message="Moved.")]))
-    v = run_suite([sc], model, store, COORDINATOR, Tracer([MemorySink()]))[0]
+    sink = MemorySink()
+    v = run_suite([sc], model, store, COORDINATOR, Tracer([sink]))[0]
     assert v.passed, v.failures
+    spans = {s.kind: s for s in sink.trace(v.episode_id)}
+    # the episode starts after the scenario's setup commit; the evaluation keeps the store's own version for --stores
+    assert spans["episode"].attrs["state_version"] != store.version == spans["evaluation"].attrs["store_version"]
     clash = last_result(model.seen[2])
     assert clash["ok"] is False and any(r.get("set_by") == inst.faculty_by_id[next(iter(sc.cast.teachers))].name
                                         for r in clash["clashing"])

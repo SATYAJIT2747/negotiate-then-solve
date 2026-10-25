@@ -45,6 +45,7 @@ def run_suite(suite: list[Scenario], model: Model, store: Store, agent: AgentCon
     verdicts = []
     for i, sc in enumerate(suite, 1):
         fork = store.fork()
+        origin = fork.version  # the store's own version: a setup commit gives the episode one the store never had
         if sc.setup:
             draft = fork.draft("system", f"setup-{sc.name}")
             for ch in sc.setup:
@@ -57,7 +58,7 @@ def run_suite(suite: list[Scenario], model: Model, store: Store, agent: AgentCon
         v = Verdict(sc.name, sc.family, out.episode_id, out.status, not failures, failures, out.turns, out.tool_calls,
                     out.refused, out.usage.prompt_tokens + out.usage.completion_tokens, out.seconds)
         with tracer.span("evaluation", sc.family, trace_id=out.episode_id, scenario=sc.name, family=sc.family,
-                         passed=v.passed, failures=failures, expect=sorted(sc.expect)):
+                         passed=v.passed, failures=failures, expect=sorted(sc.expect), store_version=origin):
             pass
         verdicts.append(v)
         if progress:

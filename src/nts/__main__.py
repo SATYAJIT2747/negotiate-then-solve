@@ -23,6 +23,7 @@ from nts.harness import AgentConfig, Harness, approve
 from nts.kernel.generator import generate_department
 from nts.kernel.instance import policy_constraints
 from nts.models import GeminiChat, Model, OpenAIChat
+from nts.protocol import tools_hash
 from nts.state import Store, bootstrap
 from nts.telemetry import DEFAULT_ROOT, default_tracer
 from nts.tools import ALL_TOOLS, Refusal, Registry
@@ -64,6 +65,7 @@ def main(argv: list[str] | None = None) -> int:
     x.add_argument("--include-unjudged", action="store_true")
     x.add_argument("--keep-errors", action="store_true")
     x.add_argument("--stores", nargs="*", type=Path, help="only episodes run on these stores")
+    x.add_argument("--agent", choices=sorted(AGENTS), help="only episodes of this agent's tools")
     v = sub.add_parser("serve", help="the API and its web page")
     v.add_argument("--store", type=Path, default=DEFAULT_STORE)
     v.add_argument("--host", default="127.0.0.1")
@@ -131,7 +133,11 @@ def export_rows(args: argparse.Namespace) -> int:
     eps = episodes(args.telemetry / "spans")
     if args.stores:  # only episodes that started on a version of these stores (keeps a held-out department out)
         versions = {e.hash for s in args.stores for e in Store.open(s).events}
-        eps = (e for e in eps if e.episode.attrs.get("state_version") in versions)
+        eps = (e for e in eps if e.episode.attrs.get("state_version") in versions
+               or any(v.attrs.get("store_version") in versions for v in e.evaluations))  # a scenario's setup came first
+    if args.agent:  # only episodes offered exactly this agent's tools (its prompt and tools are what is trained)
+        want = tools_hash(Registry(ALL_TOOLS).specs(AGENTS[args.agent].scopes))
+        eps = (e for e in eps if tools_hash(e.tools) == want)
     counts = export(eps, args.out, models=args.models, include_unjudged=args.include_unjudged,
                     keep_errors=args.keep_errors)
     print(json.dumps(counts))
