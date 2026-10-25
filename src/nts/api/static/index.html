@@ -120,21 +120,26 @@ async function showLogin() {
     <label class="small" for="ldept">Department</label>
     <select id="ldept">${d.departments.map((x) => `<option value="${esc(x.id)}">${esc(x.id)} (${x.faculty} teachers)</option>`).join("")}</select>
     <label class="small" for="lname">You are</label><select id="lname"></select>
+    <input id="lclub" placeholder="The club's name" hidden>
     ${d.passwords ? `<label class="small" for="lpass">Password</label><input id="lpass" type="password" autocomplete="current-password">` :
       `<div class="small">This server signs people in by name alone: fine on your own machine, not on a network.</div>`}
     <button class="primary" id="lgo">Sign in</button><div class="small" id="lerr"></div></div>`;
   const fill = () => {
     const x = d.departments.find((y) => y.id === $("ldept").value);
-    $("lname").innerHTML = [`<option value="office">The timetable office</option>`, ...x.teachers.map((t) => `<option>${esc(t)}</option>`)].join("");
+    $("lname").innerHTML = [`<option value="office">The timetable office</option>`, ...x.teachers.map((t) => `<option>${esc(t)}</option>`),
+      `<option value="club">A club…</option>`].join("");
     if (remember("nts.name")) $("lname").value = remember("nts.name");
     if (!$("lname").value) $("lname").value = "office";
+    $("lclub").hidden = $("lname").value !== "club";
   };
+  $("lname").onchange = () => { $("lclub").hidden = $("lname").value !== "club"; };
   $("ldept").onchange = fill;
   if (remember("nts.dept") && d.departments.some((x) => x.id === remember("nts.dept"))) $("ldept").value = remember("nts.dept");
   fill();
   const go = async () => {
     try {
-      await api("/api/login", {method: "POST", body: JSON.stringify({dept: $("ldept").value, name: $("lname").value, password: $("lpass")?.value || ""})});
+      const name = $("lname").value === "club" ? `club: ${$("lclub").value.trim()}` : $("lname").value;
+      await api("/api/login", {method: "POST", body: JSON.stringify({dept: $("ldept").value, name, password: $("lpass")?.value || ""})});
       remember("nts.dept", $("ldept").value); remember("nts.name", $("lname").value);
       me = await api("/api/me"); enter();
     } catch (e) { $("lerr").textContent = e.message; }
@@ -157,12 +162,14 @@ function meta() { $("meta").textContent = `${dep.model} · ${dep.agent} · versi
 
 function show(which) {
   view = which;
-  const tabs = [["requests", "Requests"], ["timetable", "Timetable"], ["fairness", "Fairness"], ["rules", "Rules"],
-    ...(me.role === "office" ? [["obs", "Observability"]] : [])];
+  if (me.role === "club" && which === "requests") which = view = "bookings";
+  const tabs = [...(me.role === "club" ? [] : [["requests", "Requests"]]), ["timetable", "Timetable"], ["bookings", "Bookings"],
+    ["fairness", "Fairness"], ["rules", "Rules"], ...(me.role === "office" ? [["semester", "Semester"], ["obs", "Observability"]] : [])];
   const bar = `<div class="tabs">${tabs.map(([k, l]) => `<button data-tab="${k}" class="${k === which ? "on" : ""}">${l}</button>`).join("")}</div>`;
   if (which === "requests") requestsView(bar);
   else { $("app").innerHTML = `<main class="wide"><section>${bar}<div id="pane" class="panel stack"></div></section></main>`;
-    ({timetable: timetableView, fairness: fairnessView, rules: rulesView, obs: obsView})[which](); }
+    ({timetable: timetableView, bookings: bookingsView, fairness: fairnessView, rules: rulesView, semester: semesterView,
+      obs: obsView})[which](); }
   for (const b of document.querySelectorAll("[data-tab]")) b.onclick = () => show(b.dataset.tab);
 }
 
@@ -366,6 +373,90 @@ async function rulesView() {
   };
   $("rq").oninput = () => { clearTimeout(t); t = setTimeout(draw, 200); };
   draw();
+}
+
+// -- room bookings ----------------------------------------------------------------------------------
+
+async function bookingsView() {
+  const canBook = me.role === "club" || me.role === "office";
+  const hours = dep.hours;
+  $("pane").innerHTML = `${canBook ? `<h2>Book a room</h2><div class="row">
+      ${me.role === "office" ? `<input id="bclub" placeholder="Club" style="width:130px">` : ""}
+      <input id="bpurpose" placeholder="What for" style="flex:1;min-width:160px">
+      <label class="small" for="bweek">Week</label><select id="bweek">${Array.from({length: dep.weeks}, (_, i) => `<option>${i + 1}</option>`).join("")}</select>
+      <select id="bday">${dep.days.map((d) => `<option>${esc(d)}</option>`).join("")}</select>
+      <select id="bfrom">${hours.slice(0, -1).map((h) => `<option>${esc(h)}</option>`).join("")}</select>
+      <span class="small">to</span><select id="bto">${hours.slice(1).map((h) => `<option>${esc(h)}</option>`).join("")}</select>
+      <input id="bpeople" type="number" min="1" value="20" style="width:80px" aria-label="People">
+      <select id="broom"><option value="">any room</option>${dep.rooms.map((r) => `<option>${esc(r)}</option>`).join("")}</select>
+      <button class="primary" id="bgo">Book</button></div><div id="bout"></div>` :
+      `<p class="small">Clubs book rooms here; a booking closes the room for teaching then, so no class is ever moved into it.</p>`}
+    <h2 style="margin-top:12px">${me.role === "club" ? "Your bookings" : "Bookings"}</h2><div class="scroll" id="blist"></div>`;
+  if (canBook) {
+    $("bweek").value = remember("nts.week") || 5;
+    $("bgo").onclick = async () => {
+      const body = {purpose: $("bpurpose").value.trim() || "a meeting", week: Number($("bweek").value), day: $("bday").value,
+        from_hour: $("bfrom").value, to_hour: $("bto").value, attendees: Number($("bpeople").value), room: $("broom").value || null,
+        ...(me.role === "office" ? {club: $("bclub").value} : {})};
+      try {
+        const d = await api("/api/bookings", {method: "POST", body: JSON.stringify(body)});
+        $("bout").innerHTML = `<div class="callout ${d.status === "booked" ? "ok" : ""} stack" style="margin-top:10px">
+          <div><span class="badge s-${d.status === "booked" ? "approved" : d.status === "refused" ? "rejected" : "waiting"}">${label(d.status)}</span> ${d.room ? esc(d.room) : ""}</div>
+          <ul>${d.checks.map((c) => `<li>${c.ok ? "✓" : "✗"} ${esc(c.check)}: ${esc(c.detail)}</li>`).join("")}</ul>
+          ${d.alternatives.length ? `<div class="small">These would work:</div><ul>${d.alternatives.map((a) => `<li>${esc(a.room)}, ${esc(a.day)} ${esc(a.from)} to ${esc(a.to)}</li>`).join("")}</ul>` : ""}</div>`;
+        drawBookings();
+      } catch (e) { $("bout").innerHTML = `<div class="small">${esc(e.message)}</div>`; }
+    };
+  }
+  drawBookings();
+}
+
+async function drawBookings() {
+  const rows = await api("/api/bookings");
+  $("blist").innerHTML = rows.length ? `<table class="data"><tr><th>Week</th><th>When</th><th>Room</th><th>Club</th><th>What</th><th>People</th><th>Status</th><th></th></tr>
+    ${rows.map((r) => `<tr><td class="n">${r.week}</td><td>${esc(r.day)} ${esc(r.from)}–${esc(r.to)}</td><td>${esc(r.room)}</td><td>${esc(r.club)}</td><td>${esc(r.purpose)}</td>
+      <td class="n">${r.attendees}</td><td><span class="badge s-${r.status === "booked" ? "approved" : "waiting"}">${label(r.status)}</span></td>
+      <td>${me.role === "office" && r.status === "needs_approval" ? `<button data-bok="${esc(r.id)}">Approve</button> <button class="danger" data-bno="${esc(r.id)}">Refuse</button>` :
+        me.role === "office" || me.role === "club" ? `<button class="link" data-bx="${esc(r.id)}">Cancel</button>` : ""}</td></tr>`).join("")}</table>` : `<div class="empty">No bookings yet.</div>`;
+  const act = (sel, f) => { for (const b of document.querySelectorAll(sel)) b.onclick = async () => { try { await f(b); } catch (e) { alert(e.message); } drawBookings(); }; };
+  act("[data-bok]", (b) => api(`/api/bookings/${b.dataset.bok}/approve`, {method: "POST"}));
+  act("[data-bno]", (b) => api(`/api/bookings/${b.dataset.bno}/refuse`, {method: "POST"}));
+  act("[data-bx]", (b) => api(`/api/bookings/${b.dataset.bx}`, {method: "DELETE"}));
+}
+
+// -- the semester timetable (the office) --------------------------------------------------------------
+
+async function semesterView() {
+  $("pane").innerHTML = `<p class="small">During term every change is a repair that moves as few classes as it can, so wishes added one by one
+    are met only where a repair allowed it. A rebuild solves the semester timetable again from nothing, with every standing rule and wish;
+    weeks from the one you pick that have their own timetable are repaired on top of it, earlier weeks stay as they ran.
+    Nothing changes until you publish it.</p>
+    <div class="row"><label class="small" for="sweek">Repair weeks from</label><select id="sweek">${Array.from({length: dep.weeks}, (_, i) => `<option>${i + 1}</option>`).join("")}</select>
+    <button class="primary" id="sgo">Rebuild</button></div><div id="sout"></div>`;
+  $("sweek").value = remember("nts.week") || 5;
+  $("sgo").onclick = async () => {
+    try { await api("/api/semester/rebuild", {method: "POST", body: JSON.stringify({from_week: Number($("sweek").value)})}); } catch (e) { alert(e.message); }
+    pollRebuild();
+  };
+  pollRebuild();
+}
+
+async function pollRebuild() {
+  if (view !== "semester") return;
+  const r = await api("/api/semester/rebuild");
+  const st = r.stats;
+  $("sout").innerHTML = r.status === "none" ? "" : r.status === "running" ? `<div class="small">Solving… (a minute at most)</div>` :
+    r.status === "failed" ? `<div class="callout">${esc(r.error)}</div>` : r.status === "published" ? `<div class="callout ok">Published as version ${esc((r.version || "").slice(0, 8))}.</div>` :
+    `<div class="tiles" style="margin-top:12px">
+      <div class="tile"><div class="small">Classes that move</div><div class="v">${st.moved} <span class="small">of ${st.classes}</span></div></div>
+      <div class="tile"><div class="small">Wishes met now</div><div class="v">${st.met_before} <span class="small">of ${st.wishes}</span></div></div>
+      <div class="tile"><div class="small">Wishes met after</div><div class="v">${st.met_after} <span class="small">of ${st.wishes}</span></div></div>
+      <div class="tile"><div class="small">Weeks repaired / kept</div><div class="v">${st.weeks_repaired.length} / ${st.weeks_kept.length}</div></div></div>
+      ${r.unmet.length ? `<details style="margin-top:8px"><summary>Wishes still not met (${r.unmet.length})</summary><ul>${r.unmet.map((u) => `<li>${esc(u)}</li>`).join("")}</ul></details>` : ""}
+      ${r.stale ? `<div class="callout" style="margin-top:8px">The timetable changed since this rebuild; rebuild again.</div>` :
+        `<div class="row" style="margin-top:12px"><button class="primary" id="spub">Publish</button></div>`}`;
+  if ($("spub")) $("spub").onclick = async () => { try { await api("/api/semester/publish", {method: "POST"}); dep = await api("/api/department"); meta(); } catch (e) { alert(e.message); } pollRebuild(); };
+  if (r.status === "running") setTimeout(pollRebuild, 1000);
 }
 
 // -- observability (the office) -----------------------------------------------------------------

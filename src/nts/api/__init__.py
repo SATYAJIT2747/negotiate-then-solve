@@ -12,6 +12,8 @@
     GET  /api/inbox                 what waits for my answer
     GET  /api/department, /api/timetable?week=5&teacher=Dr. Iyer, /api/fairness, /api/rules?q=lunch
     GET  /api/obs/overview, /api/obs/episodes, /api/obs/trace/{id}, /api/obs/evals          (the office)
+    GET  /api/bookings?week=6; POST /api/bookings {...}; POST /api/bookings/{id}/approve | /refuse; DELETE ...
+    POST /api/semester/rebuild {"from_week": 5}; GET /api/semester/rebuild; POST /api/semester/publish (the office)
 
 Several departments can be served at once (one store each, ``departments``); a session belongs to one.
 Who may do what is decided here, from the session (``auth``): a teacher sees their own requests and what
@@ -26,16 +28,18 @@ from typing import Annotated, Literal
 
 from fastapi import Depends, FastAPI, HTTPException, Request, Response
 from fastapi.responses import FileResponse, StreamingResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
+from nts.bookings import Booking
 from nts.fairness import standing
+from nts.state import InvalidChange
 from nts.tools import Refusal, Reply
 from nts.tools.draft import OFFICE
 from nts.tools.names import FULL_DAY, Directory, hour
 from nts.tools.read import _at
 from nts.tools.talk import REQUESTER
 
-from .auth import Session, Sessions, Users
+from .auth import CLUB, Session, Sessions, Users
 from .obs import Observability
 from .service import Conflict, Episode, NotFound, Service
 
@@ -62,6 +66,21 @@ class Answer(BaseModel):
 
 class Note(BaseModel):
     note: str = ""
+
+
+class BookingIn(BaseModel):
+    club: str | None = None  # the office books for a club; a club books for itself
+    purpose: str
+    week: int
+    day: str
+    from_hour: str
+    to_hour: str
+    attendees: int = Field(ge=1)
+    room: str | None = None
+
+
+class RebuildIn(BaseModel):
+    from_week: int | None = None
 
 
 def create_app(departments: dict[str, Service] | Service, users: Users | None = None, *,
@@ -126,6 +145,9 @@ def create_app(departments: dict[str, Service] | Service, users: Users | None = 
             raise HTTPException(404, f"no department {body.dept}")
         if body.name.lower() in ("office", OFFICE, "the timetable office"):
             person, name = OFFICE, "office"
+        elif body.name.lower().startswith("club:") and body.name[5:].strip():
+            name = body.name[5:].strip()
+            person = f"{CLUB}{name}"
         else:
             try:
                 f = Directory(depts[body.dept].store.world.instance).teacher(body.name)
@@ -208,6 +230,8 @@ def create_app(departments: dict[str, Service] | Service, users: Users | None = 
 
     @app.post("/api/episodes")
     def start(s: Me, body: Start) -> dict:
+        if s.club:
+            raise HTTPException(403, "a club books rooms (Bookings); requests to the office come from staff")
         if not body.request.strip():
             raise HTTPException(422, "say what you need")
         return service(s).start(body.request.strip(), s.person, body.week, simulate=body.simulate).summary()
@@ -281,6 +305,82 @@ def create_app(departments: dict[str, Service] | Service, users: Users | None = 
     @app.get("/api/inbox")
     def inbox(s: Me) -> list[dict]:
         return service(s).inbox(s.person)
+
+    # -- room bookings ----------------------------------------------------------------------------
+
+    @app.get("/api/bookings")
+    def bookings(s: Me, week: int | None = None) -> list[dict]:
+        rows = service(s).desk.bookings(week)
+        return rows if not s.club else [r for r in rows if r["club"] == s.club]
+
+    @app.post("/api/bookings")
+    def book(s: Me, body: BookingIn) -> dict:
+        if not (s.club or s.office):
+            raise HTTPException(403, "rooms are booked by clubs, or by the office for them")
+        club = s.club or (body.club or "").strip()
+        if not club:
+            raise HTTPException(422, "say which club")
+        svc = service(s)
+        b = Booking(club=club, **body.model_dump(exclude={"club"}))
+        try:
+            with svc.lock:
+                d = svc.desk.request(b, by=s.person)
+        except InvalidChange as e:  # the gate found a class there after all
+            raise HTTPException(409, "; ".join(e.problems)) from None
+        return {"status": d.status, "checks": d.checks, "room": d.room, "id": d.id, "alternatives": d.alternatives}
+
+    @app.post("/api/bookings/{bid}/approve")
+    def book_approve(s: Office, bid: str) -> dict:
+        svc = service(s)
+        try:
+            with svc.lock:
+                svc.desk.approve(bid)
+        except KeyError:
+            raise HTTPException(404, f"no booking {bid} waits for approval") from None
+        except InvalidChange as e:
+            raise HTTPException(409, "; ".join(e.problems)) from None
+        return {"status": "booked"}
+
+    @app.post("/api/bookings/{bid}/refuse")
+    def book_refuse(s: Office, bid: str) -> dict:
+        try:
+            service(s).desk.refuse(bid)
+        except KeyError:
+            raise HTTPException(404, f"no booking {bid} waits for approval") from None
+        return {"status": "refused"}
+
+    @app.delete("/api/bookings/{bid}")
+    def book_cancel(s: Me, bid: str) -> dict:
+        svc = service(s)
+        mine = [r for r in svc.desk.bookings() if r["id"] == bid and (s.office or r["club"] == s.club)]
+        if not mine:
+            raise HTTPException(404, f"no booking {bid} of yours")
+        with svc.lock:
+            if mine[0]["status"] == "needs_approval":
+                svc.desk.refuse(bid)
+            else:
+                svc.desk.cancel(bid, s.person)
+        return {"status": "cancelled"}
+
+    # -- the semester timetable (the office) -------------------------------------------------------
+
+    @app.post("/api/semester/rebuild")
+    def semester_rebuild(s: Office, body: RebuildIn) -> dict:
+        try:
+            return service(s).start_rebuild(body.from_week)
+        except Conflict as e:
+            raise HTTPException(409, str(e)) from None
+
+    @app.get("/api/semester/rebuild")
+    def semester_status(s: Office) -> dict:
+        return service(s).rebuild_view()
+
+    @app.post("/api/semester/publish")
+    def semester_publish(s: Office) -> dict:
+        try:
+            return service(s).publish_rebuild()
+        except Conflict as e:
+            raise HTTPException(409, str(e)) from None
 
     # -- observability (the office) -----------------------------------------------------------
 

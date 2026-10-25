@@ -6,7 +6,8 @@
 
 Roles: a teacher starts requests as themselves, sees their own requests and what waits for their answer,
 and answers asks addressed to them; the timetable office (sign in as "office") sees everything, starts
-requests for the office and approves or rejects drafts. A session is a random token held server-side
+requests for the office, approves or rejects drafts and publishes a rebuilt semester timetable; a club
+(sign in as "club: <name>") books rooms. A session is a random token held server-side
 and sent as an HttpOnly cookie (or ``Authorization: Bearer``), so a client cannot choose who it is.
 """
 
@@ -26,6 +27,7 @@ from nts.tools.draft import OFFICE
 ITERATIONS = 200_000
 SESSION_HOURS = 12
 OFFICE_NAME = "the timetable office"
+CLUB = "club:"  # a club's person id: "club:Robotics"
 
 
 def hash_password(password: str, salt: str | None = None, iterations: int = ITERATIONS) -> str:
@@ -92,8 +94,16 @@ class Session:
     def office(self) -> bool:
         return self.person == OFFICE
 
+    @property
+    def club(self) -> str | None:
+        return self.person.removeprefix(CLUB) if self.person.startswith(CLUB) else None
+
+    @property
+    def role(self) -> str:
+        return "office" if self.office else "club" if self.club else "teacher"
+
     def view(self) -> dict:
-        return {"dept": self.dept, "name": self.name, "role": "office" if self.office else "teacher"}
+        return {"dept": self.dept, "name": self.name, "role": self.role}
 
 
 class Sessions:
@@ -104,7 +114,8 @@ class Sessions:
 
     def start(self, dept: str, person: str, name: str, password: str) -> Session | None:
         """A new session for ``name`` (as the directory spells it, or "office"), or None if the password is wrong."""
-        if not self.users.check(dept, "office" if person == OFFICE else name, password):
+        key = "office" if person == OFFICE else f"club: {person.removeprefix(CLUB)}" if person.startswith(CLUB) else name
+        if not self.users.check(dept, key, password):
             return None
         s = Session(secrets.token_urlsafe(32), dept, person, OFFICE_NAME if person == OFFICE else name,
                     time.time() + SESSION_HOURS * 3600)

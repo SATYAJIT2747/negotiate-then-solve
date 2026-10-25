@@ -84,9 +84,9 @@ store as it was: `store.fork(span.attrs["state_version"])` plus `ReplayModel.fro
 ## The API and the page
 
     python -m nts serve --store runs/agentic/demo.jsonl --model llama --adapter <lora> --port 8100
-    python -m nts serve --model gemini --env ../negotiate-then-solve/.env --simulate   # stand-ins answer asks
+    python -m nts serve --model gemini --env ../negotiate-then-solve/.env --simulate --agent coordinator-v3
 
-Open http://127.0.0.1:8100/. Pick who you are (a teacher or the timetable office), send a request and watch
+Open http://127.0.0.1:8100/. Sign in (a teacher, the timetable office or a club), send a request and watch
 the agent's turns arrive. When it asks something, the episode waits in the inbox of the person asked (the
 requester, or the teacher whose rule it wants waived), who answers on the page; the office approves a
 submitted draft, which commits it through the kernel. Each episode runs in a thread; every span the harness
@@ -95,6 +95,36 @@ writes becomes an event (`model`, `tool`, `reply`, `waiting`, `end`, `decision`)
 client reconnects with `?after=n` once it has replied). `GET /api/episodes/{id}/poll` gives the same as JSON.
 Who is calling is taken on trust (`actor`, `person`); behind a real login the server would take it from the
 session. Approving commits to the store file, so try things on a copy of a store you want to keep.
+
+## Fairness, the regulations, the semester and bookings
+
+- **Fairness** (`nts.fairness`): when a teacher agrees to waive a rule for someone else's request, the draft
+  records a `Conceded` event; once committed it is in the log, so the ledger is the history itself. Credit is the
+  kernel's (the rule's tier and justification times partial / full). `check_draft` tells the agent how often a
+  blocking rule's owner has given way, and `COORDINATOR_V3` asks whoever has given way less first.
+- **Regulations** (`nts.policy`): the handbook's numbered rules, BM25 search, the `rules` tool (scope `policy`),
+  which `COORDINATOR_V3` uses to answer questions and to cite a rule when it declines. Families `rules_question`
+  and `weekend` check the citation.
+- **Semester rebuild** (`nts.semester`): the office re-solves the semester timetable from nothing with every
+  standing rule and wish, sees what moves and how many wishes are met before and after, and publishes it
+  through the gate; weeks from a chosen one that have their own timetable are repaired on top of it.
+- **Bookings** (`nts.bookings`): a club books a room for a time; it must be free that week (a booking never moves
+  a class), big enough, and not booked already; very large events go to the office. A booking is a firm "room
+  closed" rule in the log, so later repairs keep out of it.
+
+Agent versions: `COORDINATOR_V1` (no talk; nts-agent-v1), `COORDINATOR_V2` (talk; nts-agent-v2's data),
+`COORDINATOR_V3` (talk, rules, fairness). `COORDINATOR` is v2 while v2's episodes are collected. `nts eval`
+picks the families an agent has the tools for.
+
+## Sign-in and roles
+
+`python -m nts serve --store a.jsonl b.jsonl --users runs/agentic/users.json` serves each store as a department.
+`python -m nts passwd "Dr. Iyer" --dept a` (or `office`, or `club: Robotics`) sets a password; without `--users`
+anyone signs in by name (fine on one machine). Sessions are server-side tokens in an HttpOnly cookie. A teacher
+sees their own requests and what waits for them, and answers asks addressed to them; the office sees everything,
+decides on drafts, approves large bookings, rebuilds and publishes the semester timetable and sees the
+Observability tab (episodes, refusals, tokens, models, traces, eval reports, from `runs/telemetry/index.sqlite`);
+a club books rooms.
 
 ## Running the tests
 

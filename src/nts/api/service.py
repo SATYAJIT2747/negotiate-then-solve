@@ -22,9 +22,11 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any
 
+from nts.bookings import Desk
 from nts.harness import AgentConfig, Harness, Outcome, approve, reject
 from nts.models import Model
 from nts.people import Cast
+from nts.semester import rebuild
 from nts.state import Store
 from nts.telemetry import Span, Tracer, new_id
 from nts.tools import ALL_TOOLS, Ask, Registry, Reply
@@ -132,6 +134,44 @@ class Service:
         self.handbook = handbook
         self.harness = Harness(Registry(ALL_TOOLS), model, self.tracer, handbook=handbook)
         self.lock = threading.Lock()  # one commit at a time; drafts are private and need none
+        self.desk = Desk(store)
+        self.rebuild: dict = {"status": "none"}  # the office's semester rebuild: none, running, ready, failed
+
+    # -- the semester timetable ---------------------------------------------------------
+
+    def start_rebuild(self, from_week: int | None) -> dict:
+        with self.lock:
+            if self.rebuild["status"] == "running":
+                raise Conflict("a rebuild is already running")
+            self.rebuild = {"status": "running", "from_week": from_week, "started": datetime.now().isoformat("T", "seconds")}
+
+        def go() -> None:
+            try:
+                r = rebuild(self.store, from_week=from_week)
+                self.rebuild = {**self.rebuild, "status": "ready", "stats": r.stats, "unmet": r.unmet, "draft": r.draft}
+            except Exception as e:  # noqa: BLE001 -- shown to the office
+                self.rebuild = {**self.rebuild, "status": "failed", "error": f"{type(e).__name__}: {e}"}
+
+        threading.Thread(target=go, name="rebuild", daemon=True).start()
+        return self.rebuild_view()
+
+    def rebuild_view(self) -> dict:
+        out = {k: v for k, v in self.rebuild.items() if k != "draft"}
+        d = self.rebuild.get("draft")
+        if d is not None:
+            out["stale"] = d.base.version != self.store.version
+        return out
+
+    def publish_rebuild(self) -> dict:
+        d = self.rebuild.get("draft")
+        if self.rebuild["status"] != "ready" or d is None:
+            raise Conflict("there is no rebuilt timetable to publish")
+        if d.base.version != self.store.version:
+            raise Conflict("the timetable changed since the rebuild; rebuild again")
+        with self.lock:
+            world = self.store.commit(d)
+        self.rebuild = {**self.rebuild, "status": "published", "version": world.version, "draft": None}
+        return self.rebuild_view()
 
     # -- episodes -----------------------------------------------------------------
 
