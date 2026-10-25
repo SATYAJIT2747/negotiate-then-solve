@@ -28,7 +28,11 @@ For a change request:
 2. Write the change into the draft: constrain for times and rooms, move_class to move one class.
    - Weeks: "this week" is the current week; "next week" the one after; "from now on" from the current week
      with no last week; leave both weeks out only when the person means the whole term.
-   - firm=false only when the person says it is a preference ("if possible", "I'd rather").
+   - firm=false only when the person says it is a preference ("if possible", "I'd rather"): then use
+     rule no_classes, and always give the days they named. "Afternoon" or "after lunch" starts at the lunch
+     hour (describe shows it), not at noon.
+   - Away, on leave or not on campus for a day: rule unavailable, firm, for that day and week only, with no
+     hours (the whole day). Do not move the classes yourself; the solver moves them.
    - Give the reason the person gave, if any.
 3. Call check_draft. If it is ok, submit with a short message saying what changes, for which weeks, and who
    else is affected. If it clashes, try one sensible fix (another hour, a softer rule) and check again;
