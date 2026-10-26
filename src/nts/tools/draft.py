@@ -198,7 +198,7 @@ def move_class(ctx: Context, args: MoveClass) -> dict:
     tt = ctx.state.timetable(week)
     if tt is None:
         raise Refusal("no_timetable", "there is no timetable yet")
-    course = d.course(args.course)
+    courses = d.courses(args.course)
     teacher = d.teacher(args.teacher, ctx.actor).id if args.teacher else (ctx.actor if ctx.actor != OFFICE else None)
     section = d.section(args.section).id if args.section else None
     on_day = d.day(args.on_day) if args.on_day else None
@@ -206,14 +206,14 @@ def move_class(ctx: Context, args: MoveClass) -> dict:
 
     def fits(s: Session) -> bool:
         p = tt.assignment.get(s.id)
-        return (s.course == course and (args.kind is None or s.kind.value == args.kind)
+        return (s.course in courses and (args.kind is None or s.kind.value == args.kind)
                 and (teacher is None or s.faculty == teacher) and (section is None or section in s.groups)
                 and p is not None and (on_day is None or p.day == on_day)
                 and (at is None or p.slot <= at < p.slot + s.duration))
 
     found = [s for s in inst.sessions if fits(s)]
     if not found:
-        raise Refusal("no_such_class", f"no {inst.course_title(course)} class matches"
+        raise Refusal("no_such_class", f"no {inst.course_title(next(iter(courses)))} class matches"
                       + (" among your classes" if ctx.actor != OFFICE else ""))
     if len(found) > 1:
         rows = [_class(inst, s, tt.assignment[s.id].day, tt.assignment[s.id].slot, tt.assignment[s.id].room)

@@ -57,7 +57,34 @@ class Directory:
         return _match("room", text, self._rooms, lambda r: r.name)
 
     def course(self, text: str) -> str:
+        if m := re.fullmatch(r"(.+?)\s*\((.+)\)\s*", text):  # "Title (Dr. X)", as course_label writes it
+            title, teacher = m.groups()
+            hits = [c for c in _exact(title, self._courses)
+                    if any(norm(teacher) in (norm(f), norm(f.split()[-1])) for f in self._teachers_of(c))]
+            if len(hits) == 1:
+                return hits[0]
+        hits = _exact(text, self._courses)
+        if len(hits) > 1:
+            raise Refusal("ambiguous_name", f"{text!r} could be more than one course",
+                          candidates=[self.course_label(c) for c in hits])
         return _match("course", text, self._courses, self.instance.course_title)
+
+    def courses(self, text: str) -> set[str]:
+        """Every course called ``text``: some departments run two courses under one title, and the caller narrows
+        them down by the teacher, section or day it was also given."""
+        hits = _exact(text, self._courses)
+        return set(hits) if len(hits) > 1 else {self.course(text)}
+
+    def _teachers_of(self, course: str) -> list[str]:
+        return sorted({self.instance.faculty_by_id[s.faculty].name for s in self.instance.sessions
+                       if s.course == course})
+
+    def course_label(self, course: str) -> str:
+        """The course's title, with its teachers when another course has the same title."""
+        title = self.instance.course_title(course)
+        if len(_exact(title, self._courses)) == 1:
+            return title
+        return f"{title} ({', '.join(self._teachers_of(course))})"
 
     def day(self, text: str) -> str:
         days = self.instance.calendar.days

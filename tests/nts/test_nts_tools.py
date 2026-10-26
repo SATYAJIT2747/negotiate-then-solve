@@ -7,7 +7,7 @@ from test_nts_state import away, busy_teacher, repair
 from nts.protocol import ToolCall
 from nts.state import ConstraintAdded, TimetableSet
 from nts.tools import READ_TOOLS, Context, Refusal, Registry, Scope, tool
-from nts.tools.names import Directory, hour
+from nts.tools.names import FULL_DAY, Directory, hour
 
 
 @pytest.fixture
@@ -159,3 +159,28 @@ def test_schemas_carry_no_null_unions_or_empty_defaults():
     move = next(s for s in Registry(ALL_TOOLS).specs() if s["function"]["name"] == "move_class")["function"]
     assert move["parameters"]["properties"]["to_hour"]["type"] == "string"
     assert set(move["parameters"]["required"]) == {"course", "to_day"}
+
+
+def test_two_courses_under_one_title_are_told_apart(solved):
+    """Some departments run two courses under one title: the teacher or the classes picked settle which."""
+    from nts.state import Store
+    from nts.tools import ALL_TOOLS
+
+    inst, cons, assignment = solved
+    a, b = (next(s for s in inst.sessions if s.faculty == f.id) for f in inst.faculty[:2])
+    title = inst.course_title(a.course)
+    twin = inst.model_copy(update={"course_titles": {**inst.course_titles, b.course: title}})
+    store = Store.create(twin, [*(ConstraintAdded(constraint=c) for c in cons), TimetableSet(assignment=assignment)])
+    reg = Registry(ALL_TOOLS)
+    teacher_b = twin.faculty_by_id[b.faculty]
+
+    r = run(reg, store, "classes_of", course=title, teacher="me", actor=b.faculty)
+    assert r.ok and {c["teacher"] for c in r.content["classes"]} == {teacher_b.name}
+    r = run(reg, store, "constrain", rule="no_classes", course=title, days=["Monday"])
+    assert r.error.code == "ambiguous_name" and f"{title} ({teacher_b.name})" in r.error.hint["candidates"]
+    assert Directory(twin).course(f"{title} ({teacher_b.name})") == b.course
+    day = "Friday" if FULL_DAY[assignment[b.id].day] != "Friday" else "Thursday"
+    args = {"course": title, "kind": b.kind.value, "to_day": day, "on_day": FULL_DAY[assignment[b.id].day],
+            "at_hour": hour(assignment[b.id].slot), "from_week": 5, "to_week": 5}
+    r = reg.run(ToolCall(id="c", name="move_class", arguments=args), Context(store.world, b.faculty, 5, store.draft("c")))
+    assert r.ok, r.error

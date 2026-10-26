@@ -160,13 +160,13 @@ def classes_of(ctx: Context, args: ClassesOf) -> dict:
     teacher = d.teacher(args.teacher, ctx.actor).id if args.teacher else None
     section = d.section(args.section).id if args.section else None
     room = d.room(args.room).id if args.room else None
-    course = d.course(args.course) if args.course else None
+    courses = d.courses(args.course) if args.course else None
     days = set(_days(d, args.days))
     w = _Week(ctx.state, _week(ctx, args.week))
 
     def wanted(s: Session) -> bool:
         return ((teacher is None or s.faculty == teacher) and (section is None or section in s.groups)
-                and (course is None or s.course == course))
+                and (courses is None or s.course in courses))
 
     held = sorted((x for x in w.placed if wanted(x.session) and x.day in days and room in (None, x.room)),
                   key=lambda x: (x.day, x.slot))
@@ -221,8 +221,8 @@ def who_is_free(ctx: Context, args: WhoIsFree) -> dict:
     if args.of == "sections":
         names = [g.name for g in inst.groups if w.free("section", g.id, day, slot)]
     else:
-        course = d.course(args.course) if args.course else None
-        pool = {s.faculty for s in inst.sessions if s.course == course} if course else set(inst.faculty_by_id)
+        courses = d.courses(args.course) if args.course else None
+        pool = {s.faculty for s in inst.sessions if s.course in courses} if courses else set(inst.faculty_by_id)
         names = [f.name for f in inst.faculty if f.id in pool and w.free("teacher", f.id, day, slot)]
     return {"week": w.week, "day": FULL_DAY[inst.calendar.days[day]], "hour": hour(slot), "free": names}
 
