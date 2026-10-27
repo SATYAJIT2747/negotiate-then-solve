@@ -3,7 +3,7 @@ from dataclasses import replace
 import pytest
 from test_nts_state import away, busy_teacher
 
-from nts.agents import COORDINATOR, COORDINATOR_V1
+from nts.agents import COORDINATOR, COORDINATOR_V1, COORDINATOR_V4
 from nts.harness import LAST_TURN, Budgets, Harness
 from nts.harness.context import UNCHECKED, WRAP_UP
 from nts.models import ScriptedModel, call, say
@@ -236,3 +236,63 @@ def test_a_move_from_a_week_with_no_end_is_for_that_week_unless_the_request_says
         out = Harness(Registry(ALL_TOOLS), ScriptedModel([move, say("ok")])).run(COORDINATOR, request, store, s.faculty, 5)
         added = out.calls[0].content["added"][0]
         assert added.endswith(weeks) and (weeks.startswith("from") or "from week" not in added), added
+
+
+def _two_of_a_course(store):
+    """A teacher's two one-hour classes of the same course, on different days."""
+    inst, tt = store.world.instance, store.world.timetable()
+    for a in inst.sessions:
+        for b in inst.sessions:
+            if (a.id < b.id and a.course == b.course and a.faculty == b.faculty and a.kind == b.kind
+                    and a.duration == b.duration == 1 and a.id in tt.assignment and b.id in tt.assignment
+                    and tt.assignment[a.id].day != tt.assignment[b.id].day):
+                return a, b, tt.assignment[a.id], tt.assignment[b.id]
+    pytest.skip("no teacher with two classes of one course")
+
+
+def test_an_ambiguous_move_says_how_to_pick_and_when_to_hour_holds_where_it_is_now(store):
+    a, _, pa, pb = _two_of_a_course(store)
+    inst = store.world.instance
+    title = inst.course_title(a.course)
+    to_day = next(d for d in inst.calendar.days if d not in (pa.day, pb.day))
+    model = ScriptedModel([call("move_class", course=title, kind=a.kind.value, to_day=FULL_DAY[to_day],
+                                to_hour=hour(pa.slot), from_week=6, to_week=6)] * 2 + [say("which one?")])
+    out = Harness(Registry(ALL_TOOLS), model).run(COORDINATOR, "a request", store, a.faculty, 5)
+    first, again = out.calls[0].error, out.calls[1].error
+    assert first.code == "ambiguous_class" and "at_hour" in first.hint["note"]
+    assert {"on_day": FULL_DAY[pa.day], "at_hour": hour(pa.slot)} in [c["pick_with"] for c in first.hint["candidates"]]
+    assert again.code == "repeated_call" and "refused before" in again.message and "ask_requester" in again.message
+
+
+def test_a_run_of_weeks_the_change_misses_gets_a_note(store):
+    a, _, pa, _ = _two_of_a_course(store)
+    inst = store.world.instance
+    to_day = next(d for d in inst.calendar.days if d != pa.day)
+    move = {"course": inst.course_title(a.course), "kind": a.kind.value, "on_day": FULL_DAY[pa.day],
+            "at_hour": hour(pa.slot), "to_day": FULL_DAY[to_day]}
+    request = f"Please move it to {FULL_DAY[to_day]} for weeks 6 to 8."
+    for weeks, noted in (((6, 6), True), ((6, 8), False)):
+        model = ScriptedModel([call("move_class", **move, from_week=weeks[0], to_week=weeks[1]), say("ok")])
+        result = Harness(Registry(ALL_TOOLS), model).run(COORDINATOR, request, store, a.faculty, 5).calls[0].content
+        assert ("note" in result) == noted, result
+
+
+def test_swap_classes_puts_each_class_where_the_other_was_and_only_v4_has_it(store):
+    a, b, pa, pb = _two_of_a_course(store)
+    inst = store.world.instance
+    title = inst.course_title(a.course)
+    names = {s["function"]["name"] for s in Registry(ALL_TOOLS).specs(COORDINATOR_V4.scopes)}
+    assert "swap_classes" in names and "swap_classes" not in {
+        s["function"]["name"] for s in Registry(ALL_TOOLS).specs(COORDINATOR.scopes)}
+    out, _ = episode(store, [
+        call("swap_classes", course=title, on_day=FULL_DAY[pa.day], at_hour=hour(pa.slot), other_course=title,
+             other_day=FULL_DAY[pb.day], other_hour=hour(pb.slot), from_week=6),
+        call("check_draft"),
+        call("submit", message="Swapped."),
+    ], actor=a.faculty, agent=COORDINATOR_V4)
+    assert out.status == "submitted", out.calls[-1]
+    added = out.calls[0].content["added"]
+    assert len(added) == 2 and all("week 6 (firm)" in x for x in added)
+    after = store.commit(out.draft).timetable(6).assignment
+    assert (after[a.id].day, after[a.id].slot) == (pb.day, pb.slot)
+    assert (after[b.id].day, after[b.id].slot) == (pa.day, pa.slot)

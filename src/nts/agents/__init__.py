@@ -79,6 +79,16 @@ COORDINATOR_V3 = AgentConfig(  # talk, the regulations and fairness; frozen for 
    once and submit them together."""),
 )
 
-COORDINATOR = COORDINATOR_V3  # the latest; serve an adapter with the version it was trained on (--agent)
+COORDINATOR_V4 = AgentConfig(  # swaps, runs of weeks, where a class is now vs where it goes; no adapter yet
+    name="coordinator",
+    scopes=COORDINATOR_V3.scopes | {Scope.REARRANGE},
+    budgets=COORDINATOR_V3.budgets,
+    prompt=COORDINATOR_V3.prompt + """
+9. Moving a class: on_day and at_hour say where it is now; to_day and to_hour where it goes. To swap two
+   classes, use swap_classes (one change), not two moves. For a run of weeks ("weeks 6 to 8"), give
+   from_week and to_week; for one week, both the same.""",
+)
 
-__all__ = ["COORDINATOR", "COORDINATOR_V1", "COORDINATOR_V2", "COORDINATOR_V3", "READER"]
+COORDINATOR = COORDINATOR_V3  # the latest with an adapter; serve an adapter with the version it was trained on (--agent)
+
+__all__ = ["COORDINATOR", "COORDINATOR_V1", "COORDINATOR_V2", "COORDINATOR_V3", "COORDINATOR_V4", "READER"]

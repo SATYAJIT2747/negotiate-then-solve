@@ -29,6 +29,7 @@ from nts.kernel.schemas import (
 )
 from nts.kernel.semantics import room_compatible
 from nts.state import ConstraintAdded, ConstraintRemoved, Draft
+from nts.state.world import Timetable
 
 from . import words
 from .names import FULL_DAY, Directory, hour
@@ -193,46 +194,13 @@ def move_class(ctx: Context, args: MoveClass) -> dict:
     kind, section, teacher or where it is now."""
     d = Directory(ctx.state.instance)
     inst = d.instance
-    to_week = args.to_week
-    if args.from_week is not None and to_week is None and not _ONWARD.search(ctx.request or ""):
-        to_week = args.from_week  # a move "in week 6" is for that week, unless the request says from then on
-    valid = _validity(ctx, args.from_week, to_week)
-    week = args.from_week or ctx.week
-    tt = ctx.state.timetable(week)
-    if tt is None:
-        raise Refusal("no_timetable", "there is no timetable yet")
-    courses = d.courses(args.course)
-    teacher = d.teacher(args.teacher, ctx.actor).id if args.teacher else (ctx.actor if ctx.actor != OFFICE else None)
-    section = d.section(args.section).id if args.section else None
-    on_day = d.day(args.on_day) if args.on_day else None
-    at = d.slot(args.at_hour) if args.at_hour else None
-
-    def fits(s: Session) -> bool:
-        p = tt.assignment.get(s.id)
-        return (s.course in courses and (args.kind is None or s.kind.value == args.kind)
-                and (teacher is None or s.faculty == teacher) and (section is None or section in s.groups)
-                and p is not None and (on_day is None or p.day == on_day)
-                and (at is None or p.slot <= at < p.slot + s.duration))
-
-    found = [s for s in inst.sessions if fits(s)]
-    if not found:
-        raise Refusal("no_such_class", f"no {inst.course_title(next(iter(courses)))} class matches"
-                      + (" among your classes" if ctx.actor != OFFICE else ""))
-    if len(found) > 1:
-        rows = [_class(inst, s, tt.assignment[s.id].day, tt.assignment[s.id].slot, tt.assignment[s.id].room)
-                for s in found]
-        raise Refusal("ambiguous_class", f"{len(found)} classes match; say which (kind, section, day or hour)",
-                      candidates=rows)
-    s = found[0]
+    valid, tt = _weeks(ctx, args.from_week, args.to_week)
+    s = _pick(ctx, d, tt, args.course, args.kind, args.section, args.teacher, args.on_day, args.at_hour,
+              to_hour=args.to_hour)
     scope = Who(session=s.id)
     _may(ctx, scope)
     day = d.day(args.to_day)
-    slots = None
-    if args.to_hour is not None:
-        q = d.slot(args.to_hour)
-        if q + s.duration > inst.calendar.slots_per_day:
-            raise Refusal("bad_arguments", f"a {s.duration}-hour class from {hour(q)} runs past the end of the day")
-        slots = list(range(q, q + s.duration))
+    slots = None if args.to_hour is None else _slots_for(inst, s, d.slot(args.to_hour))
     tier, why = _tier(ctx, args.firm, None)
     out = [Constraint(id="new", type=ConstraintType.PREFER, hard=args.firm, tier=tier, owner=s.faculty, scope=scope,
                       when=When(days=[day], slots=slots), justification=why, valid=valid)]
@@ -248,7 +216,78 @@ def move_class(ctx: Context, args: MoveClass) -> dict:
     if args.to_hour is None and (asked := _hour_asked(ctx.request, day)):
         result["note"] = (f"the request says {FULL_DAY[day]} at {asked}, and this change has no to_hour, so the class "
                           f"may land at any hour that day; retract it and give to_hour if they asked for {asked}")
+    elif note := _range_missed(ctx.request, valid):
+        result["note"] = note
     return result
+
+
+def _weeks(ctx: Context, from_week: int | None, to_week: int | None) -> tuple[Validity, Timetable]:
+    """The weeks a class change holds in (a start week with no end is that week, unless the request says from
+    then on), and the timetable its class is picked from."""
+    if from_week is not None and to_week is None and not _ONWARD.search(ctx.request or ""):
+        to_week = from_week
+    valid = _validity(ctx, from_week, to_week)
+    tt = ctx.state.timetable(from_week or ctx.week)
+    if tt is None:
+        raise Refusal("no_timetable", "there is no timetable yet")
+    return valid, tt
+
+
+def _pick(ctx: Context, d: Directory, tt: Timetable, course: str, kind: str | None, section: str | None,
+          teacher: str | None, on_day: str | None, at_hour: str | None, *, to_hour: str | None = None) -> Session:
+    """The one class a change is about, picked by course and, if needed, kind, section, teacher or where it is now."""
+    inst = d.instance
+    courses = d.courses(course)
+    who = d.teacher(teacher, ctx.actor).id if teacher else (ctx.actor if ctx.actor != OFFICE else None)
+    sec = d.section(section).id if section else None
+    day = d.day(on_day) if on_day else None
+    at = d.slot(at_hour) if at_hour else None
+
+    def fits(s: Session) -> bool:
+        p = tt.assignment.get(s.id)
+        return (s.course in courses and (kind is None or s.kind.value == kind)
+                and (who is None or s.faculty == who) and (sec is None or sec in s.groups)
+                and p is not None and (day is None or p.day == day)
+                and (at is None or p.slot <= at < p.slot + s.duration))
+
+    found = [s for s in inst.sessions if fits(s)]
+    if not found:
+        raise Refusal("no_such_class", f"no {inst.course_title(next(iter(courses)))} class matches"
+                      + (" among your classes" if ctx.actor != OFFICE else ""))
+    if len(found) > 1:
+        rows = []
+        for s in found:
+            p = tt.assignment[s.id]
+            rows.append({**_class(inst, s, p.day, p.slot, p.room), "pick_with": {"on_day": FULL_DAY[p.day],
+                                                                                "at_hour": hour(p.slot)}})
+        hint: dict = {"candidates": rows}
+        if at is None and to_hour is not None and any(r["from"] == hour(d.slot(to_hour)) for r in rows):
+            hint["note"] = (f"to_hour is where the class goes; {to_hour} is where one of them is now, which goes in "
+                            "at_hour (with on_day)")
+        raise Refusal("ambiguous_class", f"{len(found)} classes match; say which with on_day and at_hour", **hint)
+    return found[0]
+
+
+def _slots_for(inst, s: Session, q: int) -> list[int]:
+    if q + s.duration > inst.calendar.slots_per_day:
+        raise Refusal("bad_arguments", f"a {s.duration}-hour class from {hour(q)} runs past the end of the day")
+    return list(range(q, q + s.duration))
+
+
+_RANGE = re.compile(r"\bweeks?\s+(\d{1,2})\s*(?:to|-|–|through|till|until|and)\s*(?:week\s+)?(\d{1,2})\b", re.IGNORECASE)
+
+
+def _range_missed(request: str, valid: Validity) -> str | None:
+    """A note when the request names a run of weeks ("weeks 6 to 8") and the change does not cover it."""
+    m = _RANGE.search(request or "")
+    if not m:
+        return None
+    lo, hi = int(m.group(1)), int(m.group(2))
+    if lo >= hi or (valid.from_week, valid.to_week) == (lo, hi):
+        return None
+    return (f"the request says weeks {lo} to {hi}, and this change holds in "
+            + ("every week" if valid.from_week is None else f"weeks {valid.from_week} to {valid.to_week or 'the end'}")
+            + f"; retract it and give from_week={lo}, to_week={hi} if that is what they asked")
 
 
 _ONWARD = re.compile(r"\b(from now on|from then on|onwards?|rest of (the )?(term|semester)|every week|for good|"
@@ -289,4 +328,41 @@ def list_draft(ctx: Context, args: ListDraft) -> list[dict]:
             for n, ids in sorted(_changes(ctx).items())]
 
 
-DRAFT_TOOLS = [constrain, move_class, retract, list_draft]
+class SwapClasses(BaseModel):
+    course: str = Field(description="The first class")
+    on_day: str
+    at_hour: str
+    other_course: str = Field(description="The second class")
+    other_day: str
+    other_hour: str
+    from_week: int | None = Field(None, description="No weeks: the whole term")
+    to_week: int | None = None
+
+
+@tool(Scope.REARRANGE)
+def swap_classes(ctx: Context, args: SwapClasses) -> dict:
+    """Swap two of the same teacher's classes in the draft: each goes to the other's day and hour. Give each
+    class by course and where it is now."""
+    d = Directory(ctx.state.instance)
+    inst = d.instance
+    valid, tt = _weeks(ctx, args.from_week, args.to_week)
+    a = _pick(ctx, d, tt, args.course, None, None, None, args.on_day, args.at_hour)
+    b = _pick(ctx, d, tt, args.other_course, None, None, None, args.other_day, args.other_hour)
+    if a.id == b.id:
+        raise Refusal("bad_arguments", "both name the same class")
+    if a.faculty != b.faculty:
+        raise Refusal("bad_arguments", "only two classes of the same teacher can be swapped; use move_class for each")
+    for s in (a, b):
+        _may(ctx, Who(session=s.id))
+    tier, why = _tier(ctx, True, None)
+    pa, pb = tt.assignment[a.id], tt.assignment[b.id]
+    out = [Constraint(id="new", type=ConstraintType.PREFER, hard=True, tier=tier, owner=s.faculty,
+                      scope=Who(session=s.id), when=When(days=[p.day], slots=_slots_for(inst, s, p.slot)),
+                      justification=why, valid=valid) for s, p in ((a, pb), (b, pa))]
+    result = _record(ctx, out, None)
+    if note := _range_missed(ctx.request, valid):
+        result["note"] = note
+    return result
+
+
+DRAFT_TOOLS = [constrain, move_class, retract, list_draft, swap_classes]

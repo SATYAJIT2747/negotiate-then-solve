@@ -31,6 +31,7 @@ from nts.state import Draft, World
 class Scope(str, Enum):
     READ = "read"  # looks at the state
     DRAFT = "draft"  # changes the episode's draft
+    REARRANGE = "rearrange"  # changes several classes at once (swap); from coordinator-v4
     EVALUATE = "evaluate"  # asks the kernel about the draft
     TALK = "talk"  # sends a message to a person (the episode waits for the answer)
     POLICY = "policy"  # looks up the department's regulations

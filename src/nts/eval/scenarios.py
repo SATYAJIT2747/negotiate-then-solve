@@ -680,8 +680,10 @@ def week_range(world: World, rng: random.Random, now: int) -> Scenario:
                 bad.append(f"week {w} changed too")
         return bad
 
+    cast = Cast(requester=Requester(f"The {inst.course_title(s.course)} {s.kind.value} on {FULL_DAY[p.day]} at "
+                                    f"{hour(p.slot)}; any time on {FULL_DAY[to_day]} is fine, weeks {lo} to {hi}."))
     return Scenario(f"week_range-{s.id}-w{lo}-{hi}", "week_range", s.faculty, now, text, frozenset({"submitted"}),
-                    [check])
+                    [check], cast=cast)
 
 
 def fallback(world: World, rng: random.Random, now: int) -> Scenario:

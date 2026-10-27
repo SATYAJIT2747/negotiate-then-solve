@@ -210,10 +210,17 @@ class Harness:
                                  f"at most {run.agent.budgets.max_calls_per_turn} calls in one turn; make this one next turn")
             elif key in run.seen:
                 run.repeats += 1
-                result = _refuse(call, "repeated_call", "you already made this exact call; its result is above")
+                if (first := run.refused.get(key)) is None:
+                    result = _refuse(call, "repeated_call", "you already made this exact call; its result is above")
+                else:  # the same refused call again: say so, and how to get out of it
+                    out = " or ask_requester" if Scope.TALK in allowed else " or decline"
+                    result = _refuse(call, "repeated_call", f"this exact call was refused before ({first}); the same "
+                                     f"arguments get the same answer: change them as the refusal says,{out}")
             else:
                 run.seen[key] += 1
                 result = self.registry.run(call, run.ctx, allowed)
+                if not result.ok and result.error is not None:
+                    run.refused[key] = result.error.message
             span.attrs["result"] = result.model_dump(mode="json")
             span.attrs["ok"] = result.ok
         run.calls.append(result)
@@ -280,6 +287,7 @@ class _Run:
         self.asks: list[tuple[Ask, Reply]] = []
         self.waiting: _Waiting | None = None
         self.seen: Counter = Counter()
+        self.refused: dict = {}  # call key -> why it was refused
         self.repeats = 0
         self.status, self.detail, self.text = "", "", ""
         self.elapsed = 0.0
