@@ -222,3 +222,17 @@ def test_a_move_without_the_hour_the_request_named_says_so(store):
         assert ("note" in result) == noted, result
         if noted:
             assert f"{FULL_DAY[to_day]} at 2 pm" in result["note"] and "to_hour" in result["note"]
+
+
+def test_a_move_from_a_week_with_no_end_is_for_that_week_unless_the_request_says_from_then_on(store):
+    inst, tt = store.world.instance, store.world.timetable()
+    s = next(s for s in inst.sessions if s.duration == 1 and s.kind.value == "lecture")
+    p = tt.assignment[s.id]
+    to_day = next(d for d in inst.calendar.days if d != p.day)
+    move = call("move_class", course=inst.course_title(s.course), kind="lecture", on_day=FULL_DAY[p.day],
+                at_hour=hour(p.slot), to_day=to_day, from_week=6)
+    for request, weeks in ((f"Please move it to {FULL_DAY[to_day]} in week 6 only.", "week 6 (firm)"),
+                           (f"Please move it to {FULL_DAY[to_day]} from week 6 onwards.", "from week 6 (firm)")):
+        out = Harness(Registry(ALL_TOOLS), ScriptedModel([move, say("ok")])).run(COORDINATOR, request, store, s.faculty, 5)
+        added = out.calls[0].content["added"][0]
+        assert added.endswith(weeks) and (weeks.startswith("from") or "from week" not in added), added

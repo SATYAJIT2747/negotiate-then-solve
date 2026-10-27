@@ -193,7 +193,10 @@ def move_class(ctx: Context, args: MoveClass) -> dict:
     kind, section, teacher or where it is now."""
     d = Directory(ctx.state.instance)
     inst = d.instance
-    valid = _validity(ctx, args.from_week, args.to_week)
+    to_week = args.to_week
+    if args.from_week is not None and to_week is None and not _ONWARD.search(ctx.request or ""):
+        to_week = args.from_week  # a move "in week 6" is for that week, unless the request says from then on
+    valid = _validity(ctx, args.from_week, to_week)
     week = args.from_week or ctx.week
     tt = ctx.state.timetable(week)
     if tt is None:
@@ -246,6 +249,10 @@ def move_class(ctx: Context, args: MoveClass) -> dict:
         result["note"] = (f"the request says {FULL_DAY[day]} at {asked}, and this change has no to_hour, so the class "
                           f"may land at any hour that day; retract it and give to_hour if they asked for {asked}")
     return result
+
+
+_ONWARD = re.compile(r"\b(from now on|from then on|onwards?|rest of (the )?(term|semester)|every week|for good|"
+                     r"permanently|until the end|from (this|next) week on)\b", re.IGNORECASE)
 
 
 def _hour_asked(request: str, day: str) -> str | None:
