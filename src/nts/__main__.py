@@ -143,7 +143,7 @@ def make_model(args: argparse.Namespace) -> Model:
 
 def evaluate(args: argparse.Namespace) -> int:
     from nts.eval import (
-        FAMILIES,
+        DEFAULT_FAMILIES,
         V1_FAMILIES,
         V2_FAMILIES,
         build_suite,
@@ -155,7 +155,7 @@ def evaluate(args: argparse.Namespace) -> int:
     store = Store.open(args.store)
     agent = AGENTS[args.agent]
     families = args.families or (V1_FAMILIES if Scope.TALK not in agent.scopes else
-                                 V2_FAMILIES if Scope.POLICY not in agent.scopes else list(FAMILIES))
+                                 V2_FAMILIES if Scope.POLICY not in agent.scopes else DEFAULT_FAMILIES)
     suite = build_suite(store.world, per_family=args.per_family, seed=args.seed, week=args.week, families=families)
     if args.rewrite:
         from nts.eval.rewrite import rewrite

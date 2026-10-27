@@ -3,7 +3,7 @@ import random
 
 from nts.agents import COORDINATOR
 from nts.data import episodes, export, without_errors
-from nts.eval import FAMILIES, build_suite, run_suite, summary
+from nts.eval import DEFAULT_FAMILIES, build_suite, run_suite, summary
 from nts.eval.scenarios import away, free_hours_said, hours_in
 from nts.harness import Harness, approve, reject
 from nts.models import ScriptedModel, call, say
@@ -33,7 +33,7 @@ def test_suites_are_reproducible_and_cover_every_family(store):
     a = build_suite(store.world, per_family=2, seed=4)
     b = build_suite(store.world, per_family=2, seed=4)
     assert [s.request for s in a] == [s.request for s in b]
-    assert {s.family for s in a} == set(FAMILIES)
+    assert {s.family for s in a} == set(DEFAULT_FAMILIES)
     assert all(s.actor in store.world.instance.faculty_by_id or s.actor == "coordinator" for s in a)
 
 

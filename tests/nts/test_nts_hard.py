@@ -4,19 +4,27 @@ import random
 from test_nts_talk import last_result, negotiation_steps
 
 from nts.agents import COORDINATOR
-from nts.eval import FAMILIES, HARD_FAMILIES, V3_FAMILIES, build_suite, run_suite
+from nts.eval import (
+    FAMILIES,
+    HARD_FAMILIES,
+    STRESS_FAMILIES,
+    V3_FAMILIES,
+    build_suite,
+    run_suite,
+)
 from nts.eval.rewrite import SOFT, facts, keeps, rewrite
-from nts.eval.scenarios import hedged_yes, no_reply
+from nts.eval.scenarios import hedged_yes, no_reply, week_range
 from nts.models import ScriptedModel, call, say
 from nts.protocol import AssistantTurn
 from nts.telemetry import MemorySink, Tracer
+from nts.tools.names import FULL_DAY, hour
 
 
 def test_the_harder_families_come_after_and_build(store):
     first = build_suite(store.world, per_family=1, seed=0, families=V3_FAMILIES)
     assert [s.name for s in build_suite(store.world, per_family=1, seed=0)][:len(first)] == [s.name for s in first]
     hard = build_suite(store.world, per_family=2, seed=0, families=HARD_FAMILIES)
-    assert {s.family for s in hard} == set(HARD_FAMILIES) and list(FAMILIES)[-len(HARD_FAMILIES):] == HARD_FAMILIES
+    assert {s.family for s in hard} == set(HARD_FAMILIES) and list(FAMILIES)[14:19] == HARD_FAMILIES
     assert all(s.cast is not None for s in hard if s.family != "away_days")
 
 
@@ -77,3 +85,25 @@ def test_a_rewrite_that_loses_a_fact_keeps_the_template(store, tmp_path):
     assert out[1].request == wish.request  # the wish lost its "if possible"
     again = rewrite([away], "train", Rewriter(lambda r: "something else"), store.world, cache=tmp_path / "rw.json")
     assert again[0].request == away.request + " thx"  # cached: the same rewrite every time
+
+
+def test_the_stress_families_build_and_stay_out_of_the_default_suite(store):
+    stress = build_suite(store.world, per_family=1, seed=0, families=STRESS_FAMILIES)
+    assert {s.family for s in stress} == set(STRESS_FAMILIES)
+    assert not {s.family for s in build_suite(store.world, per_family=1, seed=0)} & set(STRESS_FAMILIES)
+
+
+def test_a_week_range_is_judged_week_by_week(store):
+    sc = week_range(store.world, random.Random(2), 5)
+    inst, world = store.world.instance, store.world
+    s = next(x for x in inst.sessions if sc.name.startswith(f"week_range-{x.id}-"))
+    lo, hi = (int(w) for w in sc.name.rsplit("-w", 1)[1].split("-"))
+    p = world.timetable(lo).assignment[s.id]
+    to_day = next(d for d in inst.calendar.days if FULL_DAY[d] in sc.request and d != p.day)
+    move = {"course": inst.course_title(s.course), "kind": s.kind.value, "on_day": FULL_DAY[p.day],
+            "at_hour": hour(p.slot), "to_day": FULL_DAY[to_day]}
+    for weeks, ok in (((lo, hi), True), ((lo, lo), False)):
+        model = ScriptedModel([call("move_class", **move, from_week=weeks[0], to_week=weeks[1]), call("check_draft"),
+                               call("submit", message="Moved.")])
+        v = run_suite([sc], model, store, COORDINATOR, Tracer([MemorySink()]))[0]
+        assert v.passed == ok, v.failures

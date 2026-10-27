@@ -523,6 +523,204 @@ def away_days(world: World, rng: random.Random, now: int) -> Scenario:
                     frozenset({"submitted"}), [check])
 
 
+# -- stress: longer requests, to find where the agent stops coping (not in the default suite) -------------
+
+
+def _solvable(world: World, extra: list[Constraint], week: int) -> bool:
+    tt = world.timetable(week)
+    assert tt is not None
+    solver = TimetableSolver(world.instance, [*world.constraints.values(), *extra], week=week, baseline=tt.assignment,
+                             skip=tt.cancelled, time_limit=10, presolve=False)
+    return solver.solve().ok
+
+
+def _want(s: Session, day: str, slot: int | None, weeks: tuple[int, int]) -> Constraint:
+    return Constraint(id=f"want-{s.id}", type=ConstraintType.PREFER, hard=True, tier=Tier.OPERATIONAL, owner=s.faculty,
+                      scope=Who(session=s.id), when=When(days=[day], slots=None if slot is None else [slot]),
+                      valid=Validity(from_week=weeks[0], to_week=weeks[1]))
+
+
+def _off(teacher: str, day: str, week: int) -> Constraint:
+    return Constraint(id=f"off-{teacher}", type=ConstraintType.UNAVAILABLE, hard=True, tier=Tier.OPERATIONAL,
+                      owner=teacher, scope=Who(faculty=teacher), when=When(days=[day]),
+                      valid=Validity(from_week=week, to_week=week))
+
+
+def _untouched(inst, teacher: str, target: int, before: World, after: World) -> list[str]:
+    other = next((w for w in (target + 2, target - 2, target + 3) if 1 <= w <= inst.calendar.weeks), None)
+    return [f"week {other} changed too"] if other and classes(after, teacher, other) != classes(before, teacher, other) else []
+
+
+def three_changes(world: World, rng: random.Random, now: int) -> Scenario:
+    """One message, three changes the same week: away one day, and two classes moved to other days."""
+    inst = world.instance
+    target = rng.choice([now, now + 1])
+    tt = world.timetable(target)
+    assert tt is not None
+    for _ in range(30):
+        f = rng.choice(inst.faculty)
+        mine = [s for s in inst.sessions if s.faculty == f.id and s.duration == 1 and s.id in tt.assignment]
+        days = [d for d in inst.calendar.days if classes(world, f.id, target, d)]
+        if len(mine) < 2 or not days:
+            continue
+        day = rng.choice(days)
+        movable = [s for s in mine if tt.assignment[s.id].day != day]
+        if len(movable) < 2:
+            continue
+        s1, s2 = rng.sample(movable, 2)
+        p1, p2 = tt.assignment[s1.id], tt.assignment[s2.id]
+        t1 = rng.choice([d for d in inst.calendar.days if d not in (day, p1.day)])
+        t2 = rng.choice([d for d in inst.calendar.days if d not in (day, p2.day, t1)])
+        if _solvable(world, [_off(f.id, day, target), _want(s1, t1, None, (target, target)),
+                             _want(s2, t2, None, (target, target))], target):
+            break
+    else:
+        raise LookupError("no three changes that fit together")
+    c = inst.course_title
+    text = rng.choice([
+        ("Three things {w}, please: I'm away on {d} ({r}), so my classes that day need moving; my {c1} {k1} on {d1} "
+         "at {h1} should go to {t1}; and my {c2} {k2} on {d2} at {h2} to {t2}."),
+        ("{w} I can't come in on {d} because of {r}. Could you also move my {d1} {h1} {c1} {k1} to {t1}, and my "
+         "{c2} {k2} ({d2}, {h2}) to {t2}? All for that week only."),
+    ]).format(w=week_phrase(rng, now, target), d=FULL_DAY[day], r=rng.choice(REASONS), c1=c(s1.course), k1=s1.kind.value,
+              d1=FULL_DAY[p1.day], h1=hour(p1.slot), t1=FULL_DAY[t1], c2=c(s2.course), k2=s2.kind.value,
+              d2=FULL_DAY[p2.day], h2=hour(p2.slot), t2=FULL_DAY[t2])
+    text = text[0].upper() + text[1:]
+    cast = Cast(requester=Requester(f"Week {target} only, and any time on {FULL_DAY[t1]} and {FULL_DAY[t2]} is fine."))
+
+    def check(out: Outcome, before: World, after: World | None) -> list[str]:
+        if after is None:
+            return ["not committed"]
+        bad = [f"still {len(left)} class(es) on {FULL_DAY[day]}" for left in [classes(after, f.id, target, day)] if left]
+        for s, to in ((s1, t1), (s2, t2)):
+            got = after.timetable(target).assignment.get(s.id)
+            if not got or got.day != to:
+                bad.append(f"the {c(s.course)} {s.kind.value} is on {got.day if got else 'no day'}, not {to}")
+        return bad + _untouched(inst, f.id, target, before, after)
+
+    return Scenario(f"three_changes-{f.id}-{day}-{s1.id}-{s2.id}-w{target}", "three_changes", f.id, now, text,
+                    frozenset({"submitted"}), [check], cast=cast)
+
+
+def swap(world: World, rng: random.Random, now: int) -> Scenario:
+    """Swap two of one teacher's classes (each to the other's day and hour) for one week."""
+    inst = world.instance
+    target = rng.choice([now, now + 1])
+    tt = world.timetable(target)
+    assert tt is not None
+    pairs = [(a, b) for f in inst.faculty
+             for a in inst.sessions if a.faculty == f.id and a.duration == 1 and a.id in tt.assignment
+             for b in inst.sessions if b.faculty == f.id and b.duration == 1 and b.id in tt.assignment
+             and a.id < b.id and tt.assignment[a.id].day != tt.assignment[b.id].day]
+    rng.shuffle(pairs)
+    for a, b in pairs[:30]:
+        pa, pb = tt.assignment[a.id], tt.assignment[b.id]
+        if _solvable(world, [_want(a, pb.day, pb.slot, (target, target)), _want(b, pa.day, pa.slot, (target, target))],
+                     target):
+            break
+    else:
+        raise LookupError("no two classes that can swap")
+    c = inst.course_title
+    text = rng.choice([
+        "{w}, can you swap my {ca} {ka} ({da}, {ha}) with my {cb} {kb} ({db}, {hb})?",
+        "Please swap the slots of my {da} {ha} {ca} {ka} and my {db} {hb} {cb} {kb}, {w} only.",
+    ]).format(w=week_phrase(rng, now, target), ca=c(a.course), ka=a.kind.value, da=FULL_DAY[pa.day], ha=hour(pa.slot),
+              cb=c(b.course), kb=b.kind.value, db=FULL_DAY[pb.day], hb=hour(pb.slot))
+    text = text[0].upper() + text[1:]
+    cast = Cast(requester=Requester(f"Yes: the {c(a.course)} {a.kind.value} to {FULL_DAY[pb.day]} {hour(pb.slot)} and "
+                                    f"the {c(b.course)} {b.kind.value} to {FULL_DAY[pa.day]} {hour(pa.slot)}, week {target} only."))
+
+    def check(out: Outcome, before: World, after: World | None) -> list[str]:
+        if after is None:
+            return ["not committed"]
+        bad = []
+        for s, p in ((a, pb), (b, pa)):
+            got = after.timetable(target).assignment.get(s.id)
+            if not got or (got.day, got.slot) != (p.day, p.slot):
+                bad.append(f"the {c(s.course)} {s.kind.value} is not on {p.day} at {hour(p.slot)}")
+        return bad + _untouched(inst, a.faculty, target, before, after)
+
+    return Scenario(f"swap-{a.id}-{b.id}-w{target}", "swap", a.faculty, now, text, frozenset({"submitted"}), [check],
+                    cast=cast)
+
+
+def week_range(world: World, rng: random.Random, now: int) -> Scenario:
+    """Move a class to another day for a run of weeks, then back to normal."""
+    inst = world.instance
+    lo = now + 1
+    hi = lo + rng.choice([1, 2])
+    tt = world.timetable(lo)
+    if tt is None or hi + 1 > inst.calendar.weeks:
+        raise LookupError("the term ends too soon")
+    same = [s for s in inst.sessions if s.duration == 1 and s.id in tt.assignment
+            and all(world.timetable(w).assignment.get(s.id) == tt.assignment[s.id] for w in range(now, hi + 2))]
+    rng.shuffle(same)
+    for s in same[:20]:
+        p = tt.assignment[s.id]
+        to_day = rng.choice([d for d in inst.calendar.days if d != p.day])
+        if all(_solvable(world, [_want(s, to_day, None, (w, w))], w) for w in range(lo, hi + 1)):
+            break
+    else:
+        raise LookupError("no class that can move for those weeks")
+    text = rng.choice([
+        "From week {lo} to week {hi}, please hold my {c} {k} on {t} instead of {d}; after that it goes back.",
+        "Can my {d} {c} {k} move to {t} for weeks {lo} to {hi}? Normal again from week {nx}.",
+    ]).format(lo=lo, hi=hi, nx=hi + 1, c=inst.course_title(s.course), k=s.kind.value, t=FULL_DAY[to_day], d=FULL_DAY[p.day])
+
+    def check(out: Outcome, before: World, after: World | None) -> list[str]:
+        if after is None:
+            return ["not committed"]
+        bad = []
+        for w in range(lo, hi + 1):
+            got = after.timetable(w).assignment.get(s.id)
+            if not got or got.day != to_day:
+                bad.append(f"week {w}: on {got.day if got else 'no day'}")
+        for w in (lo - 1, hi + 1):
+            if after.timetable(w).assignment.get(s.id) != before.timetable(w).assignment.get(s.id):
+                bad.append(f"week {w} changed too")
+        return bad
+
+    return Scenario(f"week_range-{s.id}-w{lo}-{hi}", "week_range", s.faculty, now, text, frozenset({"submitted"}),
+                    [check])
+
+
+def fallback(world: World, rng: random.Random, now: int) -> Scenario:
+    """A first choice another teacher's firm rule blocks (they will not waive it), and a second choice that
+    works: the agent should end up with the second choice."""
+    inst = world.instance
+    found = _blocked(world, rng, now)
+    if found is None:
+        raise LookupError("no blocked first choice")
+    a, b, pb, target, pin = found
+    pa = world.timetable(target).assignment[a.id]
+    seconds = [d for d in inst.calendar.days if d not in (pa.day, pb.day)]
+    rng.shuffle(seconds)
+    second = next((d for d in seconds if _solvable(world, [pin, _want(a, d, None, (target, target))], target)), None)
+    if second is None:
+        raise LookupError("no second choice")
+    owner = inst.faculty_by_id[b.faculty]
+    text = rng.choice([
+        "Can my {c} {k} ({f}, {fh}) go to {d} at {h} {w}? If that's not possible, any time on {s} is fine.",
+        "{w}, I'd like my {f} {c} {k} moved to {d} {h}, or failing that to {s}.",
+    ]).format(c=inst.course_title(a.course), k=a.kind.value, f=FULL_DAY[pa.day], fh=hour(pa.slot), d=FULL_DAY[pb.day],
+              h=hour(pb.slot), s=FULL_DAY[second], w=week_phrase(rng, now, target))
+    text = text[0].upper() + text[1:]
+    cast = Cast(requester=Requester(f"Then {FULL_DAY[second]}, any hour, week {target} only."),
+                teachers={owner.id: Teacher(accept=False, why="That hour was agreed with the students.")})
+
+    def check(out: Outcome, before: World, after: World | None) -> list[str]:
+        if after is None:
+            return ["not committed"]
+        got = after.timetable(target).assignment.get(a.id)
+        bad = [] if got and got.day == second else [f"the class is on {got.day if got else 'no day'}, not {second}"]
+        if after.timetable(target).assignment.get(b.id) != before.timetable(target).assignment.get(b.id):
+            bad.append(f"{owner.name}'s class moved")
+        return bad + _untouched(inst, a.faculty, target, before, after)
+
+    return Scenario(f"fallback-{a.id}-w{target}", "fallback", a.faculty, now, text, frozenset({"submitted"}), [check],
+                    setup=[ConstraintAdded(constraint=pin)], cast=cast)
+
+
 # -- the regulations (data/handbook.md: the synthetic handbook's rule ids) -------------
 
 QUESTIONS = [
@@ -585,18 +783,22 @@ FAMILIES: dict[str, Callable[[World, random.Random, int], Scenario]] = {
     # harder: several steps, people who hedge or do not answer
     "clarify_negotiate": clarify_negotiate, "hedged_yes": hedged_yes, "no_reply": no_reply,
     "two_changes": two_changes, "away_days": away_days,
+    # stress: longer requests (only when asked for by name)
+    "three_changes": three_changes, "swap": swap, "week_range": week_range, "fallback": fallback,
 }
 V1_FAMILIES = list(FAMILIES)[:9]  # what coordinator-v1 (no talk tools) was evaluated on
 V2_FAMILIES = list(FAMILIES)[:12]  # ... coordinator-v2 (talk, no rules)
 V3_FAMILIES = list(FAMILIES)[:14]  # ... coordinator-v3, before the harder families
-HARD_FAMILIES = list(FAMILIES)[14:]
+HARD_FAMILIES = list(FAMILIES)[14:19]
+STRESS_FAMILIES = list(FAMILIES)[19:]
+DEFAULT_FAMILIES = list(FAMILIES)[:19]
 
 
 def build_suite(world: World, *, per_family: int = 2, seed: int = 0, week: int = 5,
                 families: list[str] | None = None) -> list[Scenario]:
     rng = random.Random(seed)
     out: list[Scenario] = []
-    for name in families or list(FAMILIES):
+    for name in families or DEFAULT_FAMILIES:
         seen: set[str] = set()
         for _ in range(per_family * 5):
             if sum(s.family == name for s in out) == per_family:

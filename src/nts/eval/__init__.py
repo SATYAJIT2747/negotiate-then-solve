@@ -2,8 +2,10 @@
 
 from .runner import Verdict, run_suite, save, summary
 from .scenarios import (
+    DEFAULT_FAMILIES,
     FAMILIES,
     HARD_FAMILIES,
+    STRESS_FAMILIES,
     V1_FAMILIES,
     V2_FAMILIES,
     V3_FAMILIES,
@@ -11,4 +13,4 @@ from .scenarios import (
     build_suite,
 )
 
-__all__ = ["FAMILIES", "HARD_FAMILIES", "V1_FAMILIES", "V2_FAMILIES", "V3_FAMILIES", "Scenario", "Verdict", "build_suite", "run_suite", "save", "summary"]
+__all__ = ["DEFAULT_FAMILIES", "FAMILIES", "HARD_FAMILIES", "STRESS_FAMILIES", "V1_FAMILIES", "V2_FAMILIES", "V3_FAMILIES", "Scenario", "Verdict", "build_suite", "run_suite", "save", "summary"]
