@@ -41,6 +41,15 @@ class TimetableSet(BaseModel):
     cancelled: list[str] = Field(default_factory=list)  # sessions not held that week
 
 
+class ClassCancelled(BaseModel):
+    """A class not held in one week (``cancelled=False``: held again); its timetable skips it."""
+
+    kind: Literal["class_cancelled"] = "class_cancelled"
+    week: int
+    session: str
+    cancelled: bool = True
+
+
 class Conceded(BaseModel):
     """Someone gave way: they agreed to waive a rule of theirs for another's request (the fairness ledger)."""
 
@@ -48,7 +57,8 @@ class Conceded(BaseModel):
     entry: ConcessionEntry
 
 
-Change = Annotated[Created | ConstraintAdded | ConstraintRemoved | TimetableSet | Conceded, Field(discriminator="kind")]
+Change = Annotated[Created | ConstraintAdded | ConstraintRemoved | TimetableSet | ClassCancelled | Conceded,
+                   Field(discriminator="kind")]
 
 
 class Event(BaseModel):

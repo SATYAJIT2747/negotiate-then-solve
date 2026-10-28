@@ -29,7 +29,7 @@ from nts.kernel.schemas import (
     When,
 )
 from nts.kernel.semantics import occupied
-from nts.state import ConstraintAdded, ConstraintRemoved, Store
+from nts.state import ConstraintAdded, ConstraintRemoved, Store, World
 from nts.tools import Refusal
 from nts.tools.draft import OFFICE
 from nts.tools.names import FULL_DAY, Directory, hour
@@ -81,50 +81,14 @@ class Desk:
         return sorted(out, key=lambda r: (r["week"] or 0, r["day"], r["from"]))
 
     def request(self, b: Booking, by: str = "") -> Decision:
-        world = self.store.world
-        inst = world.instance
-        d = Directory(inst)
-        checks: list[dict] = []
-
-        def check(name: str, ok: bool, detail: str) -> bool:
-            checks.append({"check": name, "ok": ok, "detail": detail})
-            return ok
-
-        try:
-            day = d.day(b.day)
-            lo, hi = d.slot(b.from_hour), d.slot(b.to_hour, end=True)
-        except Refusal as r:
-            check("when", False, r.error.message)
-            return Decision("refused", checks)
-        check("when", 1 <= b.week <= inst.calendar.weeks and lo < hi,
-              f"week {b.week}, {FULL_DAY[day]} {hour(lo)} to {hour(hi)}")
-        if not checks[-1]["ok"]:
-            return Decision("refused", checks)
-        slots = list(range(lo, hi))
-        lunch = inst.calendar.lunch_slot
-        rooms = [d.room(b.room)] if b.room else sorted(inst.rooms, key=lambda r: r.capacity)
-        busy = self._busy(b.week, day, slots)
-        fits = [r for r in rooms if r.capacity >= b.attendees]
-        free = [r for r in fits if r.id not in busy]
-        check("size", bool(fits), f"{b.attendees} people" + ("" if fits else ": no room is big enough"
-                                                            if not b.room else f": {rooms[0].name} holds {rooms[0].capacity}"))
-        check("room free", bool(free), (f"{free[0].name} is free then" if free else
-                                         "taken then by " + "; ".join(sorted({busy[r.id] for r in fits if r.id in busy}))))
-        if lunch is not None and lunch in slots:
-            checks.append({"check": "lunch hour", "ok": True, "detail": "it includes the lunch hour (allowed for clubs)"})
-        if not all(c["ok"] for c in checks):
-            return Decision("refused", checks, alternatives=self._alternatives(b, day, slots))
-        room = free[0]
-        c = Constraint(id=f"book-{b.week}-{day}-{lo}-{room.id}-{len(world.constraints)}", type=ConstraintType.UNAVAILABLE,
-                       hard=True, tier=Tier.COMMITMENT, owner=None, scope=Scope(room=room.id),
-                       when=When(days=[day], slots=slots), valid=Validity(from_week=b.week, to_week=b.week),
-                       source=Source(rule=f"{PREFIX}{b.club} | {b.purpose} | {b.attendees}", request=by or b.club))
-        if b.attendees > BIG:
-            check("size of event", False, f"over {BIG} people: the timetable office decides")
+        decision, c = assess(self.store.world, b, by, pending=[c for _, c in self.pending.values()])
+        if c is None:
+            return decision
+        if decision.status == "needs_approval":
             self.pending[c.id] = (b, c)
-            return Decision("needs_approval", checks, room.name, c.id)
-        self._commit(c, by)
-        return Decision("booked", checks, room.name, c.id)
+        else:
+            self._commit(c, by)
+        return decision
 
     def approve(self, cid: str) -> None:
         _, c = self.pending.pop(cid)
@@ -146,45 +110,92 @@ class Desk:
         draft.add(ConstraintAdded(constraint=c))
         self.store.commit(draft)  # the gate checks no class is in the room then
 
-    def _busy(self, week: int, day: str, slots: list[int]) -> dict[str, str]:
-        """Room id -> what holds it in those hours: a class that week, or another booking."""
-        world = self.store.world
-        inst = world.instance
-        tt = world.timetable(week)
-        out: dict[str, str] = {}
-        di = inst.day_index(day)
-        if tt is not None:
-            for sid, p in tt.assignment.items():
-                s = inst.session_by_id[sid]
-                if sid in tt.cancelled or p.day != day:
-                    continue
-                if {q for dd, q in occupied(s, di, p.slot)} & set(slots):
-                    out.setdefault(p.room, f"a {inst.course_title(s.course)} {s.kind.value}")
-        for c in [*world.constraints.values(), *(c for _, c in self.pending.values())]:
-            if (c.type == ConstraintType.UNAVAILABLE and c.hard and c.scope.room and c.active_in(week)
-                    and (c.when.days is None or day in c.when.days) and (c.when.slots is None or set(c.when.slots) & set(slots))):
-                out.setdefault(c.scope.room, "a booking" if (c.source.rule or "").startswith(PREFIX) else "a closure")
-        return out
 
-    def _alternatives(self, b: Booking, day: str, slots: list[int]) -> list[dict]:
-        """Up to three that would pass: another room at the same time, or the same length at another hour that day."""
-        inst = self.store.world.instance
-        out = []
-        busy = self._busy(b.week, day, slots)
-        for r in sorted(inst.rooms, key=lambda r: r.capacity):
-            if r.capacity >= b.attendees and r.id not in busy:
-                out.append({"room": r.name, "day": FULL_DAY[day], "from": hour(slots[0]), "to": hour(slots[-1] + 1)})
-                break
-        n = len(slots)
-        for start in range(inst.calendar.slots_per_day - n + 1):
-            alt = list(range(start, start + n))
-            if alt == slots:
+def assess(world: World, b: Booking, by: str = "", pending: list[Constraint] = ()) -> tuple[Decision, Constraint | None]:
+    """The checks for a booking in ``world`` (bookings waiting for the office count as taken), and the rule it
+    would add: None when refused. Nothing is committed here."""
+    inst = world.instance
+    d = Directory(inst)
+    checks: list[dict] = []
+
+    def check(name: str, ok: bool, detail: str) -> bool:
+        checks.append({"check": name, "ok": ok, "detail": detail})
+        return ok
+
+    try:
+        day = d.day(b.day)
+        lo, hi = d.slot(b.from_hour), d.slot(b.to_hour, end=True)
+    except Refusal as r:
+        check("when", False, r.error.message)
+        return Decision("refused", checks), None
+    check("when", 1 <= b.week <= inst.calendar.weeks and lo < hi,
+          f"week {b.week}, {FULL_DAY[day]} {hour(lo)} to {hour(hi)}")
+    if not checks[-1]["ok"]:
+        return Decision("refused", checks), None
+    slots = list(range(lo, hi))
+    lunch = inst.calendar.lunch_slot
+    rooms = [d.room(b.room)] if b.room else sorted(inst.rooms, key=lambda r: r.capacity)
+    busy = _busy(world, b.week, day, slots, pending)
+    fits = [r for r in rooms if r.capacity >= b.attendees]
+    free = [r for r in fits if r.id not in busy]
+    check("size", bool(fits), f"{b.attendees} people" + ("" if fits else ": no room is big enough"
+                                                        if not b.room else f": {rooms[0].name} holds {rooms[0].capacity}"))
+    check("room free", bool(free), (f"{free[0].name} is free then" if free else
+                                     "taken then by " + "; ".join(sorted({busy[r.id] for r in fits if r.id in busy}))))
+    if lunch is not None and lunch in slots:
+        checks.append({"check": "lunch hour", "ok": True, "detail": "it includes the lunch hour (allowed for clubs)"})
+    if not all(c["ok"] for c in checks):
+        return Decision("refused", checks, alternatives=_alternatives(world, b, day, slots, pending)), None
+    room = free[0]
+    c = Constraint(id=f"book-{b.week}-{day}-{lo}-{room.id}-{len(world.constraints)}", type=ConstraintType.UNAVAILABLE,
+                   hard=True, tier=Tier.COMMITMENT, owner=None, scope=Scope(room=room.id),
+                   when=When(days=[day], slots=slots), valid=Validity(from_week=b.week, to_week=b.week),
+                   source=Source(rule=f"{PREFIX}{b.club} | {b.purpose} | {b.attendees}", request=by or b.club))
+    if b.attendees > BIG:
+        check("size of event", False, f"over {BIG} people: the timetable office decides")
+        return Decision("needs_approval", checks, room.name, c.id), c
+    return Decision("booked", checks, room.name, c.id), c
+
+
+def _busy(world: World, week: int, day: str, slots: list[int], pending: list[Constraint] = ()) -> dict[str, str]:
+    """Room id -> what holds it in those hours: a class that week, or another booking."""
+    inst = world.instance
+    tt = world.timetable(week)
+    out: dict[str, str] = {}
+    di = inst.day_index(day)
+    if tt is not None:
+        for sid, p in tt.assignment.items():
+            s = inst.session_by_id[sid]
+            if sid in tt.cancelled or p.day != day:
                 continue
-            taken = self._busy(b.week, day, alt)
-            room = next((r for r in sorted(inst.rooms, key=lambda r: r.capacity)
-                         if r.capacity >= b.attendees and r.id not in taken and (not b.room or r.name == b.room)), None)
-            if room is not None:
-                out.append({"room": room.name, "day": FULL_DAY[day], "from": hour(alt[0]), "to": hour(alt[-1] + 1)})
-            if len(out) == 3:
-                break
-        return out
+            if {q for dd, q in occupied(s, di, p.slot)} & set(slots):
+                out.setdefault(p.room, f"a {inst.course_title(s.course)} {s.kind.value}")
+    for c in [*world.constraints.values(), *pending]:
+        if (c.type == ConstraintType.UNAVAILABLE and c.hard and c.scope.room and c.active_in(week)
+                and (c.when.days is None or day in c.when.days) and (c.when.slots is None or set(c.when.slots) & set(slots))):
+            out.setdefault(c.scope.room, "a booking" if (c.source.rule or "").startswith(PREFIX) else "a closure")
+    return out
+
+
+def _alternatives(world: World, b: Booking, day: str, slots: list[int], pending: list[Constraint] = ()) -> list[dict]:
+    """Up to three that would pass: another room at the same time, or the same length at another hour that day."""
+    inst = world.instance
+    out = []
+    busy = _busy(world, b.week, day, slots, pending)
+    for r in sorted(inst.rooms, key=lambda r: r.capacity):
+        if r.capacity >= b.attendees and r.id not in busy:
+            out.append({"room": r.name, "day": FULL_DAY[day], "from": hour(slots[0]), "to": hour(slots[-1] + 1)})
+            break
+    n = len(slots)
+    for start in range(inst.calendar.slots_per_day - n + 1):
+        alt = list(range(start, start + n))
+        if alt == slots:
+            continue
+        taken = _busy(world, b.week, day, alt, pending)
+        room = next((r for r in sorted(inst.rooms, key=lambda r: r.capacity)
+                     if r.capacity >= b.attendees and r.id not in taken and (not b.room or r.name == b.room)), None)
+        if room is not None:
+            out.append({"room": room.name, "day": FULL_DAY[day], "from": hour(alt[0]), "to": hour(alt[-1] + 1)})
+        if len(out) == 3:
+            break
+    return out

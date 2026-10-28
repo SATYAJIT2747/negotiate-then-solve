@@ -9,7 +9,14 @@ from types import MappingProxyType
 from nts.kernel.instance import Instance
 from nts.kernel.schemas import ConcessionEntry, Constraint, Placement
 
-from .events import Change, Conceded, ConstraintAdded, ConstraintRemoved, TimetableSet
+from .events import (
+    Change,
+    ClassCancelled,
+    Conceded,
+    ConstraintAdded,
+    ConstraintRemoved,
+    TimetableSet,
+)
 
 
 @dataclass(frozen=True)
@@ -56,6 +63,12 @@ class World:
                 raise ValueError(f"no constraint {change.id}")
         elif isinstance(change, TimetableSet):
             timetables[change.week] = Timetable(MappingProxyType(dict(change.assignment)), frozenset(change.cancelled))
+        elif isinstance(change, ClassCancelled):
+            tt = timetables.get(change.week) or timetables.get(None)
+            if tt is None or change.session not in tt.assignment:
+                raise ValueError(f"no class {change.session} in week {change.week}")
+            cancelled = tt.cancelled | {change.session} if change.cancelled else tt.cancelled - {change.session}
+            timetables[change.week] = Timetable(tt.assignment, frozenset(cancelled))
         elif isinstance(change, Conceded):
             concessions = (*concessions, change.entry)
         return World(self.instance, version, MappingProxyType(constraints), MappingProxyType(timetables), concessions)

@@ -89,6 +89,20 @@ COORDINATOR_V4 = AgentConfig(  # swaps, runs of weeks, where a class is now vs w
    from_week and to_week; for one week, both the same.""",
 )
 
+COORDINATOR_V5 = AgentConfig(  # cancellations, make-up classes, hour limits, room bookings, counter-offers; no adapter yet
+    name="coordinator",
+    scopes=COORDINATOR_V4.scopes | {Scope.EXTEND},
+    budgets=COORDINATOR_V4.budgets,
+    prompt=COORDINATOR_V4.prompt + """
+10. A class not held one week: cancel_class. A make-up or extra class: add_class (with no day or hour it
+    finds a free time). At most so many hours in a row: limit_hours. A room for a club or an event:
+    book_room. Each is a change like the others: check_draft, then submit.
+11. If a teacher turns an offer down, the answer may list other times that work without them: ask the
+    requester whether one would do. If a teacher proposes another time instead, the answer says whether it
+    works: if it does, ask the requester, and use it if they agree.""",
+)
+
 COORDINATOR = COORDINATOR_V3  # the latest with an adapter; serve an adapter with the version it was trained on (--agent)
 
-__all__ = ["COORDINATOR", "COORDINATOR_V1", "COORDINATOR_V2", "COORDINATOR_V3", "COORDINATOR_V4", "READER"]
+__all__ = ["COORDINATOR", "COORDINATOR_V1", "COORDINATOR_V2", "COORDINATOR_V3", "COORDINATOR_V4", "COORDINATOR_V5",
+           "READER"]

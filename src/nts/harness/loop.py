@@ -48,6 +48,7 @@ from nts.protocol import (
     request_hash,
     tools_hash,
 )
+from nts.screen import REFUSED, screen
 from nts.state import Draft, Store, TimetableSet
 from nts.telemetry import Tracer, new_id
 from nts.tools import Ask, Context, Registry, Reply, Scope, settle
@@ -80,6 +81,7 @@ class Outcome:
     calls: list[ToolResult] = field(default_factory=list)
     asks: list[tuple[Ask, Reply]] = field(default_factory=list)  # what talk tools asked, and the replies
     pending: Ask | None = None  # status "waiting": the ask that waits for an answer
+    screened: bool = False  # an instruction to the system was left out of the request (``nts.screen``)
     run: _Run | None = field(default=None, repr=False)  # what ``Harness.resume`` goes on from
 
 
@@ -94,15 +96,22 @@ class Harness:
             *, episode_id: str | None = None, people: People | None = None) -> Outcome:
         eid = episode_id or new_id("ep-")
         draft = store.draft(actor, eid)
-        ctx = Context(store.world, actor, week, draft, handbook=self.handbook, request=request)
+        screened = screen(request)  # instructions to the system are never read
+        read = screened.text or ""
+        ctx = Context(store.world, actor, week, draft, handbook=self.handbook, request=read, scopes=agent.scopes)
         tools = self.registry.specs(agent.scopes)
-        transcript = [Message(role="system", content=agent.system(ctx)), Message(role="user", content=request)]
+        transcript = [Message(role="system", content=agent.system(ctx)), Message(role="user", content=read)]
         run = _Run(eid, agent, ctx, transcript, tools, people)
+        run.screened = screened.flagged
 
         with self.tracer.span("episode", agent.name, trace_id=eid, agent=agent.name, agent_version=agent.version(tools),
                               model=self.model.name, actor=actor, week=week, request=request,
-                              state_version=store.version, tools=tools, budgets=asdict(agent.budgets)) as ep:
-            self._loop(run)
+                              state_version=store.version, tools=tools, budgets=asdict(agent.budgets),
+                              screened=screened.flagged) as ep:
+            if screened.text is None:
+                run.stop("declined", "only instructions to the system", text=REFUSED)
+            else:
+                self._loop(run)
             outcome = run.outcome()
             ep.attrs.update(_ended(outcome))
         return outcome
@@ -261,7 +270,7 @@ def _ended(o: Outcome) -> dict:
     """What the episode (or resume) span records of how it ended."""
     return {"status": o.status, "detail": o.detail, "text": o.text, "turns": o.turns, "tool_calls": o.tool_calls,
             "refused": o.refused, "usage": o.usage.model_dump(), "seconds": o.seconds,
-            "draft_changes": len(o.draft.changes), "asks": len(o.asks),
+            "draft_changes": len(o.draft.changes), "asks": len(o.asks), "screened": o.screened,
             "pending": o.pending.model_dump(mode="json") if o.pending else None}
 
 
@@ -291,6 +300,7 @@ class _Run:
         self.repeats = 0
         self.status, self.detail, self.text = "", "", ""
         self.elapsed = 0.0
+        self.screened = False
 
     def stop(self, status: str, detail: str = "", *, text: str = "") -> None:
         self.status, self.detail, self.text = status, detail, text
@@ -327,4 +337,4 @@ class _Run:
                        tool_calls=len(self.calls), refused=sum(not r.ok for r in self.calls), usage=self.usage,
                        seconds=round(self.elapsed, 3), transcript=self.transcript, draft=self.ctx.draft,
                        detail=detail, calls=self.calls, asks=list(self.asks),
-                       pending=self.waiting.ask if self.waiting else None, run=self)
+                       pending=self.waiting.ask if self.waiting else None, screened=self.screened, run=self)

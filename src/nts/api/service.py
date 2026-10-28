@@ -25,6 +25,7 @@ from typing import Any
 from nts.bookings import Desk
 from nts.harness import AgentConfig, Harness, Outcome, approve, reject
 from nts.models import Model
+from nts.notices import notices
 from nts.people import Cast
 from nts.semester import rebuild
 from nts.state import Store
@@ -136,6 +137,7 @@ class Service:
         self.lock = threading.Lock()  # one commit at a time; drafts are private and need none
         self.desk = Desk(store)
         self.rebuild: dict = {"status": "none"}  # the office's semester rebuild: none, running, ready, failed
+        self.told: dict[str, list[dict]] = {}  # person -> notices of committed changes to their classes
 
     # -- the semester timetable ---------------------------------------------------------
 
@@ -242,6 +244,10 @@ class Service:
                 out.append(ep.summary())
         return out
 
+    def notices(self, person: str) -> list[dict]:
+        """What committed changes did to ``person``'s classes, newest first."""
+        return list(reversed(self.told.get(person, [])))
+
     # -- the draft and its approval ------------------------------------------------
 
     def draft(self, eid: str) -> list[str]:
@@ -260,6 +266,10 @@ class Service:
         assert ep.outcome is not None
         with self.lock:
             world = approve(self.store, ep.outcome, self.tracer, by=by)
+        if world is not None:
+            at = datetime.now().isoformat(timespec="seconds")
+            for person, lines in notices(ep.outcome.draft.base, world, ep.actor).items():
+                self.told.setdefault(person, []).extend({"at": at, "episode": ep.id, "text": t} for t in lines)
         ep.status = "approved" if world else "not_committed"
         ep.decision = {"by": by, "approved": world is not None, "version": world.version if world else None}
         ep.push({"type": "decision", **ep.decision})
@@ -285,5 +295,6 @@ class Service:
     def detail(self, eid: str) -> dict[str, Any]:
         ep = self.get(eid)
         return {**ep.summary(), "draft": self.draft(eid), "decision": ep.decision, "busy": ep.busy,
+                "screened": bool(ep.outcome and ep.outcome.screened),
                 "stale": bool(ep.outcome and ep.status == "submitted"
                               and ep.outcome.draft.base.version != self.store.version)}

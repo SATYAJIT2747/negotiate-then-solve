@@ -35,12 +35,14 @@ class Requester:
 @dataclass
 class Teacher:
     """Another teacher: says yes or no to every offer, with ``why`` as the reason given. A teacher who
-    ``hedges`` answers the first offer with a question of their own, and decides on the next one."""
+    ``hedges`` answers the first offer with a question of their own, and decides on the next one. One with a
+    ``counter`` (day, hour) proposes that time for the requester's class instead of giving way."""
 
     accept: bool = False
     why: str = ""
     responsive: bool = True
     hedges: bool = False
+    counter: tuple[str, str] | None = None  # ("Thursday", "2 pm")
     offers: int = 0  # offers heard so far
 
     def reply(self, ask: Ask) -> Reply:
@@ -52,6 +54,10 @@ class Teacher:
         if self.hedges and self.offers == 1:
             return Reply(answer="said", text="Hmm, maybe. What is it for, and is it only for that week? "
                                              "Ask me again once you can tell me.")
+        if self.counter is not None:
+            day, at = self.counter
+            return Reply(answer="counter", day=day, hour=at,
+                         text=f"I'd rather keep my hour, but your class could go on {day} at {at} instead.")
         if self.accept:
             weeks = f"in week {', '.join(map(str, ask.weeks))}" if ask.weeks else "from now on"
             return Reply(answer="yes", text=f"Yes, that's fine {weeks}." + (f" {self.why}" if self.why else ""))
@@ -83,7 +89,11 @@ class Terminal:
         print(f"  [{ask.kind} to {ask.to_name}] {ask.text}")
         if ask.kind == "offer":
             print(f"    rule: {ask.rule_text}; waive " + (f"in week {ask.weeks}" if ask.weeks else "for good"))
-            yes = input("    agree? [y/n] ").strip().lower().startswith("y")
+            said = input("    agree? [y/n/c = another time] ").strip().lower()
+            if said.startswith("c"):
+                day, at = input("    which day? ").strip(), input("    which hour? ").strip()
+                return Reply(answer="counter", day=day, hour=at or None, text=input("    say: ").strip())
+            yes = said.startswith("y")
             return Reply(answer="yes" if yes else "no", text=input("    say: ").strip() or ("Yes." if yes else "No."))
         text = input("    answer (empty: no reply): ").strip()
         return Reply(text=text) if text else Reply(answer="no_reply")

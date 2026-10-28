@@ -28,7 +28,7 @@ from nts.kernel.schemas import (
     Scope as Who,
 )
 from nts.kernel.semantics import room_compatible
-from nts.state import ConstraintAdded, ConstraintRemoved, Draft
+from nts.state import ClassCancelled, ConstraintAdded, ConstraintRemoved, Draft
 from nts.state.world import Timetable
 
 from . import words
@@ -37,6 +37,7 @@ from .read import _class
 from .registry import Context, Refusal, Scope, tool
 
 OFFICE = "coordinator"
+CANCEL = "cancel:"  # a cancellation among a draft's changes (``extend.cancel_class``): "cancel:<week>:<session>"
 
 
 def _draft(ctx: Context) -> Draft:
@@ -312,7 +313,11 @@ def retract(ctx: Context, args: Retract) -> dict:
     if args.change not in changes:
         raise Refusal("unknown_change", f"there is no change {args.change}", changes=sorted(changes))
     for cid in changes.pop(args.change):
-        draft.add(ConstraintRemoved(id=cid))
+        if cid.startswith(CANCEL):
+            week, sid = cid.removeprefix(CANCEL).split(":", 1)
+            draft.add(ClassCancelled(week=int(week), session=sid, cancelled=False))
+        else:
+            draft.add(ConstraintRemoved(id=cid))
     return {"retracted": args.change, "left": sorted(changes)}
 
 
@@ -324,8 +329,16 @@ class ListDraft(BaseModel):
 def list_draft(ctx: Context, args: ListDraft) -> list[dict]:
     """The changes in the draft so far, by number."""
     world = _draft(ctx).world
-    return [{"change": n, "rules": [words.constraint(world.instance, world.constraints[i]) for i in ids]}
+    return [{"change": n, "rules": [_cancelled(world, i) if i.startswith(CANCEL) else
+                                    words.constraint(world.instance, world.constraints[i]) for i in ids]}
             for n, ids in sorted(_changes(ctx).items())]
+
+
+def _cancelled(world, marker: str) -> str:
+    week, sid = marker.removeprefix(CANCEL).split(":", 1)
+    inst = world.instance
+    s = inst.session_by_id[sid]
+    return f"the {inst.course_title(s.course)} {s.kind.value} of {inst.faculty_by_id[s.faculty].name}: not held in week {week}"
 
 
 class SwapClasses(BaseModel):

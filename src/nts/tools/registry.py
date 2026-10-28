@@ -32,6 +32,7 @@ class Scope(str, Enum):
     READ = "read"  # looks at the state
     DRAFT = "draft"  # changes the episode's draft
     REARRANGE = "rearrange"  # changes several classes at once (swap); from coordinator-v4
+    EXTEND = "extend"  # cancel a class, a make-up class, hour limits, room bookings; from coordinator-v5
     EVALUATE = "evaluate"  # asks the kernel about the draft
     TALK = "talk"  # sends a message to a person (the episode waits for the answer)
     POLICY = "policy"  # looks up the department's regulations
@@ -52,7 +53,8 @@ class Context:
     draft: Draft | None = None
     scratch: dict[str, Any] = field(default_factory=dict)  # what tools keep between calls in one episode
     handbook: Any = None  # the department's regulations (nts.policy.Handbook), for the rules tool
-    request: str = ""  # what the person asked, as they wrote it
+    request: str = ""  # what the person asked, as they wrote it (screened: ``nts.screen``)
+    scopes: frozenset = frozenset()  # the agent's tool scopes (some results say more to later agents)
 
     @property
     def state(self) -> World:

@@ -107,3 +107,11 @@ def test_a_week_range_is_judged_week_by_week(store):
                                call("submit", message="Moved.")])
         v = run_suite([sc], model, store, COORDINATOR, Tracer([MemorySink()]))[0]
         assert v.passed == ok, v.failures
+
+
+def test_the_v5_families_build_and_stay_out_of_the_default_suite(store):
+    from nts.eval import V5_FAMILIES
+
+    v5 = build_suite(store.world, per_family=2, seed=0, families=V5_FAMILIES)
+    assert {s.family for s in v5} == set(V5_FAMILIES)
+    assert not {s.family for s in build_suite(store.world, per_family=1, seed=0)} & set(V5_FAMILIES)

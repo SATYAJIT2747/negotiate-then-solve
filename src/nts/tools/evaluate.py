@@ -16,7 +16,7 @@ from pydantic import BaseModel
 
 from nts.kernel.schemas import Placement
 from nts.kernel.solver import SolverTimeout, TimetableSolver
-from nts.state import TimetableSet
+from nts.state import TimetableSet, World
 from nts.state.store import touched
 
 from . import words
@@ -48,11 +48,12 @@ def check_draft(ctx: Context, args: CheckDraft) -> dict:
     base, after = ctx.world, ctx.draft.world
     added = [c for cid, c in after.constraints.items() if cid not in base.constraints]
     removed = [c for cid, c in base.constraints.items() if cid not in after.constraints]
-    if not added and not removed:
+    cancels = cancellations(base, after)
+    if not added and not removed and not cancels:
         raise Refusal("empty_draft", "the draft has no changes yet")
     ours = {c.id: n for n, ids in ctx.scratch.get("changes", {}).items() for c in added if c.id in ids}
     # removing or waiving a rule never breaks a timetable
-    weeks = set().union(*(touched(after, c) for c in added if not waived(c.id)))
+    weeks = set().union(*(touched(after, c) for c in added if not waived(c.id))) | set(cancels)
     if not weeks:
         ctx.scratch["check"] = Checked(after.version, True, [])
         return {"ok": True, "applies_to": "no timetable changes", "classes_moved": 0, "moves": [],
@@ -60,7 +61,7 @@ def check_draft(ctx: Context, args: CheckDraft) -> dict:
 
     groups: dict[tuple, list[int | None]] = {}
     for w in weeks:
-        key = (frozenset(c.id for c in after.active(w)), w if w in base.timetables else None)
+        key = (frozenset(c.id for c in after.active(w)), w if w in base.timetables or w in cancels else None)
         groups.setdefault(key, []).append(w)
 
     sets: list[TimetableSet] = []
@@ -68,10 +69,10 @@ def check_draft(ctx: Context, args: CheckDraft) -> dict:
     unmet: set[str] = set()
     for ws in groups.values():
         w = min(ws, key=lambda x: 0 if x is None else x)
-        now = base.timetable(w)
-        assert now is not None
+        now, skip = base.timetable(w), after.timetable(w)
+        assert now is not None and skip is not None
         solver = TimetableSolver(after.instance, after.constraints.values(), week=w, baseline=now.assignment,
-                                 skip=now.cancelled, time_limit=TIME_LIMIT, presolve=False)
+                                 skip=skip.cancelled, time_limit=TIME_LIMIT, presolve=False)
         result = solver.solve()
         if result.status == "unknown":
             ctx.scratch["check"] = Checked(after.version, False, [])
@@ -80,9 +81,9 @@ def check_draft(ctx: Context, args: CheckDraft) -> dict:
             ctx.scratch["check"] = Checked(after.version, False, [])
             return _clash(ctx, solver, ours, ws)
         assert result.assignment is not None
-        sets += [TimetableSet(week=x, assignment=result.assignment, cancelled=sorted(now.cancelled)) for x in ws]
+        sets += [TimetableSet(week=x, assignment=result.assignment, cancelled=sorted(skip.cancelled)) for x in ws]
         for sid, p in result.assignment.items():
-            if now.assignment.get(sid) != p and sid not in moved:
+            if now.assignment.get(sid) != p and sid not in moved and sid not in skip.cancelled:
                 moved[sid] = (now.assignment[sid], p)
         unmet |= set(result.soft_violations) & set(ours)  # the wishes in this draft that the solver could not meet
 
@@ -97,6 +98,19 @@ def check_draft(ctx: Context, args: CheckDraft) -> dict:
            "not_met": [words.constraint(inst, after.constraints[c]) for c in sorted(unmet)]}
     if len(rows) > MAX_LISTED:
         out["more_moves"] = len(rows) - MAX_LISTED
+    if cancels:
+        out["cancelled"] = [{**_at(inst, inst.session_by_id[sid], base.timetable(w).assignment[sid]), "week": w}
+                            for w, sids in sorted(cancels.items()) for sid in sorted(sids)]
+    return out
+
+
+def cancellations(base: World, after: World) -> dict[int, set[str]]:
+    """Week -> the classes the draft cancels (or holds again) there."""
+    out: dict[int, set[str]] = {}
+    for w, tt in after.timetables.items():
+        was = base.timetable(w)
+        if w is not None and was is not None and tt.cancelled != was.cancelled:
+            out[w] = set(tt.cancelled ^ was.cancelled)
     return out
 
 

@@ -4,7 +4,13 @@ make a new agent version instead of editing one an adapter was trained on."""
 
 import hashlib
 
-from nts.agents import COORDINATOR, COORDINATOR_V1, COORDINATOR_V2, COORDINATOR_V3
+from nts.agents import (
+    COORDINATOR,
+    COORDINATOR_V1,
+    COORDINATOR_V2,
+    COORDINATOR_V3,
+    COORDINATOR_V4,
+)
 from nts.harness.context import LAST_TURN, UNCHECKED, WRAP_UP
 from nts.tools import ALL_TOOLS, Registry
 
@@ -12,6 +18,7 @@ TRAINED = {  # agent -> version: what each adapter's episodes were collected wit
     "v1": (COORDINATOR_V1, "8266a3f614bd"),  # nts-agent-v1 (85c5b198b9b3 with a local model's budgets)
     "v2": (COORDINATOR_V2, "a008f93774e0"),  # nts-agent-v2
     "v3": (COORDINATOR_V3, "696ca57090f2"),  # nts-agent-v3
+    "v4": (COORDINATOR_V4, "f5d6b4cc5347"),  # nts-agent-v4
 }
 
 

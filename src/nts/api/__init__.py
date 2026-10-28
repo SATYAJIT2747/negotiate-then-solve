@@ -7,9 +7,11 @@
     POST /api/episodes              {"request": "...", "week": 5, "simulate": false}   (as the signed-in person)
     GET  /api/episodes/{id}/events  text/event-stream: model, tool, reply, waiting, end, decision
     GET  /api/episodes/{id}/poll?after=n   the same events as JSON (for clients without SSE)
-    POST /api/episodes/{id}/reply   {"answer": "yes" | "no" | "said" | "no_reply", "text": "..."}   (the one asked)
+    POST /api/episodes/{id}/reply   {"answer": "yes" | "no" | "said" | "no_reply" | "counter", "text": "...",
+                                     "day": "Thu", "hour": "2 pm"}   (the one asked; day and hour for a counter)
     POST /api/episodes/{id}/approve | /reject {"note": "..."}                             (the office)
     GET  /api/inbox                 what waits for my answer
+    GET  /api/notices               what approved changes did to my classes
     GET  /api/department, /api/timetable?week=5&teacher=Dr. Iyer, /api/fairness, /api/rules?q=lunch
     GET  /api/obs/overview, /api/obs/episodes, /api/obs/trace/{id}, /api/obs/evals          (the office)
     GET  /api/bookings?week=6; POST /api/bookings {...}; POST /api/bookings/{id}/approve | /refuse; DELETE ...
@@ -60,8 +62,10 @@ class Start(BaseModel):
 
 
 class Answer(BaseModel):
-    answer: Literal["yes", "no", "said", "no_reply"] = "said"
+    answer: Literal["yes", "no", "said", "no_reply", "counter"] = "said"
     text: str = ""
+    day: str | None = None  # "counter": another time for the requester's class
+    hour: str | None = None
 
 
 class Note(BaseModel):
@@ -279,7 +283,7 @@ def create_app(departments: dict[str, Service] | Service, users: Users | None = 
         if not _can(s, eid)["answer"]:
             raise HTTPException(403, "this is not waiting for your answer")
         try:
-            service(s).reply(eid, Reply(answer=body.answer, text=body.text))
+            service(s).reply(eid, Reply(answer=body.answer, text=body.text, day=body.day, hour=body.hour))
         except Conflict as e:
             raise HTTPException(409, str(e)) from None
         return service(s).detail(eid)
@@ -305,6 +309,10 @@ def create_app(departments: dict[str, Service] | Service, users: Users | None = 
     @app.get("/api/inbox")
     def inbox(s: Me) -> list[dict]:
         return service(s).inbox(s.person)
+
+    @app.get("/api/notices")
+    def told(s: Me) -> list[dict]:
+        return service(s).notices(s.person)
 
     # -- room bookings ----------------------------------------------------------------------------
 

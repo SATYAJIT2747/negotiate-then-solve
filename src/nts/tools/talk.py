@@ -47,8 +47,12 @@ class Ask(BaseModel):
 
 
 class Reply(BaseModel):
-    answer: Literal["yes", "no", "no_reply", "said"] = "said"  # an offer is answered yes or no; a question, "said"
+    # an offer is answered yes or no, or "counter": another time for the requester's class (``day``, ``hour``);
+    # a question, "said"
+    answer: Literal["yes", "no", "no_reply", "said", "counter"] = "said"
     text: str = ""
+    day: str | None = None  # a counter-offer's time
+    hour: str | None = None
 
 
 def theirs(ctx: Context) -> dict[int, tuple[str, list[int]]]:
@@ -131,7 +135,7 @@ def settle(ctx: Context, ask: Ask, reply: Reply) -> dict:
     if ask.kind == "notice":
         return {"sent_to": ask.to_name}
     if reply.answer == "no_reply":
-        return {"from": ask.to_name, "answer": "no reply"}
+        return _other_times(ctx, ask, {"from": ask.to_name, "answer": "no reply"})
     out = {"from": ask.to_name, "says": reply.text}
     if ask.kind != "offer":
         return out
@@ -140,7 +144,11 @@ def settle(ctx: Context, ask: Ask, reply: Reply) -> dict:
         return {**out, "answer": "undecided",
                 "next": "answer what they said and make the offer again, or decline or escalate"}
     ctx.scratch.setdefault("answers", set()).add((ask.rule, "yes" if reply.answer == "yes" else "no"))
+    if reply.answer == "counter" and Scope.EXTEND in ctx.scopes:
+        return _counter(ctx, reply, {**out, "answer": "counter"})
     out["answer"] = "yes" if reply.answer == "yes" else "no"
+    if out["answer"] == "no":
+        return _other_times(ctx, ask, out)
     if reply.answer == "yes":
         draft = _draft(ctx)
         c = draft.world.constraints[ask.rule]
@@ -156,6 +164,39 @@ def settle(ctx: Context, ask: Ask, reply: Reply) -> dict:
         draft.add(Conceded(entry=entry(c, ctx.actor, ask.weeks)))
         ctx.scratch.setdefault("waivers", []).append(out["draft"])
         out["next"] = "call check_draft again"
+    return out
+
+
+def _other_times(ctx: Context, ask: Ask, out: dict) -> dict:
+    """A refused (or unanswered) offer: times that work for the requester's class without that rule (v5)."""
+    from .options import alternatives, wanted
+
+    if ask.kind != "offer" or Scope.EXTEND not in ctx.scopes or (c := wanted(ctx)) is None:
+        return out
+    if found := alternatives(ctx, c):
+        out["other_times"] = found
+        out["next"] = ("ask the requester whether one of these times would do; if so, retract your change and move "
+                       "the class there; else decline or escalate")
+    return out
+
+
+def _counter(ctx: Context, reply: Reply, out: dict) -> dict:
+    """The owner proposed another time for the requester's class: whether it works, checked by the solver."""
+    from .options import wanted, works
+
+    c = wanted(ctx)
+    out["proposal"] = {"day": reply.day, "hour": reply.hour}
+    if c is None or not reply.day:
+        out["works"] = False
+        return out
+    d = Directory(ctx.state.instance)
+    try:
+        ok = works(ctx, c, d.day(reply.day), d.slot(reply.hour) if reply.hour else None)
+    except Refusal:
+        ok = False
+    out["works"] = ok
+    out["next"] = ("ask the requester whether that time would do; if so, retract your change and move the class "
+                   "there" if ok else "that time does not work: decline or escalate, or ask the requester")
     return out
 
 

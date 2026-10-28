@@ -21,7 +21,15 @@ from nts.kernel.schemas import Constraint
 from nts.kernel.solver import TimetableSolver
 from nts.kernel.validator import validate_constraint, verify_timetable
 
-from .events import GENESIS, Change, ConstraintAdded, Created, Event, TimetableSet
+from .events import (
+    GENESIS,
+    Change,
+    ClassCancelled,
+    ConstraintAdded,
+    Created,
+    Event,
+    TimetableSet,
+)
 from .world import World
 
 
@@ -73,7 +81,7 @@ def check(after: World, changes: Iterable[Change]) -> list[str]:
         if isinstance(ch, ConstraintAdded):
             problems += [f"{ch.constraint.id}: {p}" for p in validate_constraint(ch.constraint, inst)]
             weeks |= touched(after, ch.constraint)
-        elif isinstance(ch, TimetableSet):
+        elif isinstance(ch, TimetableSet | ClassCancelled):
             weeks.add(ch.week)
     for w in sorted(weeks, key=lambda w: 0 if w is None else w):
         tt = after.timetable(w)

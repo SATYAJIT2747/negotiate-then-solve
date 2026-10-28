@@ -3,12 +3,16 @@
     approve(store, outcome, tracer, by="office")    # the new World, or None if the kernel refused it
     reject(outcome, tracer, by="office", note="Not in exam week.")
 
+A committed change tells the teachers whose classes it moved or cancelled (``nts.notices``: built from the
+timetables, recorded on the span as ``notices``).
+
 Each decision is an "approval" span in the episode's trace, so it labels the episode for training:
 approved and committed, refused by the kernel at commit, or rejected by a person (with the note).
 """
 
 from __future__ import annotations
 
+from nts.notices import notices
 from nts.state import InvalidChange, StaleDraft, Store, World
 from nts.telemetry import Tracer
 
@@ -25,7 +29,8 @@ def approve(store: Store, outcome: Outcome, tracer: Tracer, *, by: str = "office
             span.attrs.update(approved=False, committed=False, problems=getattr(e, "problems", [str(e)]),
                               reason=type(e).__name__)
             return None
-        span.attrs.update(approved=True, committed=True, version=world.version)
+        told = notices(outcome.draft.base, world, outcome.draft.actor)
+        span.attrs.update(approved=True, committed=True, version=world.version, notices=told)
         return world
 
 
