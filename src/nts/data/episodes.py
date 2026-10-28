@@ -84,3 +84,18 @@ def episodes(folder: Path | str) -> Iterator[Episode]:
         ep.model_calls.sort(key=lambda s: s.seq)
         ep.tool_calls.sort(key=lambda s: s.seq)
         yield ep
+
+
+def as_agent(ep: Episode, old_prompt: str, new_prompt: str, tools: list[dict]) -> Episode:
+    """The episode as a later agent would have been sent it: the later prompt in place of the old one, the later
+    tools offered. Sound only when the later agent extends the old (its prompt starts with the old prompt, every
+    old tool is offered unchanged), so each reply is still one the later agent could make; the caller checks that."""
+    def sent(s: Span) -> Span:
+        msgs = [{**m, "content": new_prompt + m["content"][len(old_prompt):]}
+                if m.get("role") == "system" and m.get("content", "").startswith(old_prompt) else m
+                for m in s.attrs["messages"]]
+        return s.model_copy(update={"attrs": {**s.attrs, "messages": msgs}})
+
+    return Episode(ep.episode.model_copy(update={"attrs": {**ep.episode.attrs, "tools": tools}}),
+                   [sent(s) if "messages" in s.attrs else s for s in ep.model_calls], ep.tool_calls, ep.approvals,
+                   ep.evaluations, ep.selections)

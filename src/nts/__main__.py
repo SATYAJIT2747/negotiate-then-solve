@@ -82,6 +82,8 @@ def main(argv: list[str] | None = None) -> int:
     x.add_argument("--keep-errors", action="store_true")
     x.add_argument("--stores", nargs="*", type=Path, help="only episodes run on these stores")
     x.add_argument("--agent", choices=sorted(AGENTS), help="only episodes of this agent's tools")
+    x.add_argument("--from-agents", nargs="*", choices=sorted(AGENTS), default=[],
+                   help="also episodes of these earlier agents, rewritten as --agent (each must be extended by it)")
     v = sub.add_parser("serve", help="the API and its web page")
     v.add_argument("--store", type=Path, nargs="+", default=[DEFAULT_STORE], help="one store per department")
     v.add_argument("--users", type=Path, help="passwords (python -m nts passwd); none: sign in by name alone")
@@ -189,7 +191,7 @@ def evaluate(args: argparse.Namespace) -> int:
 
 
 def export_rows(args: argparse.Namespace) -> int:
-    from nts.data import episodes, export
+    from nts.data import as_agent, episodes, export
 
     eps = episodes(args.telemetry / "spans")
     if args.stores:  # only episodes that started on a version of these stores (keeps a held-out department out)
@@ -197,8 +199,19 @@ def export_rows(args: argparse.Namespace) -> int:
         eps = (e for e in eps if e.episode.attrs.get("state_version") in versions
                or any(v.attrs.get("store_version") in versions for v in e.evaluations))  # a scenario's setup came first
     if args.agent:  # only episodes offered exactly this agent's tools (its prompt and tools are what is trained)
-        want = tools_hash(Registry(ALL_TOOLS).specs(AGENTS[args.agent].scopes))
-        eps = (e for e in eps if tools_hash(e.tools) == want)
+        target = AGENTS[args.agent]
+        tools = Registry(ALL_TOOLS).specs(target.scopes)
+        older = {}  # tools hash of an earlier agent -> its prompt; its episodes are rewritten as the target's
+        for name in args.from_agents:
+            old = AGENTS[name]
+            specs = Registry(ALL_TOOLS).specs(old.scopes)
+            if not target.prompt.startswith(old.prompt) or any(s not in tools for s in specs):
+                print(f"--from-agents: {args.agent} does not extend {name}", file=sys.stderr)
+                return 2
+            older[tools_hash(specs)] = old.prompt
+        want = tools_hash(tools)
+        eps = (e if tools_hash(e.tools) == want else as_agent(e, older[tools_hash(e.tools)], target.prompt, tools)
+               for e in eps if tools_hash(e.tools) == want or tools_hash(e.tools) in older)
     counts = export(eps, args.out, models=args.models, include_unjudged=args.include_unjudged,
                     keep_errors=args.keep_errors)
     print(json.dumps(counts))

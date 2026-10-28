@@ -11,7 +11,9 @@ tool call that failed with unknown_name last week":
 from __future__ import annotations
 
 import json
+import os
 import sqlite3
+import sys
 from collections.abc import Iterator
 from contextlib import contextmanager
 from pathlib import Path
@@ -25,9 +27,36 @@ class JsonlSink:
         self.folder.mkdir(parents=True, exist_ok=True)
 
     def write(self, span: Span) -> None:
+        """One locked write per span: processes appending to one file at once (parallel collections) would
+        otherwise interleave a long line, which Windows writes in pieces."""
         path = self.folder / f"{span.start:%Y-%m-%d}.jsonl"
-        with path.open("a", encoding="utf-8") as f:
-            f.write(span.model_dump_json() + "\n")
+        data = (span.model_dump_json() + "\n").encode("utf-8")
+        with path.open("ab") as f, _locked(f):
+            f.seek(0, os.SEEK_END)
+            f.write(data)
+            f.flush()
+
+
+@contextmanager
+def _locked(f) -> Iterator[None]:
+    if sys.platform == "win32":
+        import msvcrt
+
+        f.seek(0)  # every writer locks the first byte; LK_LOCK retries for 10 s
+        msvcrt.locking(f.fileno(), msvcrt.LK_LOCK, 1)
+        try:
+            yield
+        finally:
+            f.seek(0)
+            msvcrt.locking(f.fileno(), msvcrt.LK_UNLCK, 1)
+    else:
+        import fcntl
+
+        fcntl.flock(f.fileno(), fcntl.LOCK_EX)
+        try:
+            yield
+        finally:
+            fcntl.flock(f.fileno(), fcntl.LOCK_UN)
 
 
 class SqliteSink:
@@ -62,10 +91,18 @@ class SqliteSink:
 
 
 def read_spans(folder: Path | str) -> Iterator[Span]:
+    """Every span in the files; a damaged line (two writers interleaved, before writes were locked) is skipped
+    and counted on stderr."""
     for path in sorted(Path(folder).glob("*.jsonl")):
+        damaged = 0
         for line in path.read_text(encoding="utf-8").splitlines():
             if line:
-                yield Span.model_validate_json(line)
+                try:
+                    yield Span.model_validate_json(line)
+                except ValueError:
+                    damaged += 1
+        if damaged:
+            print(f"{path.name}: skipped {damaged} damaged line(s)", file=sys.stderr)
 
 
 def load_trace(folder: Path | str, trace_id: str) -> list[Span]:

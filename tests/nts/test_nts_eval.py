@@ -141,3 +141,20 @@ def test_a_spent_daily_quota_stops_the_suite(store):
             raise RuntimeError("connection refused")
 
     assert [v.status for v in run_suite(suite, Broken(), store, COORDINATOR, Tracer())] == ["model_error"] * 2
+
+
+def test_an_earlier_agents_episode_rewritten_as_a_later_one(store, tmp_path):
+    from nts.agents import COORDINATOR_V6
+    from nts.data import as_agent
+
+    sc, _, day, week = away_scenario(store)
+    spans = tmp_path / "spans"
+    run_suite([sc], ScriptedModel(good_away_steps(day, week)), store, COORDINATOR, Tracer([JsonlSink(spans)]))
+    tools = Registry(ALL_TOOLS).specs(COORDINATOR_V6.scopes)
+    ep = as_agent(next(episodes(spans)), COORDINATOR.prompt, COORDINATOR_V6.prompt, tools)
+    export([ep], tmp_path / "out")
+    row = json.loads(next(x for f in ("sft-train", "sft-val")
+                          for x in (tmp_path / "out" / f"{f}.jsonl").read_text().splitlines()))
+    system = row["messages"][0]["content"]
+    assert system.startswith(COORDINATOR_V6.prompt) and "The person asking:" in system
+    assert row["tools"] == tools and row["meta"]["good"] is True
