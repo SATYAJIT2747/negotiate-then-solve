@@ -105,7 +105,8 @@ COORDINATOR_V5 = AgentConfig(  # cancellations, make-up classes, hour limits, ro
 COORDINATOR_V6 = AgentConfig(  # load limits, relations, choices, week patterns (core-rework's kinds); no adapter yet
     name="coordinator",
     scopes=COORDINATOR_V5.scopes | {Scope.COMPOSE},
-    budgets=COORDINATOR_V5.budgets,
+    # choices and standing changes take more calls, and a check over the rest of term solves every week
+    budgets=Budgets(max_turns=16, max_tool_calls=32, max_tokens=64_000, max_seconds=300.0),
     prompt=COORDINATOR_V5.prompt + """
 12. Weeks: a request that names no week, or says "from now on", holds from this week to the end of term
     (from_week this week, no to_week). Even or odd weeks, or "except week N": draft the change, then
