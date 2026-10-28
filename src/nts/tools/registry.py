@@ -33,6 +33,7 @@ class Scope(str, Enum):
     DRAFT = "draft"  # changes the episode's draft
     REARRANGE = "rearrange"  # changes several classes at once (swap); from coordinator-v4
     EXTEND = "extend"  # cancel a class, a make-up class, hour limits, room bookings; from coordinator-v5
+    COMPOSE = "compose"  # load limits, relations between classes, choices, week patterns; from coordinator-v6
     EVALUATE = "evaluate"  # asks the kernel about the draft
     TALK = "talk"  # sends a message to a person (the episode waits for the answer)
     POLICY = "policy"  # looks up the department's regulations

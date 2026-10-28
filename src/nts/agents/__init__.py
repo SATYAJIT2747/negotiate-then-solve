@@ -102,7 +102,23 @@ COORDINATOR_V5 = AgentConfig(  # cancellations, make-up classes, hour limits, ro
     works: if it does, ask the requester, and use it if they agree.""",
 )
 
+COORDINATOR_V6 = AgentConfig(  # load limits, relations, choices, week patterns (core-rework's kinds); no adapter yet
+    name="coordinator",
+    scopes=COORDINATOR_V5.scopes | {Scope.COMPOSE},
+    budgets=COORDINATOR_V5.budgets,
+    prompt=COORDINATOR_V5.prompt + """
+12. Weeks: a request that names no week, or says "from now on", holds from this week to the end of term
+    (from_week this week, no to_week). Even or odd weeks, or "except week N": draft the change, then
+    set_weeks on it.
+13. Say what was asked, not the nearest thing. A class to a part of a day ("Friday morning", "Tuesday or
+    Thursday afternoon"): move_to_window (morning 9 am to 1 pm, afternoon 2 pm on). "A or B" for different
+    kinds of change: draft each, then choose; "ideally A, else B": the same with ranked. Classes a day,
+    teaching days a week, free hours between classes: limit_load. A class right after, on the same or
+    another day as others: relate_classes. If check_draft cannot meet what was asked, ask or decline;
+    never submit something else, and never make it "if possible" when they did not say so.""",
+)
+
 COORDINATOR = COORDINATOR_V3  # the latest with an adapter; serve an adapter with the version it was trained on (--agent)
 
-__all__ = ["COORDINATOR", "COORDINATOR_V1", "COORDINATOR_V2", "COORDINATOR_V3", "COORDINATOR_V4", "COORDINATOR_V5",
+__all__ = ["COORDINATOR", "COORDINATOR_V1", "COORDINATOR_V2", "COORDINATOR_V3", "COORDINATOR_V4", "COORDINATOR_V5", "COORDINATOR_V6",
            "READER"]

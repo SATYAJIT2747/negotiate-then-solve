@@ -171,7 +171,10 @@ def constrain(ctx: Context, args: Constrain) -> dict:
     tier, why = _tier(ctx, hard, args.reason)
     c = Constraint(id="new", type=kind, hard=hard, tier=tier, owner=owner, scope=scope, when=when, room=room,
                    justification=why, valid=valid, source=Source())
-    return _record(ctx, [c], args.reason)
+    result = _record(ctx, [c], args.reason)
+    if note := _standing_missed(ctx.request, valid):
+        result["note"] = note
+    return result
 
 
 class MoveClass(BaseModel):
@@ -217,15 +220,16 @@ def move_class(ctx: Context, args: MoveClass) -> dict:
     if args.to_hour is None and (asked := _hour_asked(ctx.request, day)):
         result["note"] = (f"the request says {FULL_DAY[day]} at {asked}, and this change has no to_hour, so the class "
                           f"may land at any hour that day; retract it and give to_hour if they asked for {asked}")
-    elif note := _range_missed(ctx.request, valid):
+    elif note := _range_missed(ctx.request, valid) or _standing_missed(ctx.request, valid):
         result["note"] = note
     return result
 
 
 def _weeks(ctx: Context, from_week: int | None, to_week: int | None) -> tuple[Validity, Timetable]:
     """The weeks a class change holds in (a start week with no end is that week, unless the request says from
-    then on), and the timetable its class is picked from."""
-    if from_week is not None and to_week is None and not _ONWARD.search(ctx.request or ""):
+    then on or names no week at all), and the timetable its class is picked from."""
+    req = ctx.request or ""
+    if from_week is not None and to_week is None and not _ONWARD.search(req) and _NAMES_WEEK.search(req):
         to_week = from_week
     valid = _validity(ctx, from_week, to_week)
     tt = ctx.state.timetable(from_week or ctx.week)
@@ -291,6 +295,15 @@ def _range_missed(request: str, valid: Validity) -> str | None:
             + f"; retract it and give from_week={lo}, to_week={hi} if that is what they asked")
 
 
+def _standing_missed(request: str | None, valid: Validity) -> str | None:
+    """A note when a change holds one week and the request names no week ("from now on", or nothing said)."""
+    if valid.from_week is None or valid.from_week != valid.to_week or _NAMES_WEEK.search(request or ""):
+        return None
+    return (f"the request names no week, so it holds from now to the end of term, and this change holds in week "
+            f"{valid.from_week} only; retract it and give from_week={valid.from_week} with no to_week")
+
+
+_NAMES_WEEK = re.compile(r"\bweeks?\s*\d|\b(this|next|coming|that) week\b|\b(today|tomorrow)\b", re.IGNORECASE)
 _ONWARD = re.compile(r"\b(from now on|from then on|onwards?|rest of (the )?(term|semester)|every week|for good|"
                      r"permanently|until the end|from (this|next) week on)\b", re.IGNORECASE)
 

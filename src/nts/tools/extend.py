@@ -31,6 +31,7 @@ from nts.kernel.schemas import (
 )
 from nts.kernel.schemas import Scope as Who
 from nts.kernel.semantics import (
+    PLACEMENT_TYPES,
     consecutive_entities,
     occupied,
     room_compatible,
@@ -184,7 +185,7 @@ def free_placements(world, s: Session, week: int, days: list[str] | None = None,
             for room in rooms:
                 if cells & busy.get(("room", room.id), set()):
                     continue
-                if any(c.type != ConstraintType.MAX_CONSECUTIVE and violates(inst, c, s, di, q, room) for c in hard):
+                if any(c.type in PLACEMENT_TYPES and violates(inst, c, s, di, q, room) for c in hard):
                     continue
                 out.append(Placement(day=day, slot=q, room=room.id))
                 break

@@ -25,6 +25,7 @@ from nts.agents import (
     COORDINATOR_V3,
     COORDINATOR_V4,
     COORDINATOR_V5,
+    COORDINATOR_V6,
     READER,
 )
 from nts.harness import AgentConfig, Harness, approve, best_of
@@ -42,7 +43,7 @@ DEFAULT_STORE = Path("runs/agentic/demo.jsonl")
 DEFAULT_HANDBOOK = Path("data/handbook.md")
 AGENTS = {"coordinator": COORDINATOR, "coordinator-v1": COORDINATOR_V1, "coordinator-v2": COORDINATOR_V2,
           "coordinator-v3": COORDINATOR_V3, "coordinator-v4": COORDINATOR_V4,
-          "coordinator-v5": COORDINATOR_V5, "reader": READER}
+          "coordinator-v5": COORDINATOR_V5, "coordinator-v6": COORDINATOR_V6, "reader": READER}
 
 
 def main(argv: list[str] | None = None) -> int:

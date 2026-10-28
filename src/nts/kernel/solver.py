@@ -6,6 +6,12 @@ guarded by an assumption literal ``a_k`` so it can be switched on or off
 (``a_k => C_k``); that is what conflict analysis and negotiation work on.
 Soft constraints and, in repair mode, the number of moved sessions form the
 objective.
+
+A repair can be restricted to a neighbourhood (``free``): every other session
+keeps its baseline placement, which shrinks the model to the part of the
+department a conflict touches. Feasible within a neighbourhood is feasible
+outright; infeasible within one is not proof, so callers check a conflict
+found there against the whole timetable (the negotiation of core-rework).
 """
 
 from __future__ import annotations
@@ -27,8 +33,13 @@ from .semantics import (
     PLACEMENT_TYPES,
     consecutive_entities,
     occupied,
+    related,
+    relation_holds,
+    relation_key,
     room_compatible,
+    satisfied,
     sessions_in_scope,
+    touched,
     violates,
 )
 
@@ -109,9 +120,11 @@ class _Model:
         baseline: Mapping[str, Placement] | None,
         disruption_weight: int,
         skip: frozenset[str] = frozenset(),
+        frozen: Mapping[str, Placement] | None = None,
     ) -> None:
         self.instance = instance
         self.skip = skip  # sessions not held this week (cancelled): they get no placement
+        self.frozen = dict(frozen or {})  # sessions held where they are: one candidate each
         self.model = cp_model.CpModel()
         self.x: dict[str, dict[Key, cp_model.IntVar]] = {}
         self._fac_cov: dict[tuple[str, int, int], list[cp_model.IntVar]] = defaultdict(list)
@@ -123,9 +136,16 @@ class _Model:
             self.lit[c.id] = self.model.new_bool_var(f"a[{c.id}]")
             self._add_guarded(c, self.lit[c.id])
 
-        self.soft: dict[str, tuple[int, list[cp_model.IntVar]]] = {
-            c.id: (max(1, round((c.weight or 1.0) * 10)), self._bad(c)) for c in soft
-        }
+        # a soft placement constraint costs per placement that breaks it; any other soft constraint costs once
+        # for each of its ok literals that is false (a ranked choice has one per choice it falls short of)
+        self.soft: dict[str, tuple[int, list[cp_model.IntVar]]] = {}
+        self.soft_ok: dict[str, tuple[int, list[cp_model.IntVar]]] = {}
+        for c in soft:
+            coef = max(1, round((c.weight or 1.0) * 10))
+            if c.type in PLACEMENT_TYPES:
+                self.soft[c.id] = (coef, self._bad(c))
+            else:
+                self.soft_ok[c.id] = (coef, self._soft_terms(c))
 
         self.baseline_size = len(baseline or {})
         self.keep: list[cp_model.IntVar] = []
@@ -134,6 +154,12 @@ class _Model:
             var = self.x.get(sid, {}).get(key)
             if var is not None:
                 self.keep.append(var)
+        # the search starts from the baseline: a repair usually leaves most of it in place, and without a
+        # hint each check builds a whole timetable from nothing (seconds per check in a department)
+        kept = set(map(id, self.keep))
+        for sid in (baseline or {}):
+            for v in self.x.get(sid, {}).values():
+                self.model.add_hint(v, id(v) in kept)
         self.disruption_weight = disruption_weight
 
     def _build_physical(self) -> None:
@@ -145,9 +171,12 @@ class _Model:
                 continue
             cands: dict[Key, cp_model.IntVar] = {}
             rooms = [r for r in inst.rooms if room_compatible(inst, s, r)]
+            at = self.frozen.get(s.id)
             for d in range(n_days):
                 for p in range(spd - s.duration + 1):
                     for r in rooms:
+                        if at is not None and (d, p, r.id) != (inst.day_index(at.day), at.slot, at.room):
+                            continue
                         v = m.new_bool_var(f"x[{s.id},{d},{p},{r.id}]")
                         cands[(d, p, r.id)] = v
                         for dd, q in occupied(s, d, p):
@@ -180,6 +209,15 @@ class _Model:
             if bad:
                 self.model.add_bool_and([~b for b in bad]).only_enforce_if(lit)
             return
+        if c.members:  # a choice: at least one member holds
+            self.model.add_bool_or([self._ok(m) for m in c.members]).only_enforce_if(lit)
+            return
+        if c.type == ConstraintType.LOAD:
+            self._load(c, lit)
+            return
+        if c.type == ConstraintType.RELATE:
+            self._relate(c, lit)
+            return
         if c.type == ConstraintType.MAX_CONSECUTIVE:
             assert c.limit is not None
             spd = self.instance.calendar.slots_per_day
@@ -193,8 +231,89 @@ class _Model:
             return
         raise ValueError(f"unsupported constraint type {c.type.value}")
 
+    def _ok(self, c: Constraint) -> cp_model.IntVar:
+        """A literal that, when true, enforces ``c`` (a member of a choice, or a soft constraint)."""
+        ok = self.model.new_bool_var(f"ok[{c.id}]")
+        self._add_guarded(c, ok)
+        return ok
+
+    def _soft_terms(self, c: Constraint) -> list[cp_model.IntVar]:
+        """The literals a soft constraint pays for when false: one for most; for a ranked choice, one per
+        choice: "the first or better" true when the first holds, "the second or better" when either does, so
+        the first choice costs nothing, the second one unit, none of them one per choice."""
+        if c.type != ConstraintType.RANKED:
+            return [self._ok(c)]
+        oks, out = [self._ok(m) for m in c.members], []
+        for k in range(1, len(oks) + 1):
+            better = self.model.new_bool_var(f"ranked[{c.id},{k}]")
+            self.model.add_bool_or(oks[:k]).only_enforce_if(better)
+            out.append(better)
+        return out
+
+    def _load(self, c: Constraint, lit: cp_model.IntVar) -> None:
+        """Classes a day, hours a day, days a week, or free hours between two classes on a day."""
+        inst, m = self.instance, self.model
+        day: dict[int, list[tuple[int, cp_model.IntVar]]] = defaultdict(list)  # (hours, var) by day
+        start: dict[tuple[int, int], list[cp_model.IntVar]] = defaultdict(list)
+        occ: dict[tuple[int, int], list[cp_model.IntVar]] = defaultdict(list)
+        for s in sessions_in_scope(inst, c.scope):
+            for (d, p, _r), v in self.x.get(s.id, {}).items():
+                day[d].append((s.duration, v))
+                start[(d, p)].append(v)
+                for dd, q in occupied(s, d, p):
+                    occ[(dd, q)].append(v)
+        limit = c.limit or 0
+        if c.measure == "classes_per_day":
+            for vs in day.values():
+                m.add(sum(v for _h, v in vs) <= limit).only_enforce_if(lit)
+        elif c.measure == "hours_per_day":
+            for vs in day.values():
+                m.add(sum(h * v for h, v in vs) <= limit).only_enforce_if(lit)
+        elif c.measure == "days_per_week":
+            teaches = []
+            for d, vs in day.items():
+                t = m.new_bool_var(f"teaches[{c.id},{d}]")
+                for _h, v in vs:
+                    m.add_implication(v, t)
+                teaches.append(t)
+            m.add(sum(teaches) <= limit).only_enforce_if(lit)
+        elif c.measure == "gap":  # a class starting at q: nothing of theirs in the ``limit`` hours before it
+            for (d, q), starts in start.items():
+                for p in range(max(0, q - limit), q):
+                    if occ.get((d, p)):
+                        m.add(sum(starts) + sum(occ[(d, p)]) <= 1).only_enforce_if(lit)
+        else:
+            raise ValueError(f"unknown measure {c.measure!r}")
+
+    def _relate(self, c: Constraint, lit: cp_model.IntVar) -> None:
+        """Each pair of placements (by the part the relation looks at) that breaks the relation is ruled out;
+        against one of the others, a literal per other says which one it holds against."""
+        m = self.model
+
+        def by_key(sid: str) -> dict:
+            out: dict = defaultdict(list)
+            for (d, p, r), v in self.x.get(sid, {}).items():
+                out[relation_key(c.relation, d, p, r)].append(v)
+            return out
+
+        for a, others in related(self.instance, c):
+            others = [b for b in others if b.id in self.x]
+            if a.id not in self.x or not others:
+                continue
+            ka_vars = by_key(a.id)
+            holds = [m.new_bool_var(f"rel[{c.id},{a.id},{b.id}]") for b in others] if c.any_other else None
+            if holds:
+                m.add_bool_or(holds).only_enforce_if(lit)
+            for i, b in enumerate(others):
+                when = [lit, holds[i]] if holds else lit
+                for kb, vb in by_key(b.id).items():
+                    for ka, va in ka_vars.items():
+                        if not relation_holds(c, ka, kb, b):
+                            m.add(sum(va) + sum(vb) <= 1).only_enforce_if(when)
+
     def penalty(self) -> cp_model.LinearExprT:
         soft = sum(coef * sum(bad) for coef, bad in self.soft.values() if bad)
+        soft += sum(coef * (len(oks) - sum(oks)) for coef, oks in self.soft_ok.values())
         moved = self.baseline_size - sum(self.keep)
         return soft + self.disruption_weight * moved
 
@@ -221,8 +340,13 @@ class TimetableSolver:
         disruption_weight: int = 1,
         presolve: bool = True,
         skip: Iterable[str] = (),
+        free: Iterable[str] | None = None,
     ) -> None:
-        active = [c for c in constraints if c.active_in(week)]
+        """``free``: the sessions a repair may move (a neighbourhood); every other session with a baseline
+        placement stays there. None: every session may move."""
+        # a choice keeps the members that apply this week
+        active = [c if not c.members else c.model_copy(update={"members": [m for m in c.members if m.active_in(week)]})
+                  for c in constraints if c.active_in(week)]
         ids = [c.id for c in active]
         if len(ids) != len(set(ids)):
             raise ValueError("duplicate constraint ids")
@@ -239,6 +363,7 @@ class TimetableSolver:
         # per feasibility check); interactive use turns it off.
         self.presolve = presolve
         self.skip = frozenset(skip)  # sessions cancelled this week (pipeline.orchestrator.closures)
+        self.free = None if free is None else frozenset(free)
         self._feas: _Model | None = None
 
     # -- building and running -------------------------------------------------
@@ -246,7 +371,8 @@ class TimetableSolver:
     def build(self) -> _Model:
         hard = [c for c in self.constraints.values() if c.hard]
         soft = [c for c in self.constraints.values() if not c.hard]
-        return _Model(self.instance, hard, soft, self.baseline, self.disruption_weight, self.skip)
+        frozen = ({s: p for s, p in self.baseline.items() if s not in self.free} if self.free is not None else None)
+        return _Model(self.instance, hard, soft, self.baseline, self.disruption_weight, self.skip, frozen)
 
     def run(self, m: _Model) -> tuple[str, cp_model.CpSolver | _Replay]:
         path = None
@@ -368,6 +494,8 @@ class TimetableSolver:
             for cid, (_, bad) in m.soft.items()
             if (n := sum(solver.boolean_value(b) for b in bad)) > 0
         }
+        soft.update({cid: n for cid, (_, oks) in m.soft_ok.items()
+                     if (n := sum(not solver.boolean_value(ok) for ok in oks)) > 0})
         kept = sum(solver.boolean_value(v) for v in m.keep)
         return SolveResult(
             status=status,
@@ -379,3 +507,35 @@ class TimetableSolver:
             objective=solver.objective_value,
             wall_time=wall,
         )
+
+
+def neighbourhood(instance: Instance, constraints: Iterable[Constraint], baseline: Mapping[str, Placement],
+                  week: int | None = None) -> set[str]:
+    """The sessions a repair of ``baseline`` is likely to move: those it places against an active placement
+    constraint (or does not place), and those that share a teacher or a section with them or sit in a room
+    one of them could use. A repair restricted to these leaves the rest of the department where it is."""
+    inst = instance
+    seeds = {s.id for s in inst.sessions if s.id not in baseline}
+    placed = {sid: (inst.day_index(p.day), p.slot, p.room) for sid, p in baseline.items() if sid in inst.session_by_id}
+    for c in constraints:
+        if not c.active_in(week):
+            continue
+        if c.type not in PLACEMENT_TYPES:
+            # a load limit, a relation or a choice the baseline breaks: every class it is about may have to move
+            if not satisfied(inst, c, placed, week):
+                seeds |= touched(inst, c)
+            continue
+        for s in sessions_in_scope(inst, c.scope):
+            p = baseline.get(s.id)
+            if p is not None and violates(inst, c, s, inst.day_index(p.day), p.slot, inst.room_by_id[p.room]):
+                seeds.add(s.id)
+    out = set(seeds)
+    for sid in seeds:
+        s = inst.session_by_id[sid]
+        rooms = {r.id for r in inst.rooms if room_compatible(inst, s, r)}
+        for o in inst.sessions:
+            p = baseline.get(o.id)
+            if (o.faculty == s.faculty or set(o.groups) & set(s.groups)
+                    or (p is not None and p.room in rooms)):
+                out.add(o.id)
+    return out
