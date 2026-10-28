@@ -66,6 +66,8 @@ def main(argv: list[str] | None = None) -> int:
     e.add_argument("--week", type=int, default=5)
     e.add_argument("--per-family", type=int, default=2)
     e.add_argument("--families", nargs="*", help="default: the families the agent has the tools for")
+    e.add_argument("--suite", choices=["families", "compositional"], default="families",
+                   help="compositional: the fourteen hand-written requests of nts.eval.compositional")
     e.add_argument("--seed", type=int, default=0)
     e.add_argument("--out", type=Path, help="report path (default runs/eval/<model>-s<seed>.json)")
     e.add_argument("--rewrite", choices=["train", "heldout"],
@@ -157,7 +159,12 @@ def evaluate(args: argparse.Namespace) -> int:
     agent = AGENTS[args.agent]
     families = args.families or (V1_FAMILIES if Scope.TALK not in agent.scopes else
                                  V2_FAMILIES if Scope.POLICY not in agent.scopes else DEFAULT_FAMILIES)
-    suite = build_suite(store.world, per_family=args.per_family, seed=args.seed, week=args.week, families=families)
+    if args.suite == "compositional":
+        from nts.eval.compositional import compositional_suite
+
+        suite = compositional_suite(store.world)
+    else:
+        suite = build_suite(store.world, per_family=args.per_family, seed=args.seed, week=args.week, families=families)
     if args.rewrite:
         from nts.eval.rewrite import rewrite
 
