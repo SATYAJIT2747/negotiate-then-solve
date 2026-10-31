@@ -77,6 +77,15 @@ class RequestType(str, Enum):
     CLASH_REPORT = "clash_report"
     POLICY_QUESTION = "policy_question"
     OUT_OF_SCOPE = "out_of_scope"
+    # no corpus request has these: System One learns them from the intent data (system_one.INTENT_TYPES)
+    MOVE = "move"
+    CANCEL = "cancel"
+    EXTRA_CLASS = "extra_class"
+    CLUB_BOOKING = "club_booking"
+    WITHDRAW = "withdraw"
+    AVOID_BETWEEN = "avoid_between"
+    LOAD_LIMIT = "load_limit"
+    UNAVAILABLE_RELATIVE = "unavailable_relative"
 
 
 class ExpectedAction(str, Enum):

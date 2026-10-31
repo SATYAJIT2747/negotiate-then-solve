@@ -448,7 +448,7 @@ class World:
                           mcs_limit=3, presolve=big)
 
     def _train_system_one(self):
-        from language.system_one import SystemOne, tune_tau
+        from language.system_one import SystemOne, intent_examples, tune_tau
 
         path = ROOT / "data" / "requests.jsonl"
         if not path.exists():
@@ -457,13 +457,16 @@ class World:
         para = ROOT / "data" / "requests-para.jsonl"
         if para.exists():
             corpus += load_jsonl(para)
-        train = [e for e in corpus if e.split == "train"]
-        val = [e for e in corpus if e.split == "val"]
+        # plus the kinds the corpus has no example of (swaps, cancellations, ...), so they keep off the fast path
+        train = [e for e in corpus if e.split == "train"] + intent_examples("train")
+        val = [e for e in corpus if e.split == "val"] + intent_examples("val")
         model = SystemOne().fit(train)
         decisions = [model.decide(e.request) for e in val]
         tau = tune_tau(decisions, val)
-        acc = mean([d.action == e.expected_action for d, e in zip(decisions, val, strict=True)])
-        return model, tau, {"trained_on": len(train), "val_action_accuracy": acc, "tau": tau}
+        acted = [(d, e) for d, e in zip(decisions, val, strict=True) if e.expected_action is not None]
+        acc = mean([d.action == e.expected_action for d, e in acted])
+        return model, tau, {"trained_on": len(train), "val_action_accuracy": acc, "tau": tau,
+                            "model": model.model}
 
     def _swap_reader(self):
         """Gemini reads swaps from both timetables; the offline and local modes
