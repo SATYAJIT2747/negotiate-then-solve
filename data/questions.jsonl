@@ -1,0 +1,60 @@
+{"text": "What does my Wednesday look like?", "kind": "timetable", "split": "train"}
+{"text": "Do I have anything after lunch on Friday?", "kind": "timetable", "split": "train"}
+{"text": "When is my next lab?", "kind": "timetable", "split": "train"}
+{"text": "Which room is my Thursday lecture in?", "kind": "timetable", "split": "train"}
+{"text": "How many classes do I have this week?", "kind": "timetable", "split": "train"}
+{"text": "Is Lab 2 free on Tuesday at 3 pm?", "kind": "timetable", "split": "train"}
+{"text": "Who teaches section B on Monday morning?", "kind": "timetable", "split": "train"}
+{"text": "show me my timetable for tomorrow", "kind": "timetable", "split": "train"}
+{"text": "what time does my first class start on Monday", "kind": "timetable", "split": "train"}
+{"text": "Am I teaching in week 7?", "kind": "timetable", "split": "train"}
+{"text": "Which rooms are empty on Friday at 11?", "kind": "timetable", "split": "train"}
+{"text": "Is Dr. Rao free on Thursday afternoon?", "kind": "timetable", "split": "train"}
+{"text": "What changed in my timetable recently?", "kind": "timetable", "split": "train"}
+{"text": "Has anything been moved this week?", "kind": "timetable", "split": "train"}
+{"text": "where do I have to be at 10 am tomorrow", "kind": "timetable", "split": "train"}
+{"text": "Do I have back to back classes on Tuesday?", "kind": "timetable", "split": "train"}
+{"text": "How many hours am I teaching on Wednesday?", "kind": "timetable", "split": "train"}
+{"text": "Can you tell me my free periods this week?", "kind": "timetable", "split": "train"}
+{"text": "any gaps in my schedule on Thursday?", "kind": "timetable", "split": "train"}
+{"text": "Which sections do I teach?", "kind": "timetable", "split": "train"}
+{"text": "What course is in Room 104 on Monday at 2?", "kind": "timetable", "split": "train"}
+{"text": "When does section A have their lab?", "kind": "timetable", "split": "train"}
+{"text": "Is anyone using Room 103 on Friday afternoon?", "kind": "timetable", "split": "train"}
+{"text": "list my lectures for next week", "kind": "timetable", "split": "train"}
+{"text": "Who is free to cover a class on Tuesday at 9?", "kind": "timetable", "split": "train"}
+{"text": "What is my busiest day?", "kind": "timetable", "split": "train"}
+{"text": "Do I teach on Saturday?", "kind": "timetable", "split": "train"}
+{"text": "my classes today?", "kind": "timetable", "split": "train"}
+{"text": "When am I done for the day on Monday?", "kind": "timetable", "split": "train"}
+{"text": "Which of my classes are in a lab?", "kind": "timetable", "split": "train"}
+{"text": "Is my Friday lecture still on?", "kind": "timetable", "split": "train"}
+{"text": "Was my Tuesday class moved?", "kind": "timetable", "split": "train"}
+{"text": "What's on for section C this Wednesday?", "kind": "timetable", "split": "train"}
+{"text": "How many students are in my lab group?", "kind": "timetable", "split": "train"}
+{"text": "Is there a free lecture room on Thursday at 4?", "kind": "timetable", "split": "train"}
+{"text": "Could you check if Dr. Iyer has a class at noon on Monday?", "kind": "timetable", "split": "train"}
+{"text": "tell me what I teach this week", "kind": "timetable", "split": "train"}
+{"text": "Which days am I free in the morning?", "kind": "timetable", "split": "train"}
+{"text": "What time is my last class on Thursday?", "kind": "timetable", "split": "train"}
+{"text": "Do I have a class right after my 11 am lecture on Tuesday?", "kind": "timetable", "split": "train"}
+{"text": "Have I got anything scheduled on Wednesday afternoon?", "kind": "timetable", "split": "test"}
+{"text": "Remind me where my Monday lab is", "kind": "timetable", "split": "test"}
+{"text": "how packed is my thursday", "kind": "timetable", "split": "test"}
+{"text": "When's my earliest lecture this week?", "kind": "timetable", "split": "test"}
+{"text": "Is Room 101 booked on Tuesday at 2 pm?", "kind": "timetable", "split": "test"}
+{"text": "Who has section A on Friday at 10?", "kind": "timetable", "split": "test"}
+{"text": "Can you give me an overview of next week's classes?", "kind": "timetable", "split": "test"}
+{"text": "Which hours on Monday have no class for me?", "kind": "timetable", "split": "test"}
+{"text": "Did the office change anything in my schedule?", "kind": "timetable", "split": "test"}
+{"text": "Is Dr. Menon around on Wednesday morning?", "kind": "timetable", "split": "test"}
+{"text": "what's my load this week in hours", "kind": "timetable", "split": "test"}
+{"text": "Is any lab free on Thursday from 2 to 4?", "kind": "timetable", "split": "test"}
+{"text": "Do I start late on any day?", "kind": "timetable", "split": "test"}
+{"text": "Where's my 9 o'clock tomorrow?", "kind": "timetable", "split": "test"}
+{"text": "Which of my courses meet twice on the same day?", "kind": "timetable", "split": "test"}
+{"text": "Is the Friday lab for section B still happening?", "kind": "timetable", "split": "test"}
+{"text": "When does Dr. Khan teach?", "kind": "timetable", "split": "test"}
+{"text": "Are there any free rooms right after lunch on Monday?", "kind": "timetable", "split": "test"}
+{"text": "What am I teaching in week 9?", "kind": "timetable", "split": "test"}
+{"text": "pls check my tuesday slots", "kind": "timetable", "split": "test"}

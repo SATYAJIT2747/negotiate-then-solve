@@ -107,6 +107,8 @@ def main(argv: list[str] | None = None) -> int:
                                                        "none for a local model)")
         q.add_argument("--handbook", type=Path, default=DEFAULT_HANDBOOK, help="the regulations, for the rules tool")
         q.add_argument("--temperature", type=float, help="sampling (default 0, or 0.7 with --best-of)")
+        q.add_argument("--pick-tools", action="store_true", help="offer a question only the tools that read "
+                       "(System One decides; nts.harness.pick)")
         q.add_argument("--max-seconds", type=float, help="time budget of an episode (default: the agent's); the model "
                                                           "never sees it, so a slow server need not cut episodes short")
     for q in (a, e):
@@ -129,6 +131,14 @@ def handbook(args: argparse.Namespace):
     from nts.policy import Handbook
 
     return Handbook.load(args.handbook) if args.handbook and args.handbook.exists() else None
+
+
+def picker(args: argparse.Namespace):
+    if not args.pick_tools:
+        return None
+    from nts.harness.pick import ToolPicker
+
+    return ToolPicker.trained()
 
 
 def budgeted(agent: AgentConfig, args: argparse.Namespace) -> AgentConfig:
@@ -180,7 +190,7 @@ def evaluate(args: argparse.Namespace) -> int:
         suite = rewrite(suite, args.rewrite, GeminiChat(args.gemini_model, temperature=1.0), store.world, log=True,
                         strict=True)
     verdicts = run_suite(suite, model, store, budgeted(agent, args), default_tracer(args.telemetry),
-                         progress=True, handbook=handbook(args), best=args.best_of)
+                         progress=True, handbook=handbook(args), best=args.best_of, picker=picker(args))
     path = args.out or Path("runs/eval") / f"{model.name.replace(':', '_').replace('+', '_')}-s{args.seed}{f'-best{args.best_of}' * (args.best_of > 1)}{f'-{args.rewrite}' * bool(args.rewrite)}.json"
     report = save(path, model.name, verdicts)
     for fam, st in report["summary"]["families"].items():
@@ -229,7 +239,7 @@ def ask(args: argparse.Namespace) -> int:
             print(f"--as: {r.error.message} {r.error.hint}", file=sys.stderr)
             return 2
     tracer = default_tracer(args.telemetry)
-    harness = Harness(Registry(ALL_TOOLS), model, tracer, handbook=handbook(args))
+    harness = Harness(Registry(ALL_TOOLS), model, tracer, handbook=handbook(args), picker=picker(args))
     people = None
     if args.talk:
         from nts.people import Terminal
@@ -264,11 +274,13 @@ def serve(args: argparse.Namespace) -> int:
 
     from nts.api import Service, Users, create_app
 
-    model, tracer, rules = make_model(args), default_tracer(args.telemetry), handbook(args)
+    model, tracer, rules, pick = make_model(args), default_tracer(args.telemetry), handbook(args), picker(args)
     depts = {path.stem: Service(Store.open(path), model, tracer, agent=budgeted(AGENTS[args.agent], args),
-                                simulate=args.simulate, handbook=rules) for path in args.store}
+                                simulate=args.simulate, handbook=rules, picker=pick) for path in args.store}
     for d, svc in depts.items():
-        print(f"department {d}: {len(svc.store.world.instance.faculty)} teachers, version {svc.store.version}")
+        old = svc.restore(args.telemetry / "spans")
+        print(f"department {d}: {len(svc.store.world.instance.faculty)} teachers, version {svc.store.version}, "
+              f"{old} earlier requests")
     users = Users.load(args.users) if args.users else Users.open()
     if not users.needs_password:
         print("sign-in by name alone (no --users): fine on this machine, not on a network", file=sys.stderr)

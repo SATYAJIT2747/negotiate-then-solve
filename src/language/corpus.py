@@ -86,6 +86,7 @@ class RequestType(str, Enum):
     AVOID_BETWEEN = "avoid_between"
     LOAD_LIMIT = "load_limit"
     UNAVAILABLE_RELATIVE = "unavailable_relative"
+    QUESTION = "question"  # about the timetable (who, when, where): System One learns it from data/questions.jsonl
 
 
 class ExpectedAction(str, Enum):

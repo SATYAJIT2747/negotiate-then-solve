@@ -114,10 +114,13 @@ def add_class(ctx: Context, args: AddClass) -> dict:
     days = [d.day(args.day)] if args.day else None
     slots = [d.slot(args.hour)] if args.hour else None
     found = free_placements(ctx.state, s, args.week, days, slots)
-    if not found:
-        elsewhere = free_placements(ctx.state, s, args.week)[:3]
+    if not found:  # the times that do work, the day asked for first, so the requester is offered real ones
+        every = free_placements(ctx.state, s, args.week)
+        that_day = [p for p in every if days and p.day in days]
+        free = list(dict.fromkeys(f"{FULL_DAY[p.day]} {hour(p.slot)}" for p in that_day + every))[:5]
         raise Refusal("no_free_time", "the teacher, a section or every suitable room is taken then, or a firm rule "
-                      "forbids it", free=[f"{FULL_DAY[p.day]} {hour(p.slot)}" for p in elsewhere])
+                      "forbids it" + (f"; free for this class: {', '.join(free)}. Ask the requester which one" if free
+                                      else "; no time is free for it this week"), free=free)
     p = found[0]
     owner = ctx.actor if ctx.actor != OFFICE else s.faculty
     rule = f"{EXTRA}{inst.course_title(s.course)} {s.kind.value}"
@@ -132,6 +135,9 @@ def add_class(ctx: Context, args: AddClass) -> dict:
     if args.day is None and len(named) == 1 and named[0] != p.day:
         out["note"] = (f"the request says {FULL_DAY[named[0]]}, and this class is on {FULL_DAY[p.day]} (no day was "
                        f"given); retract it and give day={FULL_DAY[named[0]]} if they asked for that day")
+    elif named and p.day not in named:  # a day of its own choosing: the requester must agree before it is submitted
+        out["note"] = (f"the request asks for {' or '.join(FULL_DAY[x] for x in named)}, not {FULL_DAY[p.day]}: "
+                       "ask the requester whether this day is all right before you submit")
     return out
 
 
@@ -148,9 +154,15 @@ def _template(ctx: Context, d: Directory, args: AddClass) -> Session:
         raise Refusal("no_such_class", f"no {inst.course_title(next(iter(courses)))} class matches"
                       + (" among your classes" if who else ""))
     kinds = {(s.kind.value, tuple(s.groups), s.duration) for s in found}
-    if len(kinds) > 1:
-        raise Refusal("ambiguous_class", "say which kind and section", candidates=sorted(
-            {f"{k} for {', '.join(inst.group_by_id[g].name for g in gs)}" for k, gs, _ in kinds}))
+    if len(kinds) > 1:  # name only what differs, so the question to the requester is the one that matters
+        sections = {gs for _, gs, _ in kinds}
+        where = lambda gs: ", ".join(inst.group_by_id[g].name for g in gs)  # noqa: E731
+        options = sorted({f"the {h}-hour {k}" + (f" for {where(gs)}" if len(sections) > 1 else "")
+                          for k, gs, h in kinds})
+        only = f" (all for {where(next(iter(sections)))})" if len(sections) == 1 else ""
+        raise Refusal("ambiguous_class", f"{inst.course_title(found[0].course)} has {' and '.join(options)}{only}: give "
+                      + ("kind" if len(sections) == 1 else "kind and section") + ", or ask the requester which one",
+                      candidates=options)
     return found[0]
 
 

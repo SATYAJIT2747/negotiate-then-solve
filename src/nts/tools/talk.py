@@ -98,8 +98,13 @@ def make_offer(ctx: Context, args: MakeOffer) -> Ask:
     _draft(ctx)
     rules = theirs(ctx)
     if args.rule not in rules:
-        raise Refusal("unknown_rule", f"no blocking rule {args.rule}; check_draft numbers the rules others set",
-                      rules=sorted(rules))
+        if ctx.scratch.get("check") is None:  # an offer before any check: say the order, not just "no such rule"
+            raise Refusal("unknown_rule", "nothing is checked yet, so no rule of another teacher is known to block "
+                          "anything. First draft the change (add_class for an extra class, move_class to move one), "
+                          "then check_draft: it numbers the rules that block it. Not sure what they want: ask_requester",
+                          rules=[])
+        raise Refusal("unknown_rule", f"no blocking rule {args.rule}; check_draft numbers the rules others set"
+                      + ("" if rules else ", and the last check found none: nothing to offer"), rules=sorted(rules))
     cid, weeks = rules[args.rule]
     world = ctx.state
     c = world.constraints.get(cid)

@@ -78,8 +78,8 @@ def test_an_ask_waits_for_the_person_asked_and_no_one_else(store):
 
     assert theirs.get(f"/api/episodes/{ep['id']}").status_code == 404  # not theirs: not even shown
     assert theirs.get("/api/episodes").json() == [] and theirs.get("/api/inbox").json() == []
-    assert office.get(f"/api/episodes/{ep['id']}").json()["can"]["answer"] is False  # the office sees, cannot answer
-    assert office.post(f"/api/episodes/{ep['id']}/reply", json={"text": "x"}).status_code == 403
+    assert office.get(f"/api/episodes/{ep['id']}").status_code == 404  # a teacher's talk with the agent is theirs
+    assert office.post(f"/api/episodes/{ep['id']}/reply", json={"text": "x"}).status_code == 404
 
     assert mine.post(f"/api/episodes/{ep['id']}/reply", json={"text": "The Monday one."}).status_code == 200
     service.wait(ep["id"])

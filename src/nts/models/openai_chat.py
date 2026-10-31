@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import itertools
 import json
+import re
 import time
 import urllib.error
 import urllib.request
@@ -24,13 +25,23 @@ from nts.protocol import UNPARSED, AssistantTurn, Message, ToolCall, Usage
 _ids = itertools.count(1)
 
 
+CONTEXT_FULL = re.compile(r"context size|exceeds? the available context|context length", re.IGNORECASE)
+
+
 class ModelUnavailable(RuntimeError):
-    pass
+    def __init__(self, message: str, *, transient: bool = False) -> None:
+        super().__init__(message)
+        self.transient = transient  # busy or unreachable: the same request may work a little later
+
+    @property
+    def context_full(self) -> bool:
+        return bool(CONTEXT_FULL.search(str(self)))
 
 
 class OpenAIChat:
     def __init__(self, base_url: str, model: str | None = None, *, adapter: str | None = None,
-                 temperature: float = 0.0, max_tokens: int = 1024, timeout: float = 120.0, thinking: bool = False) -> None:
+                 temperature: float = 0.0, max_tokens: int = 1024, timeout: float = 120.0, thinking: bool = False,
+                 retries: int = 2, backoff: float = 2.0) -> None:
         self.base_url = base_url.rstrip("/")
         self.model = model
         self.adapter = adapter
@@ -38,10 +49,24 @@ class OpenAIChat:
         self.max_tokens = max_tokens
         self.timeout = timeout
         self.thinking = thinking
+        self.retries = retries
+        self.backoff = backoff
         self._lora: list[dict] | None = None
         self.name = f"{Path(model).name if model else 'served'}{'+' + adapter if adapter else ''}"
 
     def _post(self, url: str, payload: dict | None = None) -> dict:
+        """One request; a busy or unreachable server is tried again ``retries`` times, waiting longer each time.
+        A full context is not (the same prompt would not fit again): the harness trims it and asks again."""
+        for attempt in range(self.retries + 1):
+            try:
+                return self._post_once(url, payload)
+            except ModelUnavailable as e:
+                if attempt == self.retries or not e.transient:
+                    raise
+                time.sleep(self.backoff * 2 ** attempt)
+        raise AssertionError("unreachable")
+
+    def _post_once(self, url: str, payload: dict | None) -> dict:
         data = json.dumps(payload).encode() if payload is not None else None
         req = urllib.request.Request(url, data=data, headers={"Content-Type": "application/json"})
         try:
@@ -50,9 +75,10 @@ class OpenAIChat:
         except urllib.error.HTTPError as e:
             body = e.read()[:400].decode(errors="replace")
             hint = " (start llama-server with --jinja for tool calls)" if "tool" in body.lower() else ""
-            raise ModelUnavailable(f"{url}: HTTP {e.code}: {body}{hint}") from e
+            busy = e.code in (429, 502, 503, 504) or (e.code == 500 and not CONTEXT_FULL.search(body))
+            raise ModelUnavailable(f"{url}: HTTP {e.code}: {body}{hint}", transient=busy) from e
         except (urllib.error.URLError, TimeoutError) as e:
-            raise ModelUnavailable(f"{url} not reachable: {e}") from e
+            raise ModelUnavailable(f"{url} not reachable: {e}", transient=True) from e
 
     def _adapters(self) -> list[dict] | None:
         if self.adapter is None or self._lora is not None:

@@ -25,7 +25,8 @@ from typing import Any, Literal, Protocol
 from pydantic import BaseModel, Field
 
 Kind = Literal["episode", "resume", "turn", "model_call", "tool_call", "reply",
-               "approval", "evaluation", "selection"]  # the last three judge an episode
+               "approval", "evaluation", "selection",  # these three judge an episode
+               "note"]  # the office's message to the requester about it
 
 
 class Span(BaseModel):

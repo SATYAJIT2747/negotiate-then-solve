@@ -26,6 +26,11 @@ and sends most of them down the fast path, which cannot read them.
 ``intent_examples`` adds those kinds from the intent data
 (``data/compiler-intents``) under their own types, none of which is a
 fast-path type.
+
+The corpus has no questions about the timetable either ("what do I teach on
+Monday?"): ``question_examples`` adds them (``data/questions.jsonl``) with
+the handbook questions (``data/retrieval-queries.jsonl``), so the agent can
+offer a question only the tools that read (``nts.harness.pick``).
 """
 
 from __future__ import annotations
@@ -54,7 +59,10 @@ from .corpus import CorpusExample, ExpectedAction, RequestType
 FAST_PATH_TYPES = frozenset({RequestType.PREFERENCE, RequestType.UNAVAILABILITY, RequestType.ROOM_ISSUE})
 MODELS = ("logreg", "svm", "embed", "hybrid")
 DEFAULT_MODEL = "svm"
-INTENT_DIR = Path(__file__).resolve().parents[2] / "data" / "compiler-intents"
+DATA = Path(__file__).resolve().parents[2] / "data"
+INTENT_DIR = DATA / "compiler-intents"
+QUESTIONS = DATA / "questions.jsonl"
+HANDBOOK_QUESTIONS = DATA / "retrieval-queries.jsonl"
 # intent kinds the request corpus has no example of -> the System One type they are learnt under
 INTENT_TYPES = {
     "swap": RequestType.SWAP,
@@ -115,6 +123,24 @@ def intent_examples(split: str, directory: Path = INTENT_DIR) -> list[Labelled]:
         return []
     return [Labelled(e.request, e.request_type, None, e.kind, split)
             for e in read_intents(path, split) if e.kind in INTENT_TYPES]
+
+
+def _asked(text: str, rtype: RequestType, kind: str, split: str, n: int) -> Labelled:
+    request = Request(id=f"Q-{n}", channel=Channel.PORTAL, sender_id="F-0", role=Role.FACULTY, raw_text=text,
+                      received_at=datetime(2026, 9, 1))
+    return Labelled(request, rtype, ExpectedAction.ANSWER, kind, split)
+
+
+def question_examples(split: str) -> list[Labelled]:
+    """Questions, answered by reading: the timetable ones of ``data/questions.jsonl`` (type ``question``) and the
+    handbook questions (type ``policy_question``; the odd lines train, the even ones test)."""
+    rows = [json.loads(line) for line in QUESTIONS.read_text(encoding="utf-8").splitlines() if line.strip()]
+    out = [_asked(r["text"], RequestType.QUESTION, "question", split, n)
+           for n, r in enumerate(rows) if r["split"] == split]
+    handbook = [json.loads(line)["query"] for line in HANDBOOK_QUESTIONS.read_text(encoding="utf-8").splitlines()]
+    want = {"train": 0, "test": 1}.get(split)
+    return out + [_asked(q, RequestType.POLICY_QUESTION, "policy_question", split, n)
+                  for n, q in enumerate(handbook) if n % 2 == want]
 
 
 @dataclass

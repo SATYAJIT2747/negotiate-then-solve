@@ -55,10 +55,14 @@ class Login(BaseModel):
     password: str = ""
 
 
+FOR_OFFICE = frozenset({"submitted", "approved", "rejected", "not_committed", "escalated", "replaced"})
+
+
 class Start(BaseModel):
     request: str
     week: int | None = None
     simulate: bool | None = None
+    thread: str | None = None  # the conversation this message continues; none: a new one
 
 
 class Answer(BaseModel):
@@ -97,11 +101,16 @@ def create_app(departments: dict[str, Service] | Service, users: Users | None = 
 
     # -- who is calling ---------------------------------------------------------------
 
-    def session(request: Request) -> Session:
-        token = request.cookies.get(COOKIE)
+    def token_of(request: Request) -> str | None:
+        """The page keeps its session per browser tab and sends it as a bearer token (an event stream, which sends no
+        headers, as ``?token=``), so two tabs can be two people; other clients may use the cookie."""
         auth = request.headers.get("authorization", "")
         if auth.lower().startswith("bearer "):
-            token = auth[7:]
+            return auth[7:]
+        return request.query_params.get("token") or request.cookies.get(COOKIE)
+
+    def session(request: Request) -> Session:
+        token = token_of(request)
         s = sessions.get(token)
         if s is None or s.dept not in depts:
             raise HTTPException(401, "sign in first")
@@ -124,9 +133,14 @@ def create_app(departments: dict[str, Service] | Service, users: Users | None = 
             ep = service(s).get(eid)
         except NotFound:
             raise HTTPException(404, f"no episode {eid}") from None
-        if not (s.office or ep.actor == s.person or _asks(ep, s.person)):
+        if not _sees(s, ep):
             raise HTTPException(404, f"no episode {eid}")  # not 403: do not say it exists
         return ep
+
+    def _sees(s: Session, ep: Episode) -> bool:
+        """Your own messages, the ones that ask you something, and for the office the ones that reach it: a change
+        sent for approval (and what came of it) or a request passed on. A teacher's questions stay theirs."""
+        return ep.actor == s.person or _asks(ep, s.person) or (s.office and ep.status in FOR_OFFICE)
 
     def _asks(ep: Episode, person: str) -> bool:
         """Whether ``person`` was asked something in ``ep`` (or is asked now)."""
@@ -167,7 +181,7 @@ def create_app(departments: dict[str, Service] | Service, users: Users | None = 
 
     @app.post("/api/logout")
     def logout(request: Request, response: Response) -> dict:
-        sessions.end(request.cookies.get(COOKIE, ""))
+        sessions.end(token_of(request) or "")
         response.delete_cookie(COOKIE)
         return {}
 
@@ -229,7 +243,7 @@ def create_app(departments: dict[str, Service] | Service, users: Users | None = 
 
     @app.get("/api/episodes")
     def episodes(s: Me) -> list[dict]:
-        eps = [e for e in service(s).episodes.values() if s.office or e.actor == s.person or _asks(e, s.person)]
+        eps = [e for e in service(s).episodes.values() if _sees(s, e)]
         return [e.summary() for e in sorted(eps, key=lambda e: e.started, reverse=True)]
 
     @app.post("/api/episodes")
@@ -238,7 +252,44 @@ def create_app(departments: dict[str, Service] | Service, users: Users | None = 
             raise HTTPException(403, "a club books rooms (Bookings); requests to the office come from staff")
         if not body.request.strip():
             raise HTTPException(422, "say what you need")
-        return service(s).start(body.request.strip(), s.person, body.week, simulate=body.simulate).summary()
+        if body.thread is not None:
+            try:
+                first = service(s).thread(body.thread)[0]
+            except NotFound:
+                raise HTTPException(404, f"no conversation {body.thread}") from None
+            if first.actor != s.person:  # the office reads every conversation but writes only its own
+                raise HTTPException(404, f"no conversation {body.thread}")
+        try:
+            ep = service(s).start(body.request.strip(), s.person, body.week, simulate=body.simulate, thread=body.thread)
+        except Conflict as e:
+            raise HTTPException(409, str(e)) from None
+        return ep.summary()
+
+    # -- conversations: the episodes of a thread, as a chat -------------------------------------
+
+
+    @app.get("/api/threads")
+    def threads(s: Me) -> list[dict]:
+        out = []
+        for eps in service(s).threads():
+            if not any(_sees(s, e) for e in eps):
+                continue
+            last = eps[-1]
+            out.append({"id": eps[0].thread, "title": eps[0].request, "actor": eps[0].actor_name,
+                        "mine": eps[0].actor == s.person, "updated": last.started.isoformat(timespec="seconds"),
+                        "status": last.status, "messages": len(eps)})
+        return out
+
+    @app.get("/api/threads/{tid}")
+    def thread(s: Me, tid: str) -> dict:
+        try:
+            eps = [e for e in service(s).thread(tid) if _sees(s, e)]
+        except NotFound:
+            eps = []
+        if not eps:
+            raise HTTPException(404, f"no conversation {tid}")
+        return {"id": tid, "mine": eps[0].actor == s.person,
+                "episodes": [{**service(s).detail(e.id), "can": _can(s, e.id), "events": list(e.events)} for e in eps]}
 
     @app.get("/api/episodes/{eid}")
     def get(s: Me, eid: str) -> dict:
@@ -289,10 +340,10 @@ def create_app(departments: dict[str, Service] | Service, users: Users | None = 
         return service(s).detail(eid)
 
     @app.post("/api/episodes/{eid}/approve")
-    def approve(s: Office, eid: str) -> dict:
+    def approve(s: Office, eid: str, body: Note | None = None) -> dict:
         episode(s, eid)
         try:
-            service(s).approve(eid)
+            service(s).approve(eid, note=(body.note.strip() if body else ""))
         except Conflict as e:
             raise HTTPException(409, str(e)) from None
         return service(s).detail(eid)
@@ -305,6 +356,24 @@ def create_app(departments: dict[str, Service] | Service, users: Users | None = 
         except Conflict as e:
             raise HTTPException(409, str(e)) from None
         return service(s).detail(eid)
+
+    @app.post("/api/episodes/{eid}/note")
+    def note(s: Office, eid: str, body: Note) -> dict:
+        """The office's own message to the requester about a request that reached it."""
+        ep = episode(s, eid)
+        if ep.status not in FOR_OFFICE or ep.actor == s.person:
+            raise HTTPException(409, "this request did not come to the office")
+        if not body.note.strip():
+            raise HTTPException(422, "write a message")
+        service(s).note(eid, body.note.strip())
+        return service(s).detail(eid)
+
+    @app.get("/api/office/requests")
+    def office_requests(s: Office) -> list[dict]:
+        """What reached the office from others, newest first: what still needs it, and what it has dealt with."""
+        eps = [e for e in service(s).episodes.values() if e.actor != s.person and e.status in FOR_OFFICE]
+        return [{**service(s).detail(e.id), "can": _can(s, e.id), "events": list(e.events)}
+                for e in sorted(eps, key=lambda e: e.started, reverse=True)]
 
     @app.get("/api/inbox")
     def inbox(s: Me) -> list[dict]:

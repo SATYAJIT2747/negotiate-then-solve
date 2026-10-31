@@ -17,9 +17,12 @@ requester, or the teacher it is addressed to, answers it through ``reply``.
 
 from __future__ import annotations
 
+import re
 import threading
+from collections import defaultdict
 from dataclasses import dataclass, field
 from datetime import datetime
+from pathlib import Path
 from typing import Any
 
 from nts.bookings import Desk
@@ -29,11 +32,17 @@ from nts.notices import notices
 from nts.people import Cast
 from nts.semester import rebuild
 from nts.state import Store
-from nts.telemetry import Span, Tracer, new_id
+from nts.telemetry import Span, Tracer, new_id, read_spans
 from nts.tools import ALL_TOOLS, Ask, Registry, Reply
 from nts.tools import words as wording
 from nts.tools.draft import OFFICE
 from nts.tools.talk import REQUESTER
+
+from .choices import choices
+
+
+MEMORY = 4  # earlier messages of a conversation the agent sees
+MEMORY_CHARS = 600  # of each earlier answer
 
 
 class NotFound(KeyError):
@@ -58,7 +67,10 @@ class Episode:
     events: list[dict] = field(default_factory=list)
     outcome: Outcome | None = None
     decision: dict | None = None  # the approval or rejection
+    thread: str = ""  # the conversation it belongs to (the id of its first episode)
     busy: bool = True  # a thread is running the harness for it
+    options: list[str] = field(default_factory=list)  # answers to pick for the requester's pending question
+    notes: list[dict] = field(default_factory=list)  # the office's messages to the requester about it
     cond: threading.Condition = field(default_factory=threading.Condition)
 
     def push(self, event: dict) -> None:
@@ -73,12 +85,12 @@ class Episode:
 
     def summary(self) -> dict:
         p = self.pending
-        return {"id": self.id, "request": self.request, "actor": self.actor_name, "week": self.week,
+        return {"id": self.id, "thread": self.thread, "request": self.request, "actor": self.actor_name, "week": self.week,
                 "started": self.started.isoformat(timespec="seconds"), "status": self.status, "text": self.text,
                 "detail": self.detail,
                 "pending": None if p is None else {"kind": p.kind, "to": self.actor_name if p.to == REQUESTER else p.to_name,
                                                    "to_requester": p.to == REQUESTER, "text": p.text,
-                                                   "rule": p.rule_text, "weeks": p.weeks}}
+                                                   "rule": p.rule_text, "weeks": p.weeks, "options": self.options}}
 
 
 class _Events:
@@ -100,8 +112,8 @@ def to_event(span: Span) -> dict | None:
         return {"type": "model", "text": r.get("text", ""),
                 "calls": [{"name": c["name"], "arguments": c.get("arguments", {})} for c in r.get("tool_calls", [])],
                 "ms": span.ms}
-    if span.kind == "model_call":
-        return {"type": "model_error", "error": a.get("error", {})}
+    if span.kind == "model_call":  # a call asked again with a shorter prompt is no failure to show
+        return None if a.get("retried") else {"type": "model_error", "error": a.get("error", {})}
     if span.kind == "tool_call":
         r = a.get("result", {})
         ask = isinstance(r.get("content"), dict) and "kind" in r["content"] and "to_name" in r["content"]
@@ -114,6 +126,9 @@ def to_event(span: Span) -> dict | None:
         return {"type": "reply", "kind": ask.get("kind"), "to": ask.get("to_name"), "text": ask.get("text"),
                 "rule": ask.get("rule_text"), "weeks": ask.get("weeks", []),
                 "answer": reply.get("answer"), "says": reply.get("text", "")}
+    if span.kind == "note":
+        return {"type": "note", "by": a.get("by", ""), "text": a.get("text", ""),
+                "at": span.start.isoformat(timespec="seconds")}
     if span.kind in ("episode", "resume"):
         status = a.get("status", "")
         return {"type": "waiting" if status == "waiting" else "end", "status": status, "text": a.get("text", ""),
@@ -124,7 +139,7 @@ def to_event(span: Span) -> dict | None:
 
 class Service:
     def __init__(self, store: Store, model: Model, tracer: Tracer | None = None, *, agent: AgentConfig | None = None,
-                 simulate: bool = False, handbook=None) -> None:
+                 simulate: bool = False, handbook=None, picker=None) -> None:
         from nts.agents import COORDINATOR
 
         self.store = store
@@ -133,7 +148,7 @@ class Service:
         self.episodes: dict[str, Episode] = {}
         self.tracer = Tracer([*(tracer.sinks if tracer else []), _Events(self)])
         self.handbook = handbook
-        self.harness = Harness(Registry(ALL_TOOLS), model, self.tracer, handbook=handbook)
+        self.harness = Harness(Registry(ALL_TOOLS), model, self.tracer, handbook=handbook, picker=picker)
         self.lock = threading.Lock()  # one commit at a time; drafts are private and need none
         self.desk = Desk(store)
         self.rebuild: dict = {"status": "none"}  # the office's semester rebuild: none, running, ready, failed
@@ -177,15 +192,120 @@ class Service:
 
     # -- episodes -----------------------------------------------------------------
 
-    def start(self, request: str, actor: str, week: int | None = None, *, simulate: bool | None = None) -> Episode:
+    def restore(self, spans: Path) -> int:
+        """The episodes an earlier run of the server had on this store, rebuilt from their spans (``spans``, the
+        telemetry's JSONL folder), so a restart keeps every request and what happened in it. They are shown, not
+        run: one that was waiting or not yet approved ends as ``interrupted`` (its draft lived in memory)."""
+        versions = {e.hash for e in self.store.events}
+        traces: dict[str, list[Span]] = defaultdict(list)
+        for span in read_spans(spans):  # in the order they ended, the order their events were pushed
+            traces[span.trace_id].append(span)
+        inst, n = self.store.world.instance, 0
+        for eid, trace in traces.items():
+            head = next((t for t in trace if t.kind == "episode"), None)
+            if eid in self.episodes or head is None or head.attrs.get("state_version") not in versions:
+                continue
+            a = head.attrs
+            name = inst.faculty_by_id[a["actor"]].name if a.get("actor") in inst.faculty_by_id else "the timetable office"
+            ep = Episode(eid, a.get("request", ""), a.get("actor", ""), name, a.get("week"), head.start, busy=False,
+                         thread=a.get("thread") or eid)
+            for span in trace:
+                if (event := to_event(span)) is not None:
+                    ep.push(event)
+                if span.kind in ("episode", "resume"):
+                    ep.status, ep.text, ep.detail = (span.attrs.get(k, "") for k in ("status", "text", "detail"))
+                elif span.kind == "note":
+                    ep.notes.append(to_event(span))
+                    self._tell(ep.actor, "office", span.attrs.get("text", ""), ep, span.start)
+                elif span.kind == "approval":
+                    b = span.attrs
+                    ep.status = "approved" if b.get("committed") else "rejected" if "note" in b else "not_committed"
+                    ep.decision = {"by": b.get("by"), "approved": bool(b.get("committed")), "version": b.get("version"),
+                                   "note": b.get("note", "")}
+                    ep.push({"type": "decision", **ep.decision})
+                    self._decided(ep, b.get("notices") or {}, span.start)
+            if ep.status in ("running", "waiting", "submitted"):
+                ep.detail = f"{ep.status} when the server restarted; send the request again"
+                ep.status = "interrupted"
+            self.episodes[eid] = ep
+            n += 1
+        return n
+
+    def start(self, request: str, actor: str, week: int | None = None, *, simulate: bool | None = None,
+              thread: str | None = None) -> Episode:
+        """A new request, or with ``thread`` the next message of that conversation: the agent sees the earlier
+        messages and what came of them (``MEMORY`` of them). A message to a conversation whose agent waits for the
+        requester's answer is that answer. A draft of the conversation still waiting for the office is replaced:
+        the later message says what is wanted now."""
+        earlier = self.thread(thread) if thread else []
+        if earlier:
+            last = earlier[-1]
+            if last.busy:
+                raise Conflict("the agent is still working on the last message")
+            if (p := last.pending) is not None:
+                if p.to != REQUESTER:
+                    raise Conflict(f"the agent is waiting for {p.to_name} to answer first")
+                return self.reply(last.id, Reply(answer="said", text=request))
+            if last.status == "submitted" and last.decision is None:
+                last.status, last.detail = "replaced", "a later message in the conversation replaced this draft"
+                last.push({"type": "end", "status": "replaced", "text": "", "detail": last.detail})
         inst = self.store.world.instance
         name = inst.faculty_by_id[actor].name if actor in inst.faculty_by_id else "the timetable office"
-        ep = Episode(new_id("ep-"), request, actor, name, week, datetime.now())
+        eid = new_id("ep-")
+        ep = Episode(eid, request, actor, name, week, datetime.now(), thread=earlier[0].thread if earlier else eid)
         self.episodes[ep.id] = ep
         people = Cast() if (self.simulate if simulate is None else simulate) else None
+        history = [(e.request, self.remembered(e)) for e in earlier[-MEMORY:]]
         self._spawn(ep, lambda: self.harness.run(self.agent, request, self.store, actor, week, episode_id=ep.id,
-                                                 people=people))
+                                                 people=people, history=history, thread=ep.thread))
         return ep
+
+    def _options(self, ep: Episode) -> list[str]:
+        """Answers to pick for a question to the requester: what the question offers ("9 am or 11 am?",
+        "(lecture or practical)", yes / no), or for "which class?" the requester's own classes."""
+        p = ep.pending
+        if p is None or p.to != REQUESTER:
+            return []
+        if picked := choices(p.text):
+            return picked
+        inst = self.store.world.instance
+        if re.search(r"\bwhich (?:of your )?(?:class|course|lecture|lab|practical|session)", p.text, re.IGNORECASE):
+            mine = sorted({f"{inst.course_title(s.course)} {s.kind.value}" for s in inst.sessions if s.faculty == ep.actor})
+            return mine if 1 < len(mine) <= 8 else []
+        return []
+
+    def thread(self, tid: str) -> list[Episode]:
+        """The episodes of a conversation, oldest first."""
+        eps = sorted((e for e in self.episodes.values() if e.thread == tid), key=lambda e: e.started)
+        if not eps:
+            raise NotFound(tid)
+        return eps
+
+    def threads(self) -> list[list[Episode]]:
+        """Every conversation, the most recently active first."""
+        by: dict[str, list[Episode]] = defaultdict(list)
+        for e in self.episodes.values():
+            by[e.thread].append(e)
+        convs = [sorted(eps, key=lambda e: e.started) for eps in by.values()]
+        return sorted(convs, key=lambda eps: eps[-1].started, reverse=True)
+
+    def remembered(self, ep: Episode) -> str:
+        """What the agent remembers of an earlier message: its answer, and the change it led to, if any."""
+        said = ep.text or ep.detail or "(no answer)"
+        drafted = "; ".join(self.draft(ep.id)) if ep.outcome is not None else ""
+        what = f"Drafted: {drafted}. " if drafted else ""
+        fate = {  # whether the change is in the timetable is what a follow-up needs, said plainly
+            "approved": "The office approved it: it is in the timetable now.",
+            "submitted": "Sent to the office, not decided yet: not in the timetable.",
+            "replaced": "Withdrawn by a later message: not in the timetable.",
+            "rejected": "The office rejected it: not in the timetable.",
+            "not_committed": "It could not be committed: not in the timetable.",
+            "interrupted": "Never finished (the server restarted): nothing was changed.",
+            "escalated": "Passed to the office: nothing was changed yet.",
+        }.get(ep.status, "" if ep.status == "answered" else "Nothing was changed.")
+        office = " ".join(f"The office wrote: {n['text']}" for n in ep.notes)
+        tail = " ".join(x for x in (what + fate, office) if x)
+        return (said[:MEMORY_CHARS] + (f" [{tail}]" if tail else ""))[:MEMORY_CHARS + 300]
 
     def reply(self, eid: str, reply: Reply) -> Episode:
         ep = self.get(eid)
@@ -209,6 +329,7 @@ class Service:
                 return
             with ep.cond:
                 ep.outcome, ep.status, ep.text, ep.detail, ep.busy = out, out.status, out.text, out.detail, False
+                ep.options = self._options(ep)
                 ep.cond.notify_all()
 
         ep.busy = True
@@ -261,18 +382,36 @@ class Service:
         removed = [f"no longer: {wording.constraint(inst, c)}" for cid, c in base.items() if cid not in d.world.constraints]
         return added + removed
 
-    def approve(self, eid: str, by: str = OFFICE) -> Episode:
+    def note(self, eid: str, text: str, by: str = OFFICE) -> Episode:
+        """A message from the office to the requester about this request: shown in their chat (and recorded; the
+        tracer's event sink adds it to the episode's events)."""
+        ep = self.get(eid)
+        with self.tracer.span("note", by, trace_id=eid, by=by, text=text) as span:
+            pass
+        ep.notes.append(to_event(span))
+        self._tell(ep.actor, "office", text, ep)
+        return ep
+
+    def needs_office(self, ep: Episode) -> bool:
+        """A draft to decide on, or a request passed to the office that it has not answered yet."""
+        if ep.busy:
+            return False
+        if ep.status == "submitted":
+            return ep.outcome is not None and ep.outcome.draft.base.version == self.store.version
+        return ep.status == "escalated" and not ep.notes
+
+    def approve(self, eid: str, by: str = OFFICE, note: str = "") -> Episode:
         ep = self._decidable(eid)
         assert ep.outcome is not None
         with self.lock:
             world = approve(self.store, ep.outcome, self.tracer, by=by)
-        if world is not None:
-            at = datetime.now().isoformat(timespec="seconds")
-            for person, lines in notices(ep.outcome.draft.base, world, ep.actor).items():
-                self.told.setdefault(person, []).extend({"at": at, "episode": ep.id, "text": t} for t in lines)
+        affected = notices(ep.outcome.draft.base, world, ep.actor) if world is not None else {}
         ep.status = "approved" if world else "not_committed"
         ep.decision = {"by": by, "approved": world is not None, "version": world.version if world else None}
         ep.push({"type": "decision", **ep.decision})
+        self._decided(ep, affected)
+        if note:
+            self.note(eid, note, by)
         return ep
 
     def reject(self, eid: str, note: str = "", by: str = OFFICE) -> Episode:
@@ -282,7 +421,31 @@ class Service:
         ep.status = "rejected"
         ep.decision = {"by": by, "approved": False, "note": note}
         ep.push({"type": "decision", **ep.decision})
+        self._decided(ep)
         return ep
+
+    # -- notifications: what each person is told, newest last ------------------------------
+
+    def _tell(self, person: str, kind: str, text: str, ep: Episode, at: datetime | None = None) -> None:
+        """``kind``: approved, rejected, not_committed (your request), office (a message about it), affected (someone
+        else's approved change moved or cancelled one of your classes)."""
+        self.told.setdefault(person, []).append({"at": (at or datetime.now()).isoformat(timespec="seconds"),
+                                                 "kind": kind, "text": text, "episode": ep.id, "thread": ep.thread,
+                                                 "request": ep.request, "mine": person == ep.actor})
+
+    def _decided(self, ep: Episode, affected: dict[str, list[str]] | None = None, at: datetime | None = None) -> None:
+        d = ep.decision or {}
+        lines = ("; ".join(self.draft(ep.id)) if ep.outcome is not None else "") or ep.text  # after a restart: its summary
+        if ep.status == "approved":
+            self._tell(ep.actor, "approved", "The office approved it" + (f": {lines}" if lines else "."), ep, at)
+        elif ep.status == "rejected":
+            self._tell(ep.actor, "rejected", "The office did not approve it" + (f": {d['note']}" if d.get("note") else "."),
+                       ep, at)
+        elif ep.status == "not_committed":
+            self._tell(ep.actor, "not_committed", "It could not be committed: the timetable changed. Send it again.", ep, at)
+        for person, said in (affected or {}).items():
+            for t in said:
+                self._tell(person, "affected", t, ep, at)
 
     def _decidable(self, eid: str) -> Episode:
         ep = self.get(eid)
@@ -294,7 +457,8 @@ class Service:
 
     def detail(self, eid: str) -> dict[str, Any]:
         ep = self.get(eid)
-        return {**ep.summary(), "draft": self.draft(eid), "decision": ep.decision, "busy": ep.busy,
+        return {**ep.summary(), "draft": self.draft(eid), "decision": ep.decision, "busy": ep.busy, "notes": ep.notes,
+                "needs_office": self.needs_office(ep),
                 "screened": bool(ep.outcome and ep.outcome.screened),
                 "stale": bool(ep.outcome and ep.status == "submitted"
                               and ep.outcome.draft.base.version != self.store.version)}

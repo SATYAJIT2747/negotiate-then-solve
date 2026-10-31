@@ -181,3 +181,45 @@ def test_a_make_up_class_without_the_day_the_request_named_says_so(store):
     out = Harness(Registry(ALL_TOOLS), ScriptedModel([add, say("ok")])).run(
         COORDINATOR_V5, f"Could I hold a make-up class next week, on {FULL_DAY[other]}?", store, s.faculty, 5)
     assert f"day={FULL_DAY[other]}" in out.calls[0].content["note"]
+
+
+def test_an_unclear_extra_class_names_only_what_differs(store):
+    """A course with a lecture and a practical for one section: ask lecture or practical, not which section."""
+    inst = store.world.instance
+    by = {}
+    for s in inst.sessions:
+        by.setdefault((s.faculty, s.course), set()).add((s.kind.value, tuple(s.groups)))
+    teacher, course = next(k for k, v in by.items() if len({kind for kind, _ in v}) > 1 and len({g for _, g in v}) == 1)
+    model = ScriptedModel([call("add_class", course=inst.course_title(course), week=6, reason="extra"), say("Which?")])
+    out = Harness(Registry(ALL_TOOLS), model).run(COORDINATOR_V5, "an extra class", store, teacher, 5)
+    err = out.calls[0].error
+    assert err.code == "ambiguous_class" and "lecture" in err.message and "practical" in err.message
+    assert "give kind," in err.message and "all for" in err.message and "kind and section" not in err.message
+
+
+def test_a_taken_time_for_an_extra_class_lists_free_times_that_day_first(store):
+    inst = store.world.instance
+    s = next(x for x in inst.sessions if x.kind.value == "lecture")
+    tt = store.world.timetable(6)
+    busy = tt.assignment[s.id]  # the teacher teaches then: not free for an extra class
+    day = FULL_DAY[busy.day]
+    model = ScriptedModel([call("add_class", course=inst.course_title(s.course), kind="lecture", week=6, day=day,
+                                hour=hour(busy.slot), section=inst.group_by_id[s.groups[0]].name), say("Which?")])
+    out = Harness(Registry(ALL_TOOLS), model).run(COORDINATOR_V5, f"an extra class on {day}", store, s.faculty, 5)
+    err = out.calls[0].error
+    assert err.code == "no_free_time" and "Ask the requester which one" in err.message
+    free = err.hint["free"]
+    same = [f for f in free if f.startswith(day)]
+    assert free[:len(same)] == same  # that day's times come first
+
+
+def test_an_extra_class_on_another_day_than_asked_says_to_ask_first(store):
+    inst = store.world.instance
+    s = next(x for x in inst.sessions if x.kind.value == "lecture")
+    days = inst.calendar.days
+    model = ScriptedModel([call("add_class", course=inst.course_title(s.course), kind="lecture", week=6,
+                                day=FULL_DAY[days[2]], section=inst.group_by_id[s.groups[0]].name), say("Done?")])
+    out = Harness(Registry(ALL_TOOLS), model).run(COORDINATOR_V5, f"an extra class on {FULL_DAY[days[1]]}", store,
+                                                  s.faculty, 5)
+    if out.calls[0].ok:  # a free time on that other day: the agent is told to ask before submitting
+        assert "ask the requester whether this day is all right" in out.calls[0].content["note"]

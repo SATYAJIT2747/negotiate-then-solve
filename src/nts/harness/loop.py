@@ -34,6 +34,7 @@ from __future__ import annotations
 import json
 import time
 from collections import Counter
+from collections.abc import Sequence
 from dataclasses import asdict, dataclass, field
 
 from nts.models import Model
@@ -85,29 +86,50 @@ class Outcome:
     run: _Run | None = field(default=None, repr=False)  # what ``Harness.resume`` goes on from
 
 
+CONVERSATION = ("This request continues a conversation: its earlier messages come first, each with what came of it "
+                "in [brackets]. Answer the latest message; use the earlier ones only to understand it. Your draft "
+                "starts empty: nothing an earlier message drafted is in it, and the brackets say whether that change "
+                "is in the timetable now. To change it again, draft it anew.")
+STUCK = ("I kept going round in circles on this one, so I stopped. Could you say it with a little more detail: "
+         "which class (course, day and time), what you want done with it, and for which week?")
+
+
 class Harness:
-    def __init__(self, registry: Registry, model: Model, tracer: Tracer | None = None, *, handbook=None) -> None:
+    def __init__(self, registry: Registry, model: Model, tracer: Tracer | None = None, *, handbook=None,
+                 picker=None) -> None:
         self.registry = registry
         self.model = model
         self.tracer = tracer or Tracer()
         self.handbook = handbook  # the department's regulations, for the rules tool (nts.policy.Handbook)
+        self.picker = picker  # which tools a request is offered (nts.harness.pick.ToolPicker); None: all of them
 
     def run(self, agent: AgentConfig, request: str, store: Store, actor: str, week: int | None = None,
-            *, episode_id: str | None = None, people: People | None = None) -> Outcome:
+            *, episode_id: str | None = None, people: People | None = None,
+            history: Sequence[tuple[str, str]] = (), thread: str | None = None) -> Outcome:
+        """``history``: the earlier requests of the same conversation (``thread``) and what came of each, oldest first;
+        the model sees them as earlier turns, so "and on Tuesday?" or "move that one instead" can be read."""
         eid = episode_id or new_id("ep-")
         draft = store.draft(actor, eid)
         screened = screen(request)  # instructions to the system are never read
         read = screened.text or ""
         ctx = Context(store.world, actor, week, draft, handbook=self.handbook, request=read, scopes=agent.scopes)
-        tools = self.registry.specs(agent.scopes)
-        transcript = [Message(role="system", content=agent.system(ctx)), Message(role="user", content=read)]
+        # the whole conversation decides the tools: "2 pm" after "I want an extra class" is still a change
+        asks = "\n".join([*(asked for asked, _ in history), read])
+        pick = self.picker(asks, actor in store.world.instance.faculty_by_id) if self.picker and read else None
+        tools = self.registry.specs(agent.scopes & pick.scopes if pick and pick.scopes else agent.scopes)
+        earlier = [Message(role=role, content=text) for asked, said in history
+                   for role, text in (("user", asked), ("assistant", said))]
+        system = agent.system(ctx) + (f"\n\n{CONVERSATION}" if history else "")
+        transcript = [Message(role="system", content=system), *earlier, Message(role="user", content=read)]
         run = _Run(eid, agent, ctx, transcript, tools, people)
         run.screened = screened.flagged
 
         with self.tracer.span("episode", agent.name, trace_id=eid, agent=agent.name, agent_version=agent.version(tools),
                               model=self.model.name, actor=actor, week=week, request=request,
                               state_version=store.version, tools=tools, budgets=asdict(agent.budgets),
-                              screened=screened.flagged) as ep:
+                              screened=screened.flagged, thread=thread, history=len(history),
+                              picked=pick and {"request_type": pick.request_type, "p": pick.p,
+                                               "scopes": sorted(s.value for s in pick.scopes or agent.scopes)}) as ep:
             if screened.text is None:
                 run.stop("declined", "only instructions to the system", text=REFUSED)
             else:
@@ -193,17 +215,31 @@ class Harness:
         elif reason := run.over_budget():
             run.stop("budget_exhausted", reason)
         elif run.repeats >= b.max_repeats:
-            run.stop("stuck", f"{run.repeats} repeated calls")
+            run.stop("stuck", f"{run.repeats} repeated calls", text=STUCK)
 
     def _ask(self, run: _Run, sent: list[Message], offered: list[dict]) -> AssistantTurn | None:
+        """The model's next turn. When the prompt overflows the model's context, every tool result but the latest is
+        trimmed and the model asked once more; any other failure ends the episode."""
+        reply = self._ask_once(run, sent, offered, final=False)
+        if reply is None and not run.status:
+            reply = self._ask_once(run, fit(sent, 0, 1), offered, final=True)
+        return reply
+
+    def _ask_once(self, run: _Run, sent: list[Message], offered: list[dict], *, final: bool) -> AssistantTurn | None:
         try:
             with self.tracer.span("model_call", self.model.name, model=self.model.name,
                                   messages=[m.model_dump(mode="json") for m in sent],
                                   request_hash=request_hash(sent, offered), tools_hash=tools_hash(offered),
                                   estimated_tokens=estimate(sent)) as span:
-                reply = self.model.chat(sent, offered)
+                try:
+                    reply = self.model.chat(sent, offered)
+                except Exception as e:
+                    span.attrs["retried"] = not final and getattr(e, "context_full", False)
+                    raise
                 span.attrs["response"] = reply.model_dump(mode="json")
         except Exception as e:  # noqa: BLE001 -- any model failure ends the episode, recorded on its span
+            if not final and getattr(e, "context_full", False):
+                return None  # _ask trims and asks again
             run.stop("model_error", f"{type(e).__name__}: {e}")
             return None
         run.usage.prompt_tokens += reply.usage.prompt_tokens

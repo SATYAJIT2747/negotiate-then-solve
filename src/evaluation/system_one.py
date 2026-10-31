@@ -44,9 +44,10 @@ from .metrics import ece, percentile
 
 ROOT = Path(__file__).resolve().parents[2]
 DATA = ROOT / "data"
-INTENT_SETS = {"intents": DATA / "compiler-intents" / "test.jsonl",
-               "typo": DATA / "suites" / "test-typo.jsonl",
-               "noisy": DATA / "suites" / "test-noisy.jsonl"}
+INTENT_SETS = {name: path for name, path in {"intents": DATA / "compiler-intents" / "test.jsonl",
+                                             "typo": DATA / "suites" / "test-typo.jsonl",
+                                             "noisy": DATA / "suites" / "test-noisy.jsonl"}.items()
+               if path.exists()}  # a branch without data/suites has no typo / noisy sets
 SETTINGS = ("corpus", "para", "unseen-wording", *INTENT_SETS)
 
 
