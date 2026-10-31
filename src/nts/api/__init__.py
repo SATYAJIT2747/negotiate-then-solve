@@ -55,7 +55,7 @@ class Login(BaseModel):
     password: str = ""
 
 
-FOR_OFFICE = frozenset({"submitted", "approved", "rejected", "not_committed", "escalated", "replaced"})
+FOR_OFFICE = frozenset({"submitted", "approved", "rejected", "not_committed", "escalated", "replaced", "undone"})
 
 
 class Start(BaseModel):
@@ -353,6 +353,16 @@ def create_app(departments: dict[str, Service] | Service, users: Users | None = 
         episode(s, eid)
         try:
             service(s).reject(eid, body.note)
+        except Conflict as e:
+            raise HTTPException(409, str(e)) from None
+        return service(s).detail(eid)
+
+    @app.post("/api/episodes/{eid}/undo")
+    def undo(s: Office, eid: str, body: Note | None = None) -> dict:
+        """Take an approved change back out of the timetable (the office only)."""
+        episode(s, eid)
+        try:
+            service(s).undo(eid, note=(body.note.strip() if body else ""))
         except Conflict as e:
             raise HTTPException(409, str(e)) from None
         return service(s).detail(eid)

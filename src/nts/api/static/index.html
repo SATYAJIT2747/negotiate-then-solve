@@ -390,7 +390,7 @@ function episodeHtml(c) {
         `<div class="small">Waiting for ${esc(p.to)} to answer.</div>`}</div>`;
   }
   if (c.status === "submitted" || c.status === "replaced" || c.decision) {
-    const head = c.decision ? (c.decision.approved ? "Approved by the office" : "Not approved" + (c.decision.note ? `: ${esc(c.decision.note)}` : ""))
+    const head = c.decision ? (c.decision.undone ? "Approved, then undone by the office" : c.decision.approved ? "Approved by the office" : "Not approved" + (c.decision.note ? `: ${esc(c.decision.note)}` : ""))
       : c.status === "replaced" ? "Replaced by a later message" : "Sent to the office for approval";
     html += `<div class="callout ok stack"><div class="small">${head}</div>
       ${c.draft.length ? `<ul>${c.draft.map((d) => `<li>${esc(d)}</li>`).join("")}</ul>` : ""}
@@ -484,6 +484,8 @@ function drawOffice(items) {
       <div class="small">${esc(c.actor)} ${what}.</div>
       ${c.text || c.detail ? `<div><b>The agent:</b> ${esc(c.text || c.detail)}</div>` : ""}
       ${c.draft.length ? `<div><b>Proposed changes</b><ul>${c.draft.map((d) => `<li>${esc(d)}</li>`).join("")}</ul></div>` : ""}
+      ${c.status === "submitted" && c.draft.some((d) => /\bfrom week \d+\b(?!\s*to)|\bevery week\b/.test(d)) ? `<div class="callout">⚠️ This holds
+        <b>until the end of term</b>, not for one week. Check that ${esc(c.actor)} asked for that before approving.</div>` : ""}
       ${c.stale && c.status === "submitted" ? `<div class="callout">The timetable changed since this was drafted, so it can't be approved as it is. Tell ${esc(c.actor)} to send it again.</div>` : ""}
       ${steps.length ? `<details class="thinking"><summary>How the agent got here · ${steps.length} steps</summary><ol>${steps.join("")}</ol></details>` : ""}
       ${c.notes.map((n) => `<div class="msg agent"><div class="bubble office">${esc(n.text)}<div class="small">the office · ${esc((n.at || "").slice(11, 16))}</div></div></div>`).join("")}
@@ -491,6 +493,7 @@ function drawOffice(items) {
       <textarea id="oNote" placeholder="A message to ${esc(c.actor)} (optional with Approve or Reject)"></textarea>
       <div class="row">
         ${c.can.decide && !c.stale ? `<button class="primary" id="oYes">Approve</button><button class="danger" id="oNo">Reject</button>` : ""}
+        ${c.status === "approved" ? `<button class="danger" id="oUndo" title="Take this change back out of the timetable">Undo this change</button>` : ""}
         <button id="oSay">Send message only</button><span class="small" id="oErr"></span></div></div>`;
   const act = async (path, body) => {
     try { await api(`/api/episodes/${c.id}/${path}`, {method: "POST", body: JSON.stringify(body)}); $("oItem").dataset.shown = "";
@@ -500,6 +503,8 @@ function drawOffice(items) {
   const note = () => $("oNote").value.trim();
   if ($("oYes")) $("oYes").onclick = () => act("approve", {note: note()});
   if ($("oNo")) $("oNo").onclick = () => act("reject", {note: note()});
+  if ($("oUndo")) $("oUndo").onclick = () => confirm(`Undo this change for ${c.actor}? Their timetable goes back to how it was before it.`)
+    && act("undo", {note: note()});
   $("oSay").onclick = () => note() ? act("note", {note: note()}) : $("oNote").focus();
 }
 
@@ -507,9 +512,9 @@ function drawOffice(items) {
 // -- notifications: a bell in the header ---------------------------------------------------------------------------
 // Your requests approved or not, the office's messages, and other people's approved changes that move your classes.
 
-const ICON = {approved: "✅", rejected: "⛔", not_committed: "⚠️", office: "✉️", affected: "📅"};
+const ICON = {approved: "✅", rejected: "⛔", not_committed: "⚠️", office: "✉️", affected: "📅", undone: "↩️"};
 const HEAD = {approved: "Approved", rejected: "Not approved", not_committed: "Not committed", office: "The office wrote",
-  affected: "Your classes changed"};
+  affected: "Your classes changed", undone: "Undone by the office"};
 let told = [], toldNewest = null;  // the newest notice seen by this tab, so a newer one pops up once
 
 const seenKey = () => `nts.seen.${me.dept}.${me.name}`;

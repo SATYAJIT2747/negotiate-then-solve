@@ -216,3 +216,34 @@ traced in the telemetry before fixing it.
   offer before checking the draft. The tools now tell it the right next step each time. Training it on
   multi-message chats is the real fix.
 - A draft still lives in memory: a server restart while a change waits for approval loses it (`interrupted`).
+
+---
+
+## Round 3 of testing: absences that became every week, and undoing an approved change (done, 2026-10-31)
+
+| What you saw | Why it happened | What we changed |
+|---|---|---|
+| "i am absent on **wee** 10, cancel all my classes": 16 steps of drafting and taking back, then "I cannot …" | The `constrain` tool looks for "week" and a number to see whether a week was named. It missed the typo "wee 10", so it told the agent *"the request names no week, so it holds to the end of term; retract it"*. The agent obeyed, the term-long rule couldn't be solved, and it went back and forth | A week typed loosely counts: "wee 10", "wk 10", "w10", "10th week" |
+| "i am absent on **Thursday**" / "**Friday**": approved as **every** Thursday / Friday to the end of term | The agent's instructions say a request with no week holds to the end of term. That's right for a wish ("no classes on Monday mornings"), wrong for an absence | For an absence ("absent", "away", "on leave", "conference", "won't be there" …) with no week, `constrain` now tells the agent: *the next such day, this week; or ask whether they mean every week* |
+| "cancel all my classes" became "not available", which *moves* the classes instead of cancelling them | Nothing pointed the agent to `cancel_class` | When the request says "cancel" and the agent drafts "not available", it's told to use `cancel_class` for each class |
+| The office approved "every Friday" without noticing | The inbox showed "from week 5" in small print | The office inbox now warns in a box: **"This holds until the end of term, not for one week. Check that they asked for that before approving."** |
+| "why did you delete all my Fridays" → the agent couldn't take it back | An approved change is in the timetable, not in a new draft, and no tool removes it | **Undo this change** in the office inbox, on any approved item: the rules it added come out, any it removed go back, and the weeks it changed are set back to how they were just before it. The teacher is told (↩️ in the bell and in their chat), and the agent's memory says it is no longer in the timetable. An undo that would also wipe a later change is refused; undoing the newest first lets the older one be undone too |
+
+### What happened
+
+- **The same two requests on the real model** (as Dr. Das, with stand-ins answering): "i am absent on wee 10 . cancel all my
+  classes" → *"I have cancelled all your classes for week 10"*; "i am absent on thursday cancel all my classes" → *"I have
+  cancelled your classes for this Thursday (week 5)"*. Both are now one-off, not every week.
+- **Undo, tried on a copy of the demo department:** Dr. Khan's two wrong approvals (every Friday, then every Thursday, from week 5)
+  were undone newest first, and both rules were gone afterwards. The first try found a bug: the agent had drafted, taken back
+  and redrafted the same rule, so the request added the same rule twice. The undo now works from what the request changed
+  overall, not step by step.
+- **Tests:** `test_nts_draft.py` +3 (a loosely typed week, an absence on a day is this week, cancel is not unavailable);
+  `test_nts_chat.py` +4 (the office undoes an approved change, and it survives a restart; an undo that would wipe a later change
+  is refused; newest first, then the older one; a draft that was redone). All 185 `nts` tests pass.
+
+### For you to do
+
+In the demo department, Dr. Khan's every-Friday and every-Thursday rules are still in the timetable, because the undo was only
+tried on a copy. As the office, open those two requests in the inbox (under *Done*) and press **Undo this change**: Friday first,
+then Thursday.

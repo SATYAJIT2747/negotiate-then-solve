@@ -296,3 +296,37 @@ def test_swap_classes_puts_each_class_where_the_other_was_and_only_v4_has_it(sto
     after = store.commit(out.draft).timetable(6).assignment
     assert (after[a.id].day, after[a.id].slot) == (pb.day, pb.slot)
     assert (after[b.id].day, after[b.id].slot) == (pa.day, pa.slot)
+
+
+def _noted(store, request, **arguments):
+    from nts.agents import COORDINATOR_V6
+    from nts.harness import Harness
+    from nts.models import ScriptedModel, call, say
+    from nts.tools import ALL_TOOLS, Registry
+
+    t = store.world.instance.faculty[0]
+    out = Harness(Registry(ALL_TOOLS), ScriptedModel([call("constrain", teacher="me", **arguments), say("ok")])).run(
+        COORDINATOR_V6, request, store, t.id, 5)
+    assert out.calls[0].ok, out.calls[0].error
+    return out.calls[0].content.get("note") or ""
+
+
+def test_a_week_typed_loosely_is_still_a_week(store):
+    """ "wee 10" named week 10: the agent was told it named no week, and went back and forth until it gave up."""
+    for request in ("i am absent on wee 10", "away in wk 10", "absent the 10th week"):
+        assert "names no week" not in _noted(store, request, rule="unavailable", days=["Thursday"], from_week=10,
+                                             to_week=10), request
+
+
+def test_an_absence_on_a_day_is_this_week_not_every_week(store):
+    """ "absent on Thursday" was approved as every Thursday to the end of term."""
+    note = _noted(store, "i am absent on thursday", rule="unavailable", days=["Thursday"], from_week=5)
+    assert "this week (week 5)" in note and "to_week=5" in note
+    assert _noted(store, "no classes for me on Thursdays", rule="no_classes", days=["Thursday"], from_week=5) == ""
+    assert "this week" not in _noted(store, "I am away every Thursday from now on", rule="unavailable",
+                                     days=["Thursday"], from_week=5)
+
+
+def test_cancel_is_not_unavailable(store):
+    note = _noted(store, "i am absent in week 10, cancel all my classes", rule="unavailable", from_week=10, to_week=10)
+    assert "cancel_class" in note

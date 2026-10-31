@@ -215,3 +215,80 @@ def test_a_follow_up_is_told_to_answer_the_latest_message_and_what_is_in_the_tim
     sent = service.harness.model.seen[-1]
     assert "Answer the latest message" in sent[0].content and "Your draft starts empty" in sent[0].content
     assert "Withdrawn by a later message: not in the timetable." in sent[2].content
+
+
+def test_the_office_can_undo_an_approved_change(store, tmp_path):
+    """ "absent on Friday" was approved as every Friday: the office takes it back out, and the week is as before."""
+    from nts.telemetry import JsonlSink
+
+    inst = store.world.instance
+    t, days = inst.faculty[1], inst.calendar.days
+    service = Service(store, ScriptedModel([*away(days[0]), *away(days[1])]), Tracer([JsonlSink(tmp_path)]))
+    a = create_app({"demo": service})
+    me, office = signed_in(a, t.name), signed_in(a, "office")
+    before = store.world
+    ep = me.post("/api/episodes", json={"request": "away week 6", "week": 5}).json()
+    service.wait(ep["id"])
+    office.post(f"/api/episodes/{ep['id']}/approve")
+    assert store.world.constraints != before.constraints
+    assert me.post(f"/api/episodes/{ep['id']}/undo").status_code == 403  # the office only
+    done = office.post(f"/api/episodes/{ep['id']}/undo", json={"note": "Sorry, wrong weeks."}).json()
+    assert done["status"] == "undone"
+    assert dict(store.world.constraints) == dict(before.constraints)
+    assert store.world.timetable(6).assignment == before.timetable(6).assignment
+    assert office.post(f"/api/episodes/{ep['id']}/undo").status_code == 409  # once
+    assert me.get("/api/notices").json()[0]["kind"] == "undone"
+    assert "no longer in the timetable" in service.remembered(service.get(ep["id"])) or \
+        "undid" in service.remembered(service.get(ep["id"]))
+    again = Service(store, ScriptedModel([]), Tracer([MemorySink()]))
+    again.restore(tmp_path)
+    assert again.get(ep["id"]).status == "undone"
+
+
+def test_an_undo_that_would_wipe_a_later_change_is_refused(store):
+    inst = store.world.instance
+    t, days = inst.faculty[1], inst.calendar.days
+    a, service = app(store, [*away(days[0]), *away(days[1])])
+    me, office = signed_in(a, t.name), signed_in(a, "office")
+    first = me.post("/api/episodes", json={"request": "away week 6", "week": 5}).json()
+    service.wait(first["id"])
+    office.post(f"/api/episodes/{first['id']}/approve")
+    second = me.post("/api/episodes", json={"request": "away again week 6", "week": 5}).json()
+    service.wait(second["id"])
+    office.post(f"/api/episodes/{second['id']}/approve")
+    r = office.post(f"/api/episodes/{first['id']}/undo")
+    assert r.status_code == 409 and "later change" in r.json()["detail"]
+
+
+def test_undoing_the_newest_first_lets_the_older_be_undone_too(store):
+    inst = store.world.instance
+    t, days = inst.faculty[1], inst.calendar.days
+    a, service = app(store, [*away(days[0]), *away(days[1])])
+    me, office = signed_in(a, t.name), signed_in(a, "office")
+    before = store.world
+    eps = []
+    for request in ("away week 6", "away again week 6"):
+        ep = me.post("/api/episodes", json={"request": request, "week": 5}).json()
+        service.wait(ep["id"])
+        office.post(f"/api/episodes/{ep['id']}/approve")
+        eps.append(ep["id"])
+    assert office.post(f"/api/episodes/{eps[1]}/undo").status_code == 200
+    assert office.post(f"/api/episodes/{eps[0]}/undo").status_code == 200
+    assert dict(store.world.constraints) == dict(before.constraints)
+    assert store.world.timetable(6).assignment == before.timetable(6).assignment
+
+
+def test_an_undo_of_a_draft_that_was_redone_along_the_way(store):
+    """The agent drafted a rule, took it back and drafted it again: the change adds the same rule id twice."""
+    inst = store.world.instance
+    t, day = inst.faculty[1], inst.calendar.days[0]
+    rule = call("constrain", rule="unavailable", teacher="me", days=[FULL_DAY[day]], from_week=6, to_week=6)
+    again = call("constrain", rule="unavailable", teacher="me", days=[FULL_DAY[day]], from_week=6, to_week=6)
+    a, service = app(store, [rule, call("retract", change=1), again, call("check_draft"), call("submit", message="ok")])
+    me, office = signed_in(a, t.name), signed_in(a, "office")
+    before = store.world
+    ep = me.post("/api/episodes", json={"request": "away week 6", "week": 5}).json()
+    service.wait(ep["id"])
+    office.post(f"/api/episodes/{ep['id']}/approve")
+    assert office.post(f"/api/episodes/{ep['id']}/undo").status_code == 200
+    assert dict(store.world.constraints) == dict(before.constraints)

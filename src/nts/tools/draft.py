@@ -172,7 +172,8 @@ def constrain(ctx: Context, args: Constrain) -> dict:
     c = Constraint(id="new", type=kind, hard=hard, tier=tier, owner=owner, scope=scope, when=when, room=room,
                    justification=why, valid=valid, source=Source())
     result = _record(ctx, [c], args.reason)
-    if note := _standing_missed(ctx.request, valid):
+    if note := (_cancel_missed(ctx.request, args.rule) or _absence_missed(ctx.request, valid, ctx.week)
+                or (None if _ABSENT.search(ctx.request or "") else _standing_missed(ctx.request, valid))):
         result["note"] = note
     return result
 
@@ -303,7 +304,34 @@ def _standing_missed(request: str | None, valid: Validity) -> str | None:
             f"{valid.from_week} only; retract it and give from_week={valid.from_week} with no to_week")
 
 
-_NAMES_WEEK = re.compile(r"\bweeks?\s*\d|\b(this|next|coming|that) week\b|\b(today|tomorrow)\b", re.IGNORECASE)
+# "week 10", and as people type it: "wee 10", "wk 10", "w10", "10th week"
+_NAMES_WEEK = re.compile(r"\b(?:weeks?|wee?k?s?|wks?|w)\.?\s*\d|\b\d+(?:st|nd|rd|th)?\s+week\b|"
+                         r"\b(this|next|coming|that) week\b|\b(today|tomorrow)\b", re.IGNORECASE)
+# a one-off absence ("I am absent on Thursday"), as against a standing wish ("no classes on Thursdays")
+_ABSENT = re.compile(r"\b(absent|away|on leave|leave|sick|ill|conference|workshop|travel\w*|out of (?:town|station)|"
+                     r"not (?:be )?(?:there|around|available|in)|won'?t be|can'?t (?:come|make it))\b", re.IGNORECASE)
+_EVERY = re.compile(r"\bevery\b|\b(?:mon|tues|wednes|thurs|fri|satur)days\b|\balways\b", re.IGNORECASE)
+_CANCEL = re.compile(r"\bcancel\w*\b", re.IGNORECASE)
+
+
+def _absence_missed(request: str | None, valid: Validity, week: int | None) -> str | None:
+    """A note when a one-off absence that names no week is drafted for the rest of term: "absent on Thursday" is
+    this Thursday, not every Thursday (that change was approved once, for every Thursday)."""
+    if (not request or not _ABSENT.search(request) or _NAMES_WEEK.search(request) or _ONWARD.search(request)
+            or _EVERY.search(request) or valid.to_week is not None or week is None):
+        return None
+    return (f"an absence that names no week is the next such day, this week (week {week}), not every week to the end of "
+            f"term; retract it and give from_week={week}, to_week={week}, or ask the requester whether they mean every "
+            "week")
+
+
+def _cancel_missed(request: str | None, rule: str) -> str | None:
+    """A note when the request asks to cancel classes and the change only makes the teacher unavailable, which moves
+    the classes (and cannot, when every day of the week is blocked) instead of cancelling them."""
+    if rule != "unavailable" or not request or not _CANCEL.search(request):
+        return None
+    return ("they asked to cancel their classes, and an unavailable rule moves them to other times instead; to cancel, "
+            "retract this and call cancel_class for each of their classes that week (classes_of lists them)")
 _ONWARD = re.compile(r"\b(from now on|from then on|onwards?|rest of (the )?(term|semester)|every week|for good|"
                      r"permanently|until the end|from (this|next) week on)\b", re.IGNORECASE)
 

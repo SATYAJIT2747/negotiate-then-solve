@@ -31,7 +31,8 @@ from nts.models import Model
 from nts.notices import notices
 from nts.people import Cast
 from nts.semester import rebuild
-from nts.state import Store
+from nts.state import ClassCancelled, ConstraintAdded, ConstraintRemoved, InvalidChange, StaleDraft, Store, TimetableSet
+from nts.state.world import World
 from nts.telemetry import Span, Tracer, new_id, read_spans
 from nts.tools import ALL_TOOLS, Ask, Registry, Reply
 from nts.tools import words as wording
@@ -216,7 +217,10 @@ class Service:
                     ep.status, ep.text, ep.detail = (span.attrs.get(k, "") for k in ("status", "text", "detail"))
                 elif span.kind == "note":
                     ep.notes.append(to_event(span))
-                    self._tell(ep.actor, "office", span.attrs.get("text", ""), ep, span.start)
+                    undone = bool(span.attrs.get("undo"))
+                    if undone:
+                        ep.status, ep.decision = "undone", {**(ep.decision or {}), "undone": True}
+                    self._tell(ep.actor, "undone" if undone else "office", span.attrs.get("text", ""), ep, span.start)
                 elif span.kind == "approval":
                     b = span.attrs
                     ep.status = "approved" if b.get("committed") else "rejected" if "note" in b else "not_committed"
@@ -302,6 +306,7 @@ class Service:
             "not_committed": "It could not be committed: not in the timetable.",
             "interrupted": "Never finished (the server restarted): nothing was changed.",
             "escalated": "Passed to the office: nothing was changed yet.",
+            "undone": "Approved, then the office undid it: not in the timetable now.",
         }.get(ep.status, "" if ep.status == "answered" else "Nothing was changed.")
         office = " ".join(f"The office wrote: {n['text']}" for n in ep.notes)
         tail = " ".join(x for x in (what + fate, office) if x)
@@ -382,14 +387,14 @@ class Service:
         removed = [f"no longer: {wording.constraint(inst, c)}" for cid, c in base.items() if cid not in d.world.constraints]
         return added + removed
 
-    def note(self, eid: str, text: str, by: str = OFFICE) -> Episode:
+    def note(self, eid: str, text: str, by: str = OFFICE, *, undo: bool = False) -> Episode:
         """A message from the office to the requester about this request: shown in their chat (and recorded; the
-        tracer's event sink adds it to the episode's events)."""
+        tracer's event sink adds it to the episode's events). ``undo``: the message that says the office undid it."""
         ep = self.get(eid)
-        with self.tracer.span("note", by, trace_id=eid, by=by, text=text) as span:
+        with self.tracer.span("note", by, trace_id=eid, by=by, text=text, undo=undo) as span:
             pass
         ep.notes.append(to_event(span))
-        self._tell(ep.actor, "office", text, ep)
+        self._tell(ep.actor, "undone" if undo else "office", text, ep)
         return ep
 
     def needs_office(self, ep: Episode) -> bool:
@@ -412,6 +417,52 @@ class Service:
         self._decided(ep, affected)
         if note:
             self.note(eid, note, by)
+        return ep
+
+    def undo(self, eid: str, note: str = "", by: str = OFFICE) -> Episode:
+        """Take an approved change back out of the timetable: the rules it added are removed, its cancellations
+        lifted, and the week timetables it repaired set back to what they were before it. Refused when a later change
+        touched the same weeks (setting them back would undo that one too); then ask the agent for a new change."""
+        ep = self.get(eid)
+        if ep.status != "approved":
+            raise Conflict(f"only an approved change can be undone ({ep.status})")
+        events = list(self.store.events)
+        mine = [i for i, e in enumerate(events) if e.episode == eid]
+        if not mine:
+            raise Conflict("nothing of this request is in the timetable")
+        before = World.replay((e.change, e.hash) for e in events[:mine[0]])
+        weeks = {e.change.week for e in (events[i] for i in mine) if isinstance(e.change, TimetableSet | ClassCancelled)}
+        # a later change that was itself undone, with its undo, adds up to nothing: newest first, undo is allowed
+        undone = {e.episode.removeprefix("undo:") for e in events if (e.episode or "").startswith("undo:")}
+        later = {e.change.week for e in events[mine[-1] + 1:] if isinstance(e.change, TimetableSet | ClassCancelled)
+                 and (e.episode or "").removeprefix("undo:") not in undone}
+        if clash := weeks & later:
+            raise Conflict(f"a later change also changed {', '.join('the semester' if w is None else f'week {w}' for w in clash)}; "
+                           "ask the agent for a new change instead")
+        # by what it changed, not step by step: a draft may add a rule, take it back and add it again
+        draft, now = self.store.draft(by, f"undo:{eid}"), self.store.world
+        changed = [events[i].change for i in mine]
+        added = {ch.constraint.id for ch in changed if isinstance(ch, ConstraintAdded)}
+        removed = {ch.id for ch in changed if isinstance(ch, ConstraintRemoved)}
+        for cid in sorted(added - set(before.constraints)):
+            if cid in now.constraints:
+                draft.add(ConstraintRemoved(id=cid))
+        for cid in sorted(removed & set(before.constraints)):
+            if cid not in now.constraints:
+                draft.add(ConstraintAdded(constraint=before.constraints[cid]))
+        # (its cancellations are lifted by setting its weeks' timetables back, below)
+        for w in sorted(weeks, key=lambda w: -1 if w is None else w):
+            if (old := before.timetable(w)) is not None:
+                draft.add(TimetableSet(week=w, assignment=dict(old.assignment), cancelled=sorted(old.cancelled)))
+        with self.lock:
+            try:
+                self.store.commit(draft)
+            except (InvalidChange, StaleDraft) as e:
+                raise Conflict(f"it cannot be undone: {'; '.join(getattr(e, 'problems', [str(e)]))}") from None
+        ep.status = "undone"
+        ep.decision = {**(ep.decision or {}), "undone": True}
+        self.note(eid, "The office undid this change: it is no longer in the timetable." + (f" {note}" if note else ""),
+                  by, undo=True)
         return ep
 
     def reject(self, eid: str, note: str = "", by: str = OFFICE) -> Episode:
