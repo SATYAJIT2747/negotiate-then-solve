@@ -147,7 +147,8 @@ and a run stopped by the daily budget resumes the next day where it stopped.
 |---|---|---|
 | `src/language/llm.py` | §14 | Gemini client: structured output, cache, RPM limiter, daily budget, 429 backoff |
 | `src/language/parsing.py` | §8.2 | System Two parser. The LLM drafts; tiers (Table 5), authority and validation are deterministic |
-| `src/language/system_one.py` | §8.2 | Calibrated TF-IDF + logistic regression: request type, action, confidence, fast-path routing with τ |
+| `src/language/system_one.py` | §8.2 | Calibrated classifier (TF-IDF + linear SVM by default; logistic regression, embeddings, hybrid): request type, action, confidence, fast-path routing with τ |
+| `src/evaluation/system_one.py` | §8.2 | `uv run python -m evaluation.system_one`: every System One model on unseen, typo and noisy wording |
 | `src/evaluation/metrics.py` | Table 11 | ECE, constraint exact match, atom-level P/R/F1 |
 | `src/evaluation/parsing.py` | §12 | `uv run python -m evaluation.parsing --limit 40` |
 | `src/language/paraphrase.py` | §12.1 | Rewrites the corpus in varied registers with the simulator model; a rule-based check rejects paraphrases that change days, numbers or names |
