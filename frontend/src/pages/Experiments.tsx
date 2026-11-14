@@ -430,34 +430,26 @@ const TONE: Record<string, string> = {
   ok: "bg-ok/10 text-ok", bad: "bg-bad/10 text-bad", warn: "bg-warn/10 text-warn", muted: "bg-panel-2 text-ink-3",
 };
 
-/** One real case: the situation, what each system did (side by side, with its outcome), and the lesson. */
+/** One real case: the situation, what each system did (side by side, with its outcome), and the lesson. The long
+ * system messages are folded away by default: the options and replies tell the story; "Show messages" opens them. */
 function ExampleView({ x }: { x: WorkedExample }) {
+  const [full, setFull] = useState(false);
   const n = x.cases.length;
+  const hasHidden = x.cases.some((c) => c.lines.some((l) => l.who === "System") && c.lines.some((l) => l.who !== "System"));
   return (
     <div>
-      <p className="text-[14px] font-semibold text-ink">{x.title}</p>
-      <p className="mt-1 rounded-md bg-panel-2 px-3 py-2 text-[13px] italic leading-relaxed text-ink-2">{x.situation}</p>
-      <div className={clsx("mt-3 grid gap-3", n === 2 && "md:grid-cols-2", n === 3 && "lg:grid-cols-3", n >= 4 && "md:grid-cols-2")}>
+      <div className="flex flex-wrap items-baseline justify-between gap-2">
+        <p className="text-[14px] font-semibold text-ink">{x.title}</p>
+        {hasHidden && (
+          <button onClick={() => setFull((v) => !v)} className="text-[12px] font-medium text-brand hover:underline">
+            {full ? "Hide full messages" : "Show full messages"}
+          </button>
+        )}
+      </div>
+      <p className="mt-1 text-[13px] leading-relaxed text-ink-2">{x.situation}</p>
+      <div className={clsx("mt-3 grid gap-3", n === 2 && "md:grid-cols-2", n === 3 && "lg:grid-cols-3", n >= 4 && "md:grid-cols-2 xl:grid-cols-4")}>
         {x.cases.map((c) => (
-          <div key={c.system} className={clsx("flex flex-col rounded-lg border p-3.5", c.ours ? "border-brand/50 bg-brand/[0.03]" : "border-line")}>
-            <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
-              <span className={clsx("text-[13px]", c.ours ? "font-semibold text-ink" : "font-medium text-ink-2")}>
-                {c.system}
-                {c.tag && <Tag>{c.tag}</Tag>}
-              </span>
-              <span className={clsx("rounded-full px-2 py-0.5 text-[11.5px] font-semibold", TONE[c.tone] ?? TONE.muted)}>{c.outcome}</span>
-            </div>
-            <div className="space-y-2">
-              {c.lines.map((l, i) => (
-                <div key={i}>
-                  <p className="text-[10.5px] font-semibold uppercase tracking-wide text-ink-3">{l.who}</p>
-                  <p className={clsx("text-[12.5px] leading-relaxed", l.who === "Teacher" ? "italic text-ink-2" : "text-ink")}>
-                    {l.who === "Options offered" ? <OptionList text={l.text} /> : l.text}
-                  </p>
-                </div>
-              ))}
-            </div>
-          </div>
+          <CaseCard key={c.system} c={c} full={full} />
         ))}
       </div>
       <p className="mt-3 text-[13px] leading-relaxed text-ink-2">
@@ -468,16 +460,108 @@ function ExampleView({ x }: { x: WorkedExample }) {
   );
 }
 
+type Case = WorkedExample["cases"][number];
+type Line = Case["lines"][number];
+
+/** Splits a conversation into rounds: each round ends with the teacher's reply. */
+function rounds(lines: Line[]): Line[][] {
+  const out: Line[][] = [[]];
+  for (const l of lines) {
+    out[out.length - 1].push(l);
+    if (l.who === "Teacher") out.push([]);
+  }
+  return out.filter((r) => r.length > 0);
+}
+
+function CaseCard({ c, full }: { c: Case; full: boolean }) {
+  const onlySystem = c.lines.every((l) => l.who === "System");
+  const notes = c.lines.filter((l) => l.who === "Behind the scenes");
+  const rs = rounds(c.lines.filter((l) => l.who !== "Behind the scenes"));
+  return (
+    <div className={clsx("flex flex-col rounded-lg border p-3.5", c.ours ? "border-brand/50 bg-brand/[0.03]" : "border-line")}>
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <span className={clsx("text-[13px]", c.ours ? "font-semibold text-ink" : "font-medium text-ink-2")}>
+          {c.system}
+          {c.tag && <Tag>{c.tag}</Tag>}
+        </span>
+        <span className={clsx("rounded-full px-2 py-0.5 text-[11.5px] font-semibold", TONE[c.tone] ?? TONE.muted)}>{c.outcome}</span>
+      </div>
+      {notes.map((l, i) => (
+        <p key={i} className="mt-1.5 text-[11.5px] text-ink-3">{l.text}</p>
+      ))}
+      <div className="mt-2.5 space-y-3">
+        {rs.map((r, ri) => (
+          <div key={ri} className={clsx(rs.length > 1 && "border-l-2 border-line pl-2.5")}>
+            {rs.length > 1 && <p className="mb-1 text-[10.5px] font-semibold uppercase tracking-wide text-ink-3">Round {ri + 1}</p>}
+            <div className="space-y-1.5">
+              {r.map((l, i) => (
+                <TurnView key={i} l={l} show={full || onlySystem} />
+              ))}
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function TurnView({ l, show }: { l: Line; show: boolean }) {
+  if (l.who === "System" && !show) return null;
+  if (l.who === "Options offered") return <OptionList text={l.text} />;
+  if (l.who === "Teacher")
+    return (
+      <p className="flex gap-1.5 text-[12.5px] leading-snug text-ink-2">
+        <span className="shrink-0 not-italic text-ink-3">Teacher:</span>
+        <span className="italic">{l.text}</span>
+      </p>
+    );
+  if (l.who === "System")
+    return <p className="rounded bg-panel-2 px-2 py-1.5 text-[12px] leading-relaxed text-ink-2">{l.text}</p>;
+  return (
+    <div>
+      <p className="text-[10.5px] font-semibold uppercase tracking-wide text-ink-3">{l.who}</p>
+      <p className="text-[12.5px] leading-relaxed text-ink">{l.text}</p>
+    </div>
+  );
+}
+
+const DAY: Record<string, string> = { Monday: "Mon", Tuesday: "Tue", Wednesday: "Wed", Thursday: "Thu", Friday: "Fri", Saturday: "Sat" };
+
+/** "the Computer Networks practical (C3-P) on Monday at 3 pm in Lab 1" -> class "C3-P", slot "Mon 3 pm · Lab 1". */
+function parseOption(t: string) {
+  const m = t.match(/^(?:the )?(.*?)\s*\(([^)]+)\)\s+on\s+(\w+)\s+at\s+(.+?)\s+in\s+(.+)$/);
+  if (!m) return null;
+  return { name: m[1], code: m[2], slot: `${DAY[m[3]] ?? m[3]} ${m[4]}`, room: m[5] };
+}
+
 function OptionList({ text }: { text: string }) {
   const items = text.split(" · ");
+  const parsed = items.map(parseOption);
+  const codes = new Set(parsed.map((o) => o?.code));
+  const shared = parsed.every(Boolean) && codes.size === 1 ? parsed[0]! : null;
   return (
-    <span className="mt-0.5 block space-y-0.5">
-      {items.map((t, i) => (
-        <span key={i} className="block">
-          <span className="font-mono text-ink-3">{String.fromCharCode(65 + i)}) </span>
-          {t}
-        </span>
-      ))}
-    </span>
+    <div>
+      <p className="text-[11.5px] text-ink-3">
+        {shared ? (
+          <>
+            Offers to move <span className="font-medium text-ink-2">{shared.name}</span>
+            <Tag>{shared.code}</Tag> to:
+          </>
+        ) : (
+          "Offers:"
+        )}
+      </p>
+      <div className="mt-1 flex flex-wrap gap-1.5">
+        {items.map((t, i) => {
+          const o = parsed[i];
+          return (
+            <span key={i} className="rounded-md border border-line bg-panel px-2 py-0.5 text-[12px] text-ink">
+              <span className="mr-1 font-mono text-ink-3">{String.fromCharCode(65 + i)}</span>
+              {shared && o ? `${o.slot} · ${o.room}` : o ? `${o.code} ${o.slot} · ${o.room}` : t}
+            </span>
+          );
+        })}
+      </div>
+    </div>
   );
 }
