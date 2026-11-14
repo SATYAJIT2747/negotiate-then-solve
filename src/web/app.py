@@ -839,7 +839,7 @@ MODEL_ROWS = [
     ("Qwen3.5-2B fine-tuned v2 · Q8_0", "replies-2b-nts-q8", "parsing-2b-nts-q8-paratest", "policy-2b-nts-q8-test", "swaps-2b-nts-q8"),
     ("Qwen3.5-2B fine-tuned v1 · Q5_K_M", "replies-2b", "parsing-local-mt-paratest", "policy-local-mt-fix-test", None),
     ("Gemini 3.5 Flash-Lite (prompted)", "replies-gemini", "parsing-lite-paratest-full", "policy-test", None),
-    ("Qwen3.5-4B base · Q8_0", "replies-4b-base", None, None, None),
+    ("Qwen3.5-4B base, prompted · Q8_0", "replies-4b-base", "parsing-4b-base-prompted-paratest", None, None),
     ("Qwen3.5-2B base · Q5_K_M", "replies-2b-base", None, None, None),
     ("Rules (keyword parser, rule swap reader)", "replies-rule", None, None, "swaps-rules-20260929"),
 ]
@@ -901,12 +901,9 @@ def _experiments() -> list[dict]:
                     "title": "Models on the component benchmarks",
                     "subtitle": "Replies: 100 cases (Benchmark D). Parsing: 151 paraphrased test requests. "
                                 "Policy: 109 test requests. Swaps: 120 requests (no model was trained on swaps)."})
-    safety = sorted(runs.glob("safety-*.json"), key=lambda f: f.stat().st_mtime) if runs.exists() else []
-    if safety:
-        rep = json.loads(safety[-1].read_text(encoding="utf-8"))
-        out.append({"id": "safety", "title": f"Safety set ({safety[-1].stem.split('-')[1]} parser)",
-                    "at": datetime.fromtimestamp(safety[-1].stat().st_mtime, UTC).isoformat(), "kind": "safety",
-                    "summary": {k: v for k, v in rep.items() if k != "rows"}})
+    from .experiments import sections
+
+    out += sections(ROOT)  # same model check, ablations, fairness, RAG, safety (web.experiments)
     return out
 
 

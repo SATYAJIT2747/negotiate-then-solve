@@ -628,7 +628,26 @@ export interface ModelRow {
 export type Experiment =
   | { id: string; title: string; subtitle?: string; at: string; kind: "negotiation"; configs: Record<string, NegotiationSummary>; paired?: Record<string, PairedTest>; models?: { configs: string[]; model: string }[]; simulator?: string | null }
   | { id: string; title: string; subtitle?: string; at: string; kind: "models"; rows: ModelRow[] }
-  | { id: string; title: string; at: string; kind: "safety"; summary: Record<string, unknown> };
+  | { id: string; title: string; at: string; kind: "safety"; summary: Record<string, unknown> }
+  | { id: string; title: string; subtitle?: string; at: string; kind: "table"; icon?: string; columns: TableCol[]; rows: TableRow[]; notes: string[] };
+
+/** A column of an Experiments table (src/web/experiments.py). */
+export interface TableCol {
+  key: string;
+  label: string;
+  fmt: "pct" | "num" | "int" | "text" | "p";
+  better: "high" | "low" | null;
+  hint: string;
+  bar: boolean;
+  digits: number | null;
+}
+
+export interface TableRow {
+  label: string;
+  sub: string;
+  highlight: boolean;
+  cells: Record<string, number | string | null>;
+}
 
 // -- semester timetable ---------------------------------------------------------
 

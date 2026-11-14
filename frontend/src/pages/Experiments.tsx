@@ -1,13 +1,14 @@
 import clsx from "clsx";
 import { Fragment } from "react";
-import { Cpu, FlaskConical, MessagesSquare, ShieldCheck } from "lucide-react";
+import { BookOpen, Cpu, FlaskConical, MessagesSquare, Scale, Search, ShieldCheck, Swords } from "lucide-react";
+import type { LucideIcon } from "lucide-react";
 import { Bar, BarChart, CartesianGrid, Legend, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import { Badge, Card, CardHeader, EmptyState, PageHeader, Skeleton } from "../components/ui";
 import { api } from "../lib/api";
 import { useApi } from "../lib/hooks";
 import { useTokens } from "../lib/theme";
 import { ago, num, pct } from "../lib/meta";
-import type { Experiment, ModelRow, NegotiationSummary, PairedTest } from "../lib/types";
+import type { Experiment, ModelRow, NegotiationSummary, PairedTest, TableCol } from "../lib/types";
 
 type ConfigInfo = { name: string; short: string; group: string; desc: string };
 
@@ -188,6 +189,7 @@ function ExperimentCard({ e }: { e: Experiment }) {
     );
   }
   if (e.kind === "models") return <Models e={e} />;
+  if (e.kind === "table") return <TableCard e={e} />;
   const s = e.summary as Record<string, number | Record<string, string>>;
   const cats = s.by_category as Record<string, string>;
   return (
@@ -333,6 +335,93 @@ function Models({ e }: { e: Extract<Experiment, { kind: "models" }> }) {
           </tbody>
         </table>
       </div>
+    </Card>
+  );
+}
+
+const ICONS: Record<string, LucideIcon> = {
+  scale: Scale, flask: FlaskConical, book: BookOpen, search: Search, shield: ShieldCheck, swords: Swords, cpu: Cpu,
+};
+
+function fmtCell(c: TableCol, v: number | string | null | undefined): string {
+  if (v === null || v === undefined) return "–";
+  if (typeof v === "string") return v;
+  switch (c.fmt) {
+    case "pct":
+      return pct(v, c.digits ?? (v === 0 || v === 1 ? 0 : 1));
+    case "int":
+      return String(Math.round(v));
+    case "p":
+      return fmtP(v);
+    case "text":
+      return String(v);
+    default:
+      return num(v, c.digits ?? 2);
+  }
+}
+
+/** A results table from src/web/experiments.py: one row per configuration, the best value per column in green,
+ * an inline bar for the column the section is about, and what the numbers mean underneath. */
+function TableCard({ e }: { e: Extract<Experiment, { kind: "table" }> }) {
+  const Icon = ICONS[e.icon ?? ""] ?? FlaskConical;
+  const best = (c: TableCol, v: unknown) => {
+    if (!c.better || typeof v !== "number") return false;
+    const vals = e.rows.map((r) => r.cells[c.key]).filter((x): x is number => typeof x === "number");
+    return vals.length > 1 && new Set(vals).size > 1 && v === (c.better === "high" ? Math.max(...vals) : Math.min(...vals));
+  };
+  return (
+    <Card>
+      <CardHeader icon={Icon} title={e.title} subtitle={`${e.subtitle ?? ""}${e.subtitle ? " · " : ""}updated ${ago(e.at)}`} />
+      <div className="overflow-x-auto">
+        <table className="w-full min-w-[760px] text-[12.5px]">
+          <thead>
+            <tr className="border-b border-line text-left text-[11.5px] text-ink-3">
+              <th className="px-5 py-2.5 font-medium">Configuration</th>
+              {e.columns.map((c) => (
+                <th key={c.key} title={c.hint || undefined} className={clsx("px-3 py-2.5 text-right font-medium", c.hint && "cursor-help")}>
+                  {c.label}
+                  {c.better && <span className="block text-[10.5px] font-normal text-ink-3/80">{c.better === "high" ? "higher is better" : "lower is better"}</span>}
+                </th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {e.rows.map((r, i) => (
+              <tr key={`${r.label}-${i}`} className={clsx("border-b border-line/60", r.highlight && "bg-panel-2")}>
+                <td className="max-w-[300px] px-5 py-2.5">
+                  <span className="font-medium">{r.label}</span>
+                  {r.sub && <span className="mt-0.5 block text-[11.5px] leading-snug text-ink-3">{r.sub}</span>}
+                </td>
+                {e.columns.map((c) => {
+                  const v = r.cells[c.key];
+                  const good = best(c, v);
+                  return (
+                    <td key={c.key} className={clsx("px-3 py-2.5 text-right font-mono", good ? "font-semibold text-ok" : v === null ? "text-ink-3" : "text-ink-2")}>
+                      {c.bar && typeof v === "number" ? (
+                        <span className="inline-flex items-center justify-end gap-2">
+                          <span className="hidden h-1.5 w-20 overflow-hidden rounded-full bg-line sm:inline-block">
+                            <span className={clsx("block h-full rounded-full", good ? "bg-ok" : "bg-brand")} style={{ width: `${Math.max(0, Math.min(1, v)) * 100}%` }} />
+                          </span>
+                          {fmtCell(c, v)}
+                        </span>
+                      ) : (
+                        fmtCell(c, v)
+                      )}
+                    </td>
+                  );
+                })}
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+      {e.notes.length > 0 && (
+        <ul className="list-disc space-y-1 border-t border-line px-5 py-3 pl-9 text-[12px] leading-relaxed text-ink-2">
+          {e.notes.map((n) => (
+            <li key={n}>{n}</li>
+          ))}
+        </ul>
+      )}
     </Card>
   );
 }
