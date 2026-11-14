@@ -647,10 +647,14 @@ export interface WorkedExample {
   requests?: { who: string; text: string; private: string }[];
   /** what no negotiator is told (who could give way, and when): each option is checked against it */
   hidden?: string;
+  /** the hidden fact in one line ("Only Dr. X can give way") */
+  key?: string;
   lesson: string;
   cases: { system: string; tag: string; ours: boolean; outcome: string; tone: "ok" | "bad" | "warn" | "muted";
     /** how many offers the person asked could take */
     usable?: { ok: number; of: number; bad: number };
+    /** the negotiation at a glance (web.experiment_examples._summary) */
+    summary?: { asked: string; right: boolean; offered: { label: string; verdict: string; note: string }[]; replies: string[]; point: string };
     lines: { who: string; text: string; to?: string; verdicts?: { verdict: "ok" | "meh" | "bad" | ""; note: string }[] }[] }[];
 }
 

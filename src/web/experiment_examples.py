@@ -149,6 +149,21 @@ def _hidden(sc: dict) -> str:
 _FULL = {v: k for k, v in _DAYS.items()}
 
 
+def _summary(case: dict, can_move: set[str], point: str) -> dict:
+    """A negotiation in four facts: whom it asked (and whether they could give way), what it offered (each option
+    with its verdict), what came back, and the one sentence it comes down to."""
+    lines = case["lines"]
+    asked = next((ln.get("to") for ln in lines if ln["who"] == "System" and ln.get("to")), "")
+    offered = []
+    for ln in lines:
+        for text, v in zip(ln["text"].split(" · "), ln.get("verdicts") or [], strict=False):
+            m = _OPTION.search(text)
+            label = f"{_DAYS.get(m.group(2), m.group(2))} {m.group(3)} {m.group(4)}" if m else text
+            offered.append({"label": label, "verdict": v["verdict"], "note": v["note"]})
+    replies = [ln["text"] for ln in lines if ln["who"] == "Teacher"]
+    return {"asked": asked, "right": asked in can_move, "offered": offered, "replies": replies, "point": point}
+
+
 def _negotiation(r: dict, limit: int, reqs: list[dict] | None = None, judge=None) -> list[dict]:
     out = []
     for m, rep in list(zip(r.get("messages", []), [*r.get("replies", []), *[{}] * 9], strict=False))[:limit]:
@@ -189,7 +204,6 @@ def main(root: Path, runs: Path) -> list[dict]:
         return []
     sc = _scenario(root, pick)
     reqs = _requests(sc)
-    private = ", ".join(sc.get("private") or [])
     r_o, r_4, r_3 = o[pick], b4[pick], b3[pick]
     n4 = len(r_4.get("replies") or [])
     b4_out = (f"Escalated: offers turned down {n4} times" if clear_failure(pick)
@@ -212,18 +226,26 @@ def main(root: Path, runs: Path) -> list[dict]:
     hidden = _hidden(sc)
     asker = next((q["who"] for q in reqs if not q["private"]), "the asker")
     other = next((q["who"] for q in reqs if q["private"]), "the other teacher")
+    names = {f["id"]: f["name"] for f in (sc.get("instance") or {}).get("faculty", [])}
+    can_move = {names.get(p["owner"], p["owner"]) for p in sc.get("profiles") or [] if p.get("windows")}
+    points = {  # the one sentence each column comes down to
+        "Our system": "Asked the teacher who can move, with times the solver had checked.",
+        "LLM proposes, unchecked": "Offered times that break the timetable's rules.",
+        "LLM proposes, solver filters": "Legal times, but asked the teacher who can't move, at times they had ruled out.",
+    }
+    for c in cases:
+        c["summary"] = _summary(c, can_move, points.get(c["system"], ""))
+    cases[0]["outcome"], cases[1]["outcome"] = "Accepted", "Turned down"
+    cases[2]["outcome"] = f"Turned down {n4}×, escalated" if clear_failure(pick) else cases[2]["outcome"]
     return [_ex(
         "One conflict, three negotiators",
-        "Both teachers want the only GPU lab on the same afternoon, so one of them has to give way."
-        + (f" The reason “{private}” was given in confidence: no message may mention it." if private else ""),
+        "Both teachers want the only GPU lab on the same afternoon, so one of them has to give way.",
         cases,
-        "Each option is checked against what the teachers would really accept. Our system's solver weighed the two "
-        f"requests and asked the teacher who can move ({other}'s limit is a verified hard constraint, {asker}'s is a "
-        f"preference); every time it offered is legal and one of them suited {asker}, who took it. The unchecked LLM "
-        "offered times that break the rules. Filtering its ideas keeps only legal times, but it still asked the wrong "
-        f"person: {other}, at times they had already said they cannot teach, so nothing it offered could ever be "
-        "accepted. Our system also names the constraint, never the private reason.",
-    ) | {"requests": reqs, "hidden": hidden}]
+        f"To settle it you must ask the right teacher with times that work. Our solver could tell that {other}'s limit "
+        f"is firm and {asker}'s is only a preference, so it asked {asker}. The LLM baselines guessed: one broke the "
+        "rules, the other asked the teacher who could not move.",
+    ) | {"requests": reqs, "hidden": hidden,
+         "key": (f"Only {', '.join(sorted(can_move))} can give way. No system is told this." if can_move else "")}]
 
 
 def ablations(root: Path, runs: Path) -> list[dict]:

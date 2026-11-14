@@ -433,39 +433,42 @@ const TONE: Record<string, string> = {
 /** One real case: the situation, then each system's conversation side by side as a chat thread, and the lesson. */
 function ExampleView({ x }: { x: WorkedExample }) {
   const n = x.cases.length;
+  const brief = x.cases.some((c) => c.summary);
+  const [full, setFull] = useState(false);
   return (
     <div className="rounded-xl border border-line bg-panel-2/40 p-4">
-      <p className="text-[15px] font-semibold text-ink">{x.title}</p>
+      <div className="flex flex-wrap items-baseline justify-between gap-2">
+        <p className="text-[15px] font-semibold text-ink">{x.title}</p>
+        {brief && (
+          <button onClick={() => setFull((v) => !v)} className="text-[12px] font-medium text-brand hover:underline">
+            {full ? "Back to the summary" : "Show the full conversations"}
+          </button>
+        )}
+      </div>
       {x.requests?.length ? (
-        <>
-          <p className="mt-1 text-[13px] leading-relaxed text-ink-2">{x.situation}</p>
-          <div className={clsx("mt-2.5 grid gap-2.5", x.requests.length > 1 && "md:grid-cols-2")}>
+        <div className="mt-2 rounded-lg bg-panel px-3 py-2.5">
+          <p className="text-[13px] text-ink-2">{x.situation}</p>
+          <div className="mt-2 space-y-1.5">
             {x.requests.map((r) => (
-              <RequestCard key={r.who + r.text} r={r} />
+              <RequestLine key={r.who + r.text} r={r} />
             ))}
           </div>
-          {x.hidden && (
-            <div className="mt-2.5 flex gap-2.5 rounded-lg border border-dashed border-line px-3 py-2">
-              <Eye className="mt-0.5 size-4 shrink-0 text-ink-3" />
-              <p className="text-[12.5px] leading-relaxed text-ink-2">
-                <span className="font-semibold text-ink">What no system is told: </span>
-                {x.hidden}. Each option below is checked against this.
-              </p>
-            </div>
+          {x.key && (
+            <p className="mt-2.5 flex items-center gap-1.5 text-[12.5px] font-medium text-ink" title={x.hidden}>
+              <Eye className="size-3.5 shrink-0 text-brand" /> {x.key}
+            </p>
           )}
-        </>
+        </div>
       ) : (
         <div className="mt-2 flex gap-2.5 rounded-lg border-l-[3px] border-brand/60 bg-panel px-3 py-2.5">
           <Quote className="mt-0.5 size-4 shrink-0 text-brand/70" />
           <p className="text-[13px] leading-relaxed text-ink-2">{x.situation}</p>
         </div>
       )}
-      <div className={clsx("mt-4 grid items-start gap-3", n === 2 && "md:grid-cols-2", n === 3 && "lg:grid-cols-3", n >= 4 && "md:grid-cols-2")}>
-        {x.cases.map((c) => (
-          <CaseCard key={c.system} c={c} />
-        ))}
+      <div className={clsx("mt-3 grid items-start gap-3", n === 2 && "md:grid-cols-2", n === 3 && "lg:grid-cols-3", n >= 4 && "md:grid-cols-2")}>
+        {x.cases.map((c) => (c.summary && !full ? <SummaryCard key={c.system} c={c} /> : <CaseCard key={c.system} c={c} />))}
       </div>
-      <div className="mt-4 flex gap-2.5 rounded-lg bg-brand/[0.06] px-3 py-2.5">
+      <div className="mt-3 flex gap-2.5 rounded-lg bg-brand/[0.06] px-3 py-2.5">
         <CheckCircle2 className="mt-0.5 size-4 shrink-0 text-brand" />
         <p className="text-[13px] leading-relaxed text-ink-2">
           <span className="font-semibold text-ink">Why it matters: </span>
@@ -476,39 +479,101 @@ function ExampleView({ x }: { x: WorkedExample }) {
   );
 }
 
-const initials = (name: string) =>
-  name.replace(/^(?:Dr|Prof|Mrs|Mr|Ms)\.?\s+/, "").split(/\s+/).map((w) => w[0]).join("").slice(0, 2).toUpperCase();
-
-/** A teacher's own request, as they wrote it; the reason they gave in confidence marked as private. */
-function RequestCard({ r }: { r: NonNullable<WorkedExample["requests"]>[number] }) {
+/** One request in a line: who, what they wrote, the private reason marked. */
+function RequestLine({ r }: { r: NonNullable<WorkedExample["requests"]>[number] }) {
   const parts = r.private ? r.text.split(new RegExp(`(${esc(r.private)})`, "i")) : [r.text];
   return (
-    <div className="flex gap-3 rounded-lg border border-line bg-panel px-3 py-2.5">
-      <Avatar name={r.who} />
-      <div className="min-w-0">
-        <p className="text-[12px] text-ink-3">
-          <span className="font-semibold text-ink">{r.who || "A teacher"}</span> writes
-        </p>
-        <p className="mt-0.5 text-[13.5px] leading-snug text-ink">
+    <div className="flex items-start gap-2 text-[13px] leading-snug">
+      <Avatar name={r.who} small />
+      <p className="min-w-0 pt-0.5">
+        <span className="font-semibold text-ink">{r.who}: </span>
+        <span className="text-ink-2">
           “
           {parts.map((p, i) =>
             r.private && p.toLowerCase() === r.private.toLowerCase() ? (
-              <span key={i} className="rounded bg-warn/15 px-1 text-warn">{p}</span>
+              <span key={i} className="rounded bg-warn/15 px-1 text-warn" title="Said in confidence: no message may repeat it">
+                <Lock className="mr-0.5 inline size-3 -translate-y-px" />
+                {p}
+              </span>
             ) : (
               <span key={i}>{p}</span>
             ),
           )}
           ”
-        </p>
-        {r.private && (
-          <p className="mt-1.5 flex items-center gap-1 text-[11.5px] text-warn">
-            <Lock className="size-3" /> “{r.private}” was said in confidence: no message may repeat it
-          </p>
-        )}
-      </div>
+        </span>
+      </p>
     </div>
   );
 }
+
+const CHIP: Record<string, string> = {
+  ok: "border-ok/50 bg-ok/10 text-ok",
+  bad: "border-bad/40 bg-bad/[0.08] text-bad line-through decoration-bad/60",
+  meh: "border-line bg-panel text-ink-3",
+  "": "border-line bg-panel text-ink-2",
+};
+
+/** A negotiation at a glance: whom it asked, what it offered (✓ the teacher could take it, ✗ impossible or ruled
+ * out, grey allowed but not for them), the reply, and the one sentence it comes down to. */
+function SummaryCard({ c }: { c: Case }) {
+  const s = c.summary!;
+  const [first, ...more] = s.replies;
+  return (
+    <div className={clsx("overflow-hidden rounded-lg border bg-panel", c.ours ? "border-brand/60 ring-1 ring-brand/20" : "border-line")}>
+      <div className={clsx("h-1", STRIPE[c.tone] ?? STRIPE.muted)} />
+      <div className="flex flex-wrap items-center justify-between gap-2 px-3.5 pb-1 pt-2.5">
+        <span className="text-[13.5px] font-semibold text-ink">
+          {c.system}
+          {c.tag && <Tag>{c.tag}</Tag>}
+          {c.ours && <span className="ml-1.5 rounded bg-brand/15 px-1.5 py-px text-[10.5px] font-semibold text-brand">OURS</span>}
+        </span>
+        <span className={clsx("rounded-full px-2 py-0.5 text-[11.5px] font-semibold", TONE[c.tone] ?? TONE.muted)}>{c.outcome}</span>
+      </div>
+      <dl className="space-y-2.5 px-3.5 py-2.5 text-[12.5px]">
+        <Row label="Asked">
+          <span className="flex items-center gap-1.5">
+            <Avatar name={s.asked} small />
+            <span className="font-medium text-ink">{s.asked}</span>
+            <span className={clsx("rounded px-1.5 py-px text-[11px] font-semibold", s.right ? "bg-ok/10 text-ok" : "bg-bad/10 text-bad")}>
+              {s.right ? "can give way" : "can't give way"}
+            </span>
+          </span>
+        </Row>
+        <Row label="Offered">
+          <span className="flex flex-wrap gap-1">
+            {s.offered.map((o, i) => (
+              <span key={i} title={o.note} className={clsx("rounded-md border px-1.5 py-0.5 text-[11.5px] font-medium", CHIP[o.verdict] ?? CHIP[""])}>
+                {o.verdict === "ok" && "✓ "}
+                {o.label}
+              </span>
+            ))}
+          </span>
+        </Row>
+        {first && (
+          <Row label="Reply">
+            <span className="line-clamp-2 italic text-ink-2">“{first}”</span>
+            {more.length > 0 && <span className="text-[11px] text-ink-3">and {more.length} more like it</span>}
+          </Row>
+        )}
+      </dl>
+      <p className={clsx("border-t border-line px-3.5 py-2 text-[12.5px] font-medium leading-snug", c.ours ? "text-ink" : "text-ink-2")}>
+        {s.point}
+      </p>
+    </div>
+  );
+}
+
+function Row({ label, children }: { label: string; children: ReactNode }) {
+  return (
+    <div className="grid grid-cols-[58px_1fr] items-start gap-2">
+      <dt className="pt-1 text-[10.5px] font-semibold uppercase tracking-wide text-ink-3">{label}</dt>
+      <dd className="min-w-0">{children}</dd>
+    </div>
+  );
+}
+
+const initials = (name: string) =>
+  name.replace(/^(?:Dr|Prof|Mrs|Mr|Ms)\.?\s+/, "").split(/\s+/).map((w) => w[0]).join("").slice(0, 2).toUpperCase();
 
 function Avatar({ name, small = false }: { name: string; small?: boolean }) {
   const hue = [...name].reduce((h, c) => h + c.charCodeAt(0), 0) % 2 ? "bg-info/15 text-info" : "bg-warn/15 text-warn";
@@ -519,25 +584,6 @@ function Avatar({ name, small = false }: { name: string; small?: boolean }) {
     >
       {name ? initials(name) : <UserRound className="size-3.5" />}
     </span>
-  );
-}
-
-/** How many of a system's offers the person asked could actually take: the number that decides the example. */
-function Usable({ u }: { u: { ok: number; of: number; bad: number } }) {
-  return (
-    <div className="flex items-center gap-2.5 border-b border-line px-3.5 py-2">
-      <div className="flex gap-0.5">
-        {Array.from({ length: u.of }, (_, i) => (
-          <span key={i} className={clsx("h-2 w-3 rounded-sm", i < u.ok ? "bg-ok" : i < u.ok + u.bad ? "bg-bad/70" : "bg-ink-3/40")} />
-        ))}
-      </div>
-      <p className="text-[12px] text-ink-2">
-        <span className={clsx("font-semibold", u.ok ? "text-ok" : "text-bad")}>
-          {u.ok} of {u.of}
-        </span>{" "}
-        options the teacher could take
-      </p>
-    </div>
   );
 }
 
@@ -571,7 +617,6 @@ function CaseCard({ c }: { c: Case }) {
         </span>
         <span className={clsx("rounded-full px-2 py-0.5 text-[11.5px] font-semibold", TONE[c.tone] ?? TONE.muted)}>{c.outcome}</span>
       </div>
-      {c.usable && <Usable u={c.usable} />}
       <div className="space-y-3 px-3.5 py-3">
         {notes.map((l, i) => (
           <p key={i} className="flex items-center gap-1.5 rounded-md bg-panel-2 px-2 py-1 text-[11.5px] text-ink-3">
