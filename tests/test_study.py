@@ -10,6 +10,9 @@ from evaluation.study import (
     Study,
     analyse,
     build_items,
+    build_rule_items,
+    rule_label,
+    steps_done,
     judge_id,
     reply_label,
     write_ratings_csv,
@@ -216,3 +219,83 @@ def test_clear_needs_the_phrase_and_keeps_the_items(web):
     assert removed["participants"] >= 2
     assert world.study.participants() == {} and world.study.items() is not None  # the material stays
     assert world.study.add_participants("team", 1) == ["T-1"]
+
+
+# ---------------------------------------------------------------------------
+# Rule answers (team) and the pilot's tour of the system
+# ---------------------------------------------------------------------------
+
+
+class _Rule:
+    def __init__(self, rid):
+        self.id, self.title, self.text = rid, f"Title of {rid}", f"Text of {rid}."
+
+
+def _rag_report():
+    def row(cond, i, gold, **v):
+        return {"key": f"{cond}/Q-{i}", "query": f"question {i}", "answer": f"answer {i}", "gold": gold,
+                "no_rule": False, "abstains": False, "agrees": None, **v}
+    out = {}
+    for cond in ("rag", "no-rag"):
+        rows = [row(cond, i, ["LAB-1"], agrees=i % 2 == 0) for i in range(30)]
+        rows += [row(cond, 100 + i, [], abstains=i % 3 == 0) for i in range(30)]
+        out[cond] = {"rows": rows}
+    return {"conditions": out}
+
+
+def test_rule_answers_carry_the_judges_verdict_and_the_rule_text():
+    assert rule_label({"no_rule": True}) == "declines" and rule_label({"abstains": True}) == "declines"
+    assert rule_label({"agrees": True}) == "consistent" and rule_label({"agrees": None}) == "not_consistent"
+    items = build_rule_items(_rag_report(), {"LAB-1": _Rule("LAB-1")})
+    assert len(items) == 60 and {i["condition"] for i in items} == {"rag", "no-rag"}
+    assert {i["machine"] for i in items} == {"declines", "consistent", "not_consistent"}
+    answerable = [i for i in items if i["rules"]]
+    assert answerable and answerable[0]["rules"][0]["text"] == "Text of LAB-1."
+    assert len(answerable) == 30  # half answerable, half not
+
+
+def test_rules_task_is_blind_and_scored_against_the_judge(tmp_path):
+    s = Study(tmp_path)
+    items = build_items(_report())
+    items["rules"] = build_rule_items(_rag_report(), {"LAB-1": _Rule("LAB-1")})
+    s.save_items(items)
+    t1, t2 = s.add_participants("team", 2)
+    assert "rules" in s.tasks_for("team") and s.tasks_for("pilot") == ["ratings"]
+    for code in (t1, t2):
+        for it in s.items()["rules"]:
+            s.label(code, "rules", it["id"], {"label": it["machine"]})
+    a = analyse(s)
+    assert a["rules"]["human_vs_judge"][t1]["kappa"] == 1.0 and a["rules"]["human_vs_human"][f"{t1} vs {t2}"]["kappa"] == 1.0
+
+
+def test_tour_steps_are_done_by_their_checks(tmp_path):
+    s = Study(tmp_path)
+    s.save_items(build_items(_report()))
+    (p,) = s.add_participants("pilot", 1, persona="F-102")
+    s.live(p, "F-102", "answer", step="timetable", value="yes")
+    s.live(p, "F-102", "understood", step="click", value="partly")
+    s.live(p, "F-102", "survey", value={"understood": 4, "timetable": 5, "rules": 3, "clash": 4, "next": 4, "use": 2})
+    assert steps_done(s.live_rows(), p) == {"timetable", "click", "survey"}
+    live = analyse(s)["live"]
+    assert live["timetable_answers"] == {"yes": 1} and live["rules_answers"] == {}
+    assert live["survey"]["n"] == 1 and live["survey"]["use"] == 2
+    assert live["steps_done"][p] == ["click", "survey", "timetable"]
+
+
+def test_tour_checks_are_validated(web):
+    c, _world = web
+    coord = {"X-User": "C-TT"}
+    code = c.post("/api/study/participants", json={"kind": "pilot", "n": 1}, headers=coord).json()["codes"][0]
+    h = {"X-Study": code, "X-User": "F-102"}
+    c.post("/api/study/consent", headers=h)
+    me = c.get("/api/study/me", headers=h).json()
+    assert [s["step"] for s in me["live_steps"]] == ["timetable", "rules", "preference", "practice", "click", "survey"]
+    assert me["steps_done"] == [] and len(me["survey"]) == 6
+    bad = [{"kind": "answer", "step": "practice", "value": "yes"}, {"kind": "answer", "step": "rules", "value": "maybe"},
+           {"kind": "survey", "value": {"understood": 6}}]
+    for body in bad:
+        assert c.post("/api/study/live", json=body, headers=h).status_code == 422
+    assert c.post("/api/study/live", json={"kind": "answer", "step": "rules", "n": 3, "value": "partly"}, headers=h).json()["ok"]
+    full = {k["key"]: 4 for k in me["survey"]}
+    assert c.post("/api/study/live", json={"kind": "survey", "value": full}, headers=h).json()["ok"]
+    assert c.get("/api/study/me", headers=h).json()["steps_done"] == ["rules", "survey"]

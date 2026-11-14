@@ -60,7 +60,7 @@ export function StudyAdmin() {
             </p>
           ) : (
             <p className="text-[13px] text-ink-3">
-              {data.items.claims} claims · {data.items.replies} replies · {data.items.ratings} messages ({data.items.pilot_ratings} in the pilot set) · from{" "}
+              {data.items.claims} claims · {data.items.replies} replies · {data.items.rules ?? 0} rule answers · {data.items.ratings} messages ({data.items.pilot_ratings} in the pilot set) · from{" "}
               <span className="font-mono">{data.items.source}</span> · inbox replies read by {data.reply_parser}
             </p>
           )}
@@ -267,6 +267,12 @@ function Analysis({ a }: { a: NonNullable<Admin["analysis"]> }) {
       <KappaList title="Claims: human vs human" rows={a.claims.human_vs_human} note="Agreement between the two team raters" />
       <KappaList title="Replies: human vs recorded call" rows={a.replies.human_vs_recorded} note="What the reply does, as labelled vs as the system read it" />
       <KappaList title="Message ratings: rater vs rater" rows={ratingKappa} note="Quadratic-weighted κ; add the LLM judge with evaluation.judge" />
+      {a.rules && (
+        <>
+          <KappaList title="Rule answers: human vs RAG judge" rows={a.rules.human_vs_judge} note="Declines / consistent with the rule / not, as labelled vs as the Gemini judge said" />
+          <KappaList title="Rule answers: human vs human" rows={a.rules.human_vs_human} note="Agreement between the two team raters" />
+        </>
+      )}
       <H3Block title="H3 · pilot faculty ratings" h={a.ratings.h3_pilot} />
       <H3Block title="H3 · team ratings" h={a.ratings.h3_team} />
       <div className="md:col-span-2">
@@ -276,11 +282,43 @@ function Analysis({ a }: { a: NonNullable<Admin["analysis"]> }) {
           <Fig label="Own-words replies" v={`${a.live.replies}`} sub={`reading confirmed ${pct(a.live.reply_reading_confirmed)}`} />
           <Fig label="Messages rated live" v={`${a.live.message_ratings}`} />
           <Fig label="Live clarity / acceptability" v={`${a.live.clarity === null ? "—" : num(a.live.clarity, 1)} / ${a.live.acceptability === null ? "—" : num(a.live.acceptability, 1)}`} />
+          <Fig label="Timetable answers right" v={answered(a.live.timetable_answers)} sub={split(a.live.timetable_answers)} />
+          <Fig label="Rule answers right" v={answered(a.live.rules_answers)} sub={split(a.live.rules_answers)} />
+          <Fig label="Closing questionnaires" v={`${a.live.survey?.n ?? 0}`} />
+          <Fig label="Pilots who finished every step" v={`${Object.values(a.live.steps_done ?? {}).filter((s) => s.length >= 6).length} of ${Object.keys(a.live.steps_done ?? {}).length}`} />
         </div>
       </div>
+      {!!a.live.survey?.n && (
+        <div className="md:col-span-2">
+          <p className="text-[13px] font-medium">Closing questionnaire (mean, 1-5)</p>
+          <ul className="mt-2 grid gap-x-6 gap-y-1 text-[13px] sm:grid-cols-2">
+            {Object.entries(a.live.survey).filter(([k]) => k !== "n").map(([k, v]) => (
+              <li key={k} className="flex justify-between gap-3 border-b border-line/60 py-1">
+                <span className="text-ink-2">{SURVEY_LABEL[k] ?? k}</span>
+                <span className="font-mono">{v === null ? "—" : num(v as number, 2)}</span>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
     </div>
   );
 }
+
+const SURVEY_LABEL: Record<string, string> = {
+  understood: "Understood what I wrote",
+  timetable: "Timetable answers correct",
+  rules: "Rule answers trustworthy",
+  clash: "Clash message clear",
+  next: "Knew what would happen next",
+  use: "Would use it instead of e-mail",
+};
+
+const answered = (c?: Record<string, number>) => {
+  const n = Object.values(c ?? {}).reduce((t, x) => t + x, 0);
+  return n ? `${Math.round((100 * (c?.yes ?? 0)) / n)}%` : "—";
+};
+const split = (c?: Record<string, number>) => `yes ${c?.yes ?? 0} · partly ${c?.partly ?? 0} · no ${c?.no ?? 0}`;
 
 function Fig({ label, v, sub }: { label: string; v: string; sub?: string }) {
   return (

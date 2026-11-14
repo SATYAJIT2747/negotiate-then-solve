@@ -20,7 +20,7 @@ from typing import Literal
 from fastapi import Depends, FastAPI, Header, HTTPException
 from pydantic import BaseModel, Field
 
-from evaluation.study import REPLY_LABELS, TASKS, analyse
+from evaluation.study import LIVE_STEPS, REPLY_LABELS, RULE_LABELS, SURVEY, TASKS, analyse, steps_done
 
 from .wording import plain
 from .worlds import DEMO, current_world
@@ -30,7 +30,7 @@ DEFAULT_PERSONA = "F-102"  # owns a practical with no special equipment: the pra
 CONSENT = [
     "Taking part is voluntary. You may stop at any time without giving a reason, and ask for your answers to be removed.",
     "You are known only by your participant code. We store no name, e-mail or other identifying detail.",
-    "We store your ratings and labels, the requests and replies you type in the practice session, and when you gave them.",
+    "We store your ratings and labels, what you type to the assistant and in the practice session, your answers to the closing questions, and when you gave them.",
     "Please do not type anything personal (health, family or other private reasons) in the practice session.",
     "The answers are used only to evaluate this project, and are reported in aggregate.",
 ]
@@ -60,7 +60,9 @@ class LabelBody(BaseModel):
 
 
 class LiveBody(BaseModel):
-    kind: Literal["understood", "reply", "rating"]
+    kind: Literal["understood", "reply", "rating", "answer", "survey"]
+    step: str | None = None  # the live-session step a check belongs to (evaluation.study.LIVE_STEPS)
+    n: int | None = None  # the chat message an answer check is about
     case: str | None = None
     item: str | None = None  # inbox message id
     text: str | None = None
@@ -76,6 +78,8 @@ def _blind(task: str, it: dict) -> dict:
         return {"id": it["id"], "claim": it["claim"], "facts": it["facts"]}
     if task == "replies":
         return {"id": it["id"], "message": plain(it["message"]), "reply": it["reply"]}
+    if task == "rules":
+        return {"id": it["id"], "query": it["query"], "answer": it["answer"], "rules": it["rules"]}
     return {"id": it["id"], "text": plain(it["text"])}  # as the portal shows it to the recipient
 
 
@@ -84,6 +88,10 @@ def _check(task: str, value: dict) -> dict:
         if not isinstance(value.get("supported"), bool):
             raise HTTPException(422, "claims need supported: true or false")
         return {"supported": value["supported"]}
+    if task == "rules":
+        if value.get("label") not in RULE_LABELS:
+            raise HTTPException(422, f"label must be one of {list(RULE_LABELS)}")
+        return {"label": value["label"]}
     if task == "replies":
         if value.get("label") not in REPLY_LABELS:
             raise HTTPException(422, f"label must be one of {list(REPLY_LABELS)}")
@@ -122,7 +130,10 @@ def register(app: FastAPI, demo: Callable, user: Callable, coordinator: Callable
                     "tasks": w.study.tasks_for(p["kind"]),
                     "progress": w.study.progress(p["code"], p["kind"]) if w.study.items() else {},
                     "items_ready": w.study.items() is not None, "consent_text": CONSENT,
-                    "reply_labels": list(REPLY_LABELS)}
+                    "reply_labels": list(REPLY_LABELS), "rule_labels": list(RULE_LABELS),
+                    "live_steps": [{"step": st, "title": t, "text": x} for st, _, t, x in LIVE_STEPS],
+                    "steps_done": sorted(steps_done(w.study.live_rows(), p["code"])),
+                    "survey": [{"key": k, "text": t} for k, t in SURVEY]}
 
     @app.get("/api/study/me")
     def me(p: dict = Depends(participant)) -> dict:
@@ -175,6 +186,18 @@ def register(app: FastAPI, demo: Callable, user: Callable, coordinator: Callable
         p, u = pu
         if body.kind == "rating":
             body.value = _check("ratings", body.value if isinstance(body.value, dict) else {})
+        if body.kind == "answer":
+            if body.step not in ("timetable", "rules") or body.value not in ("yes", "partly", "no"):
+                raise HTTPException(422, "an answer check needs step timetable or rules, and value yes, partly or no")
+            chat = W().store.chat(u["id"], 0)  # the question it answered: the person's message before it
+            body.text = body.text or next((m.get("text") for m in reversed(chat)
+                                           if m["n"] < (body.n or 0) and m["kind"] == "text"), None)
+        if body.kind == "survey":
+            v = body.value if isinstance(body.value, dict) else {}
+            got = {k: v.get(k) for k, _ in SURVEY}
+            if not all(isinstance(x, int) and 1 <= x <= 5 for x in got.values()):
+                raise HTTPException(422, "every closing statement needs a rating from 1 to 5")
+            body.value = got
         W().study.live(p["code"], u["id"], body.kind, world=DEMO, **body.model_dump(exclude={"kind"}, exclude_none=True))
         return {"ok": True}
 
@@ -186,7 +209,7 @@ def register(app: FastAPI, demo: Callable, user: Callable, coordinator: Callable
         items = w.study.items()
         ps = w.study.participants()
         return {
-            "items": {t: len(items[t]) for t in TASKS} | {"pilot_ratings": sum(i["pilot"] for i in items["ratings"]),
+            "items": {t: len(items.get(t, [])) for t in TASKS} | {"pilot_ratings": sum(i["pilot"] for i in items["ratings"]),
                                                           "built": items.get("built"), "source": items.get("source")}
             if items else None,
             "participants": [{"code": c, **v, "persona_name": w.name_of(v["persona"]) if v.get("persona") else None,

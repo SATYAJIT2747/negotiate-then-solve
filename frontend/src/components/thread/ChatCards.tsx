@@ -8,6 +8,7 @@ import { firstSlots, slotsOf, type Slot } from "../../lib/slots";
 import type { CalendarView, CaseSummary, ChatMessage, ConfirmAs, InstanceView } from "../../lib/types";
 import { useWorkspace, type LookupMessage } from "../../lib/workspace";
 import { PLAIN_STATUS, STATUS } from "../../lib/meta";
+import { StudyAnswerCheck } from "../StudyBanner";
 import { Button, LiveDot, StatusBadge } from "../ui";
 import { CardFrame, Tag, YouBubble } from "./Bubble";
 
@@ -31,8 +32,18 @@ type Renderers = { [K in ChatMessage["kind"]]: (m: Of<K>, x: ChatContext) => Rea
 
 export const CHAT_CARDS: Renderers = {
   text: (m) => <YouBubble compact text={m.text} note={m.read_as && `Read as: ${m.read_as}`} />,
-  lookup: (m, x) => <LookupCard m={m} inst={x.inst} cal={x.cal} />,
-  rule: (m) => <RuleCard answer={m.answer} rules={m.rules} />,
+  lookup: (m, x) => (
+    <>
+      <LookupCard m={m} inst={x.inst} cal={x.cal} />
+      <StudyAnswerCheck n={m.n} step="timetable" answer={m.answer ?? ""} />
+    </>
+  ),
+  rule: (m) => (
+    <>
+      <RuleCard answer={m.answer} rules={m.rules} />
+      <StudyAnswerCheck n={m.n} step="rules" answer={m.answer} />
+    </>
+  ),
   confirm: (m, x) => <ConfirmCard n={m.n} text={m.part ? m.text : undefined} answered={m.answered} busy={x.busy} onConfirm={x.onConfirm} />,
   request: (m, x) => (
     <RequestCard id={m.case} summary={x.cases.get(m.case)} cases={x.cases} part={m.part} reread={!!m.reread} busy={x.busy} onAsQuestion={() => x.onAsQuestion(m.n)} />

@@ -2,6 +2,7 @@
 anonymised faculty pilot, collected in the web app (``/study``).
 
     uv run python -m evaluation.study build runs/negotiation-study-source.json   # the item sets
+    uv run python -m evaluation.study add-rules runs/rag-4b-read100-k8.json      # + the rule answers
     uv run python -m evaluation.study report                                     # kappas, H3, live checks
 
 Three labelling tasks are built from one negotiation report (``ours-llm`` and
@@ -14,17 +15,24 @@ Three labelling tasks are built from one negotiation report (``ours-llm`` and
 * ``replies``  100 stakeholder replies under the message they answer; the label
                is what the reply does (accept an option, counter, decline,
                other). Machine label: the recorded reply call.
+* ``rules``    60 answers to questions about the rules (``evaluation.rag``: the assistant with retrieval and,
+               blind, the same model without it), with the official rule text the question has (or none);
+               the label is what the answer does: declines (no rule covers it), consistent with the rule, or
+               not. Machine label: the Gemini judge's verdict, so the RAG results get the same check.
 * ``ratings``  110 messages rated 1-5 for clarity and acceptability, blind to the
                configuration. Grounded (ours-llm) and free-form (A2) messages
                come in pairs from the same scenario; a 24-message subset is the
                pilot set (H3: "the human pilot rates clarity and acceptability");
                unpaired grounded messages fill the set to 110 for the judge kappa.
 
-Team raters (codes ``T-n``) do all three; pilot participants (``P-nn``) rate
+Team raters (codes ``T-n``) do all four; pilot participants (``P-nn``) rate
 the pilot set and take part in a live session in the portal as one demo
-faculty member: they write a request in their own words, say whether the
-system understood it, reply to the negotiator in their own words, confirm the
-reading of the reply, and rate the message they received.
+faculty member, a tour of the system as it is used (``LIVE_STEPS``): they ask
+the assistant about their timetable and about the rules and say whether each
+answer was right, write a request in their own words and say whether it was
+understood, take part in a practice clash (reply to the negotiator in their own
+words, confirm the reading of the reply, rate the message), move or swap a class
+from the timetable, and answer a short closing questionnaire (``SURVEY``).
 
 Nothing identifies a participant beyond the code. Everything is stored under
 ``runs/study/`` (``participants.json``, ``labels.jsonl``, ``live.jsonl``);
@@ -48,11 +56,42 @@ from pathlib import Path
 
 from .stats import cohen_kappa, mean, wilcoxon
 
-TASKS = ("claims", "replies", "ratings")
+TASKS = ("claims", "replies", "ratings", "rules")
 GROUNDED, FREE = "ours-llm", "A2"
 N_CLAIMS, N_REPLIES, N_RATINGS, MAX_UNSUPPORTED, PILOT_PAIRS = 100, 100, 110, 40, 12
 KAPPA_OK = 0.6
 REPLY_LABELS = ("accept:A", "accept:B", "accept:C", "counter", "reject", "other")
+RULE_LABELS = ("declines", "consistent", "not_consistent")
+N_RULES = 60
+
+# The pilot's live session: a tour of the system as a faculty member uses it. (step, record kind, title, what to
+# do.) A step is done when a record of its kind (and, for checks, its step) exists in live.jsonl.
+LIVE_STEPS = (
+    ("timetable", "answer", "Ask the assistant about your timetable",
+     "For example: \u201cWhen am I free on Thursday?\u201d or \u201cWhere is my next class?\u201d Then say whether "
+     "the answer was right (a box appears under it)."),
+    ("rules", "answer", "Ask about a rule",
+     "For example: \u201cHow many students can be in a lab at once?\u201d or \u201cCan I teach a class online?\u201d "
+     "Say whether the answer was right and backed by the rule it cites."),
+    ("preference", "understood", "Tell the office a preference",
+     "In your own words, for example times you would rather not teach. Open the request from its card and say "
+     "whether it was understood."),
+    ("practice", "rating", "The practice clash",
+     "A colleague has claimed a lab you need. Ask for it, answer the office's message in your own words, confirm "
+     "how your reply was read, and rate the message."),
+    ("click", "understood", "Change a class from the timetable",
+     "Click one of your classes on the timetable and move, swap or cancel it. Then open the request and say whether "
+     "it was understood."),
+    ("survey", "survey", "A few closing questions", "Six statements about the session, and anything you want to add."),
+)
+SURVEY = (
+    ("understood", "The assistant understood what I wrote."),
+    ("timetable", "Its answers about my timetable were correct."),
+    ("rules", "Its answers about the rules were trustworthy."),
+    ("clash", "The office's message explained the clash and my options clearly."),
+    ("next", "I knew at each point what would happen to my request."),
+    ("use", "I would use this instead of e-mailing the timetable office."),
+)
 
 
 def _now() -> str:
@@ -142,6 +181,30 @@ def build_items(report: dict, seed: int = 0, rng_seed: int = 0) -> dict:
     return {"built": _now(), "seed": seed, "claims": claims, "replies": replies, "ratings": ratings}
 
 
+def rule_label(row: dict) -> str:
+    """The judge's verdict on a rule answer, as the rater's choice: declines, consistent or not."""
+    if row.get("no_rule") or row.get("abstains"):
+        return "declines"
+    return "consistent" if row.get("agrees") else "not_consistent"
+
+
+def build_rule_items(report: dict, rules: dict, rng_seed: int = 0) -> list[dict]:
+    """Rule answers for the team: with retrieval (the assistant as deployed) and without, blind to which, half
+    answerable, half not, so all three labels occur. Each carries the official rule text the judge saw."""
+    rng = random.Random(rng_seed)
+    picked = []
+    for cond, n in (("rag", N_RULES * 2 // 3), ("no-rag", N_RULES // 3)):
+        rows = [r for r in report["conditions"].get(cond, {}).get("rows", [])
+                if r.get("abstains") is not None or r.get("no_rule")]
+        for gold in (True, False):
+            pool = [r for r in rows if bool(r["gold"]) == gold]
+            picked += [(cond, r) for r in rng.sample(pool, min(len(pool), n // 2))]
+    rng.shuffle(picked)
+    return [{"id": f"RU-{i + 1:03d}", "condition": cond, "query": r["query"], "answer": r["answer"],
+             "rules": [{"id": g, "title": rules[g].title, "text": rules[g].text} for g in r["gold"] if g in rules],
+             "machine": rule_label(r), "key": r["key"]} for i, (cond, r) in enumerate(picked)]
+
+
 # ---------------------------------------------------------------------------
 # Storage
 # ---------------------------------------------------------------------------
@@ -168,7 +231,10 @@ class Study:
         self.items_path.write_text(json.dumps(items, indent=1, ensure_ascii=False), encoding="utf-8")
 
     def tasks_for(self, kind: str) -> list[str]:
-        return list(TASKS) if kind == "team" else ["ratings"]
+        if kind != "team":
+            return ["ratings"]
+        items = self.items() or {}
+        return [t for t in TASKS if items.get(t)] or list(TASKS)
 
     def team(self) -> list[str]:
         return sorted(c for c, p in self.active().items() if p["kind"] == "team")
@@ -383,7 +449,7 @@ def _vs_machine(by_rater: dict[str, dict[str, object]], machine: dict[str, objec
 
 
 def analyse(study: Study, judge_ratings: dict[str, dict] | None = None) -> dict:
-    items = study.items() or {t: [] for t in TASKS}
+    items = {t: [] for t in TASKS} | (study.items() or {})
     ps = study.active()  # a revoked participant's answers count nowhere
     labels = study.labels()
     team = {c for c, p in ps.items() if p["kind"] == "team"}
@@ -395,6 +461,7 @@ def analyse(study: Study, judge_ratings: dict[str, dict] | None = None) -> dict:
 
     claim_h = rater_labels("claims", team, "supported")
     reply_h = rater_labels("replies", team, "label")
+    rule_h = rater_labels("rules", team, "label")
     report: dict = {
         "coverage": study.coverage(labels),
         "participants": {"team": len(team), "pilot": len(pilot),
@@ -405,6 +472,9 @@ def analyse(study: Study, judge_ratings: dict[str, dict] | None = None) -> dict:
         "replies": {"items": len(items["replies"]),
                     "human_vs_recorded": _vs_machine(reply_h, {i["id"]: i["machine"] for i in items["replies"]}),
                     "human_vs_human": _pairwise(reply_h)},
+        "rules": {"items": len(items.get("rules", [])),
+                  "human_vs_judge": _vs_machine(rule_h, {i["id"]: i["machine"] for i in items.get("rules", [])}),
+                  "human_vs_human": _pairwise(rule_h)},
     }
 
     rating_rows = []  # (code, kind, item, clarity, acceptability)
@@ -438,7 +508,23 @@ def analyse(study: Study, judge_ratings: dict[str, dict] | None = None) -> dict:
         "clarity": mean([r["value"]["clarity"] for r in live_ratings]),
         "acceptability": mean([r["value"]["acceptability"] for r in live_ratings]),
     }
+    for topic in ("timetable", "rules"):  # "was this answer right?" on the assistant's answers
+        got = Counter(r["value"] for r in live if r["kind"] == "answer" and r.get("step") == topic)
+        report["live"][f"{topic}_answers"] = dict(got)
+    surveys = [r["value"] for r in live if r["kind"] == "survey" and isinstance(r.get("value"), dict)]
+    report["live"]["survey"] = {"n": len(surveys), **{k: mean([v[k] for v in surveys if isinstance(v.get(k), int)])
+                                                       for k, _ in SURVEY}}
+    report["live"]["steps_done"] = {code: sorted(steps_done(live, code)) for code in sorted(pilot)}
     return report
+
+
+def steps_done(live: list[dict], code: str) -> set[str]:
+    """The live-session steps a pilot participant has finished (``LIVE_STEPS``): a check of the step's kind,
+    for the checks that more than one step uses (answers, "was it understood?") tagged with the step."""
+    mine = [r for r in live if r["code"] == code]
+    return {step for step, kind, *_ in LIVE_STEPS
+            if any(r["kind"] == kind and (r.get("step") == step if kind in ("answer", "understood") else True)
+                   for r in mine)}
 
 
 def _h3(rows: list[tuple], meta: dict[str, dict], kind: str) -> dict:
@@ -477,12 +563,31 @@ def main() -> None:
     b.add_argument("report", type=Path)
     b.add_argument("--seed", type=int, default=0)
     b.add_argument("--force", action="store_true", help="replace items that already have labels")
+    ar = sub.add_parser("add-rules", help="add the rule-answer items from an evaluation.rag report")
+    ar.add_argument("report", type=Path)
+    ar.add_argument("--force", action="store_true", help="replace rule items that already have labels")
     r = sub.add_parser("report", help="kappas, H3 and the live checks")
     r.add_argument("--judge", type=Path, default=Path("runs/judge-ratings.json"))
-    for p in (b, r):
+    for p in (b, ar, r):
         p.add_argument("--dir", type=Path, default=Path("runs/study"))
     args = ap.parse_args()
     study = Study(args.dir)
+    if args.cmd == "add-rules":
+        from agents.documents import load_corpus
+
+        items = study.items()
+        if items is None:
+            raise SystemExit("build the item sets first")
+        if any(t == "rules" for t, _ in study.labels()) and not args.force:
+            raise SystemExit("rule answers already have labels; pass --force to replace them")
+        corpus, _ = load_corpus(Path("data/handbook.md"), Path("data/policies"), None)
+        items["rules"] = build_rule_items(json.loads(args.report.read_text(encoding="utf-8")),
+                                          {x.id: x for x in corpus})
+        items["rules_source"] = str(args.report)
+        study.save_items(items)
+        print(f"{len(items['rules'])} rule answers -> {study.items_path}:",
+              dict(Counter(i["machine"] for i in items["rules"])), dict(Counter(i["condition"] for i in items["rules"])))
+        return
     if args.cmd == "build":
         if study.items() and study.labels() and not args.force:
             raise SystemExit("labels exist for the current items; pass --force to rebuild (labels would no longer match)")

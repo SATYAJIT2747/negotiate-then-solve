@@ -4,7 +4,14 @@ import { ApiError, currentUserId, currentWorld } from "./api";
 
 const CODE_KEY = "nts.study";
 
-export type StudyTask = "claims" | "replies" | "ratings";
+export type StudyTask = "claims" | "replies" | "ratings" | "rules";
+
+/** A step of the pilot's live session (evaluation.study.LIVE_STEPS). */
+export interface LiveStep {
+  step: string;
+  title: string;
+  text: string;
+}
 
 export interface StudySession {
   code: string;
@@ -17,11 +24,18 @@ export interface StudySession {
   items_ready: boolean;
   consent_text: string[];
   reply_labels: string[];
+  rule_labels: string[];
+  /** the pilot's tour of the system, and the steps this participant has finished */
+  live_steps: LiveStep[];
+  steps_done: string[];
+  /** the closing statements, each rated 1-5 */
+  survey: { key: string; text: string }[];
 }
 
 export type StudyItem =
   | { id: string; claim: string; facts: { id: string; text: string }[] }
   | { id: string; message: string; reply: string }
+  | { id: string; query: string; answer: string; rules: { id: string; title: string; text: string }[] }
   | { id: string; text: string };
 
 export interface NextItem {
@@ -56,6 +70,7 @@ export interface StudyAnalysis {
   participants: { team: number; pilot: number; pilot_consented: number };
   claims: { items: number; human_vs_verifier: Record<string, Kappa>; human_vs_human: Record<string, Kappa> };
   replies: { items: number; human_vs_recorded: Record<string, Kappa>; human_vs_human: Record<string, Kappa> };
+  rules?: { items: number; human_vs_judge: Record<string, Kappa>; human_vs_human: Record<string, Kappa> };
   ratings: {
     items: number;
     pilot_items: number;
@@ -71,12 +86,16 @@ export interface StudyAnalysis {
     message_ratings: number;
     clarity: number | null;
     acceptability: number | null;
+    timetable_answers?: Record<string, number>;
+    rules_answers?: Record<string, number>;
+    survey?: { n: number } & Record<string, number | null>;
+    steps_done?: Record<string, string[]>;
   };
 }
 
 export interface StudyAdmin {
-  items: null | { claims: number; replies: number; ratings: number; pilot_ratings: number; built: string; source: string };
-  participants: (Omit<StudySession, "tasks" | "items_ready" | "consent_text" | "reply_labels"> & { created: string; revoked?: string; answers_deleted?: string })[];
+  items: null | { claims: number; replies: number; ratings: number; rules?: number; pilot_ratings: number; built: string; source: string };
+  participants: (Pick<StudySession, "code" | "kind" | "persona" | "persona_name" | "consented" | "progress"> & { created: string; revoked?: string; answers_deleted?: string })[];
   analysis: StudyAnalysis | null;
   reply_parser: string | null;
 }
@@ -99,6 +118,25 @@ export function setStudyCode(code: string | null): void {
 }
 
 const TASK_KEY = "nts.study.task";
+const STEP_KEY = "nts.study.step";
+
+/** The live-session step a pilot participant opened last: the checks they answer in the portal belong to it. */
+export function studyStep(): string | null {
+  try {
+    return localStorage.getItem(STEP_KEY);
+  } catch {
+    return null;
+  }
+}
+
+export function setStudyStep(step: string | null): void {
+  try {
+    if (step) localStorage.setItem(STEP_KEY, step);
+    else localStorage.removeItem(STEP_KEY);
+  } catch {
+    /* the checks fall back to their own step */
+  }
+}
 
 /** What a pilot participant was asked to do in the portal, shown in the banner there. */
 export function studyTask(): string | null {
@@ -149,7 +187,9 @@ export const study = {
   label: (task: StudyTask, item: string, value: Record<string, unknown>) => post<{ ok: boolean }>("/labels", { task, item, value }),
   practice: () => post<Practice>("/practice"),
   live: (body: {
-    kind: "understood" | "reply" | "rating";
+    kind: "understood" | "reply" | "rating" | "answer" | "survey";
+    step?: string;
+    n?: number;
     case?: string;
     item?: string;
     text?: string;

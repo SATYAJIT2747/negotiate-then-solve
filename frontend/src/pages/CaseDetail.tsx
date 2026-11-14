@@ -14,7 +14,7 @@ import { api } from "../lib/api";
 import { useAuth } from "../lib/auth";
 import { useApi } from "../lib/hooks";
 import { ago, num, pct, ROLE_LABEL, secs } from "../lib/meta";
-import { study } from "../lib/study";
+import { study, studyStep } from "../lib/study";
 import type { CaseDetail as Detail } from "../lib/types";
 import { ReplyText } from "../components/thread/ReplyText";
 import { useStudySession } from "../components/StudyBanner";
@@ -611,7 +611,7 @@ function UnderstoodCheck({ c }: { c: Detail }) {
   const understood = c.parse.constraints.map((k) => k.text);
   const save = async (value: string) => {
     setAnswer(value);
-    await study.live({ kind: "understood", case: c.id, text: c.text, reading: understood.join(" ") || c.parse?.action, value,
+    await study.live({ kind: "understood", step: studyStep() ?? "preference", case: c.id, text: c.text, reading: understood.join(" ") || c.parse?.action, value,
                        ...(comment.trim() ? { comment: comment.trim() } : {}) });
   };
   return (
