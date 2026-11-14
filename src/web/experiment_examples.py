@@ -47,17 +47,43 @@ def _scenario(root: Path, sid: str) -> dict:
     return {}
 
 
-def _negotiation(r: dict, limit: int) -> list[dict]:
+def _requests(sc: dict) -> list[dict]:
+    """The scenario's requests as each teacher wrote them ("... Dr. Rao" signed at the end), the asker first, with
+    the reason they gave in confidence, if any."""
+    private = [p for p in sc.get("private") or []]
+    out = []
+    for _, raw in sorted((sc.get("raw_requests") or {}).items()):
+        m = re.match(r"^(.*?[.!?])\s+((?:Dr|Prof|Mrs|Mr|Ms)\.?\s+[\w-]+)\s*\.?\s*$", raw.strip())
+        text, who = (m.group(1), m.group(2)) if m else (raw.strip(), "")
+        out.append({"who": who, "text": text,
+                    "private": next((p for p in private if p.lower() in raw.lower()), "")})
+    return out
+
+
+def _recipient(prose: str, reqs: list[dict]) -> str:
+    """Whom a negotiation message is to: the teacher it doesn't name, or the asker for "You requested ..."."""
+    names = [r["who"] for r in reqs if r["who"]]
+    if len(names) != 2:
+        return ""
+    if re.match(r"\s*You (?:requested|need)\b", prose):
+        asker = next((r["who"] for r in reqs if not r["private"]), names[0])
+        return asker
+    named = [n for n in names if n in prose and not prose.startswith(n + ",")]
+    return next((n for n in names if n not in named), "") if len(named) == 1 else ""
+
+
+def _negotiation(r: dict, limit: int, reqs: list[dict] | None = None) -> list[dict]:
     out = []
     for m, rep in list(zip(r.get("messages", []), [*r.get("replies", []), *[{}] * 9], strict=False))[:limit]:
         prose, options = _prose(m)
-        out.append(_line("System", prose))
+        to = _recipient(prose, reqs or [])
+        out.append({**_line("System", prose), "to": to})
         if options:
             out.append(_line("Options offered", " · ".join(o.split(") ", 1)[-1] for o in options)))
         if rep.get("text"):
-            out.append(_line("Teacher", rep["text"]))
+            out.append({**_line("Teacher", rep["text"]), "to": to})
         elif rep.get("decision") == "no_reply":
-            out.append(_line("Teacher", "(no reply before the deadline)"))
+            out.append({**_line("Teacher", "(no reply before the deadline)"), "to": to})
     return out
 
 
@@ -69,28 +95,41 @@ def main(root: Path, runs: Path) -> list[dict]:
     o = {r["scenario"]: r for r in ours["configs"]["ours-llm"]["rows"] if r.get("seed", 0) == 0}
     b4 = {r["scenario"]: r for r in base["configs"]["B4"]["rows"] if r.get("seed", 0) == 0}
     b3 = {r["scenario"]: r for r in base["configs"]["B3"]["rows"] if r.get("seed", 0) == 0}
-    # a conflict our system settled at once, the filtered LLM did not, and the unchecked LLM offered impossible times
-    pick = next((s for s, r in o.items() if r["status"] == "agreed" and r["rounds"] == 1 and s in b4 and s in b3
-                 and b4[s]["status"] != "agreed" and b3[s].get("invalid_offers", 0) > 0), None)
+    # a conflict our system settled at once and the unchecked LLM answered with impossible times; the filtered LLM's
+    # failure should be one a reader can see (its offers turned down), not a teacher who never replied
+    def clear_failure(s):
+        reps = b4[s].get("replies") or []
+        return len(reps) >= 2 and all(p.get("decision") == "reject" for p in reps)
+
+    cands = [s for s, r in o.items() if r["status"] == "agreed" and r["rounds"] == 1 and s in b4 and s in b3
+             and b4[s]["status"] != "agreed" and b3[s].get("invalid_offers", 0) > 0]
+    pick = next((s for s in cands if clear_failure(s)), cands[0] if cands else None)
     if pick is None:
         return []
     sc = _scenario(root, pick)
-    asks = " ".join(f"“{t}”" for t in (sc.get("raw_requests") or {}).values())
+    reqs = _requests(sc)
     private = ", ".join(sc.get("private") or [])
     r_o, r_4, r_3 = o[pick], b4[pick], b3[pick]
+    n4 = len(r_4.get("replies") or [])
+    b4_out = (f"Escalated: offers turned down {n4} times" if clear_failure(pick)
+              else "Escalated: " + (r_4.get("escalation_reason") or "no agreement"))
     return [_ex(
         "One conflict, three negotiators",
-        f"Two requests for the one GPU lab at the same time: {asks}"
-        + (f" The reason “{private}” was given in confidence." if private else ""),
-        [_case("Our system", "Resolved in 1 round", "ok", _negotiation(r_o, 1), ours=True),
+        "Both teachers want the only GPU lab on the same afternoon, so one of them has to give way."
+        + (f" The reason “{private}” was given in confidence: no message may mention it." if private else ""),
+        [_case("Our system", "Resolved in 1 round", "ok", _negotiation(r_o, 1, reqs), ours=True),
          _case("LLM proposes, unchecked", f"{r_3['invalid_offers']} of {r_3['offers']} options impossible", "bad",
-               _negotiation(r_3, 1), "B3"),
-         _case("LLM proposes, solver filters", "Escalated: " + (r_4.get("escalation_reason") or "no agreement"), "bad",
+               _negotiation(r_3, 1, reqs), "B3"),
+         _case("LLM proposes, solver filters", b4_out, "bad",
                [_line("Behind the scenes", f"{r_4.get('option_calls', 0)} LLM calls; {r_4.get('filtered', 0)} invented "
-                                           "options were impossible and thrown away"), *_negotiation(r_4, 2)], "B4")],
-        "Our system offered only times the solver had checked, and the first was accepted. Left to invent options, "
-        "the LLM offered times that clash or, filtered, asked the other teacher to teach when she cannot. Our system "
-        "also names the constraint, never the private reason.")]
+                                           "options were impossible and thrown away"), *_negotiation(r_4, 2, reqs)],
+               "B4")],
+        "Our system worked out with the solver who can give way and offered only times that work, and the first was "
+        "accepted. The unchecked LLM offered times that clash with the rules. Filtering its ideas keeps only legal "
+        "times, but they were still the wrong ones to offer: the LLM asked the teacher who cannot move, and the offers "
+        "were turned down until nobody was left to ask. Our system also names the constraint, never the private "
+        "reason.",
+    ) | {"requests": reqs}]
 
 
 def ablations(root: Path, runs: Path) -> list[dict]:

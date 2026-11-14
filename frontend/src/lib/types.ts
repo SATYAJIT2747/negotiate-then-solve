@@ -643,8 +643,10 @@ export type Experiment =
 export interface WorkedExample {
   title: string;
   situation: string;
+  /** the requests behind the conflict, as each teacher wrote them; ``private``: the reason given in confidence */
+  requests?: { who: string; text: string; private: string }[];
   lesson: string;
-  cases: { system: string; tag: string; ours: boolean; outcome: string; tone: "ok" | "bad" | "warn" | "muted"; lines: { who: string; text: string }[] }[];
+  cases: { system: string; tag: string; ours: boolean; outcome: string; tone: "ok" | "bad" | "warn" | "muted"; lines: { who: string; text: string; to?: string }[] }[];
 }
 
 /** A chart in an Experiments chapter (src/web/experiments.py): bars per category, or a line over the categories. */

@@ -2,7 +2,7 @@ import clsx from "clsx";
 import { useState, type ReactNode } from "react";
 import {
   BookOpen, CheckCircle2, ChevronDown, CircleDashed, Cpu, FlaskConical, MessagesSquare, Scale, Search, ShieldCheck,
-  Swords, XCircle, Bot, Eye, Quote, UserRound,
+  Swords, XCircle, Bot, Eye, Lock, Quote, UserRound,
 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 import {
@@ -436,10 +436,21 @@ function ExampleView({ x }: { x: WorkedExample }) {
   return (
     <div className="rounded-xl border border-line bg-panel-2/40 p-4">
       <p className="text-[15px] font-semibold text-ink">{x.title}</p>
-      <div className="mt-2 flex gap-2.5 rounded-lg border-l-[3px] border-brand/60 bg-panel px-3 py-2.5">
-        <Quote className="mt-0.5 size-4 shrink-0 text-brand/70" />
-        <p className="text-[13px] leading-relaxed text-ink-2">{x.situation}</p>
-      </div>
+      {x.requests?.length ? (
+        <>
+          <p className="mt-1 text-[13px] leading-relaxed text-ink-2">{x.situation}</p>
+          <div className={clsx("mt-2.5 grid gap-2.5", x.requests.length > 1 && "md:grid-cols-2")}>
+            {x.requests.map((r) => (
+              <RequestCard key={r.who + r.text} r={r} />
+            ))}
+          </div>
+        </>
+      ) : (
+        <div className="mt-2 flex gap-2.5 rounded-lg border-l-[3px] border-brand/60 bg-panel px-3 py-2.5">
+          <Quote className="mt-0.5 size-4 shrink-0 text-brand/70" />
+          <p className="text-[13px] leading-relaxed text-ink-2">{x.situation}</p>
+        </div>
+      )}
       <div className={clsx("mt-4 grid items-start gap-3", n === 2 && "md:grid-cols-2", n === 3 && "lg:grid-cols-3", n >= 4 && "md:grid-cols-2")}>
         {x.cases.map((c) => (
           <CaseCard key={c.system} c={c} />
@@ -453,6 +464,52 @@ function ExampleView({ x }: { x: WorkedExample }) {
         </p>
       </div>
     </div>
+  );
+}
+
+const initials = (name: string) =>
+  name.replace(/^(?:Dr|Prof|Mrs|Mr|Ms)\.?\s+/, "").split(/\s+/).map((w) => w[0]).join("").slice(0, 2).toUpperCase();
+
+/** A teacher's own request, as they wrote it; the reason they gave in confidence marked as private. */
+function RequestCard({ r }: { r: NonNullable<WorkedExample["requests"]>[number] }) {
+  const parts = r.private ? r.text.split(new RegExp(`(${esc(r.private)})`, "i")) : [r.text];
+  return (
+    <div className="flex gap-3 rounded-lg border border-line bg-panel px-3 py-2.5">
+      <Avatar name={r.who} />
+      <div className="min-w-0">
+        <p className="text-[12px] text-ink-3">
+          <span className="font-semibold text-ink">{r.who || "A teacher"}</span> writes
+        </p>
+        <p className="mt-0.5 text-[13.5px] leading-snug text-ink">
+          “
+          {parts.map((p, i) =>
+            r.private && p.toLowerCase() === r.private.toLowerCase() ? (
+              <span key={i} className="rounded bg-warn/15 px-1 text-warn">{p}</span>
+            ) : (
+              <span key={i}>{p}</span>
+            ),
+          )}
+          ”
+        </p>
+        {r.private && (
+          <p className="mt-1.5 flex items-center gap-1 text-[11.5px] text-warn">
+            <Lock className="size-3" /> “{r.private}” was said in confidence: no message may repeat it
+          </p>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function Avatar({ name, small = false }: { name: string; small?: boolean }) {
+  const hue = [...name].reduce((h, c) => h + c.charCodeAt(0), 0) % 2 ? "bg-info/15 text-info" : "bg-warn/15 text-warn";
+  return (
+    <span
+      className={clsx("grid shrink-0 place-items-center rounded-full font-semibold", hue, small ? "mt-0.5 size-6 text-[9.5px]" : "size-8 text-[11px]")}
+      title={name}
+    >
+      {name ? initials(name) : <UserRound className="size-3.5" />}
+    </span>
   );
 }
 
@@ -513,7 +570,7 @@ function CaseCard({ c }: { c: Case }) {
 }
 
 /** A system message carries the options that follow it; everything else stands alone. */
-type B = { who: string; text: string; options?: string };
+type B = { who: string; text: string; to?: string; options?: string };
 function bubbles(lines: Line[]): B[] {
   const out: B[] = [];
   for (const l of lines) {
@@ -529,17 +586,18 @@ function Bubble({ b, flag }: { b: B; flag: string[] }) {
     const silent = b.text.startsWith("(");
     return (
       <div className="flex justify-end gap-2">
-        <div
-          className={clsx(
-            "max-w-[88%] rounded-2xl rounded-tr-sm px-3 py-2 text-[12.5px] leading-relaxed",
-            silent ? "border border-dashed border-line italic text-ink-3" : "bg-brand/10 text-ink",
-          )}
-        >
-          {b.text}
+        <div className="flex max-w-[88%] flex-col items-end">
+          {b.to && <p className="mb-0.5 text-[10.5px] font-semibold text-ink-3">{b.to}</p>}
+          <div
+            className={clsx(
+              "rounded-2xl rounded-tr-sm px-3 py-2 text-[12.5px] leading-relaxed",
+              silent ? "border border-dashed border-line italic text-ink-3" : "bg-brand/10 text-ink",
+            )}
+          >
+            {b.text}
+          </div>
         </div>
-        <span className="mt-0.5 grid size-6 shrink-0 place-items-center rounded-full bg-panel-2 text-ink-3" title="Teacher">
-          <UserRound className="size-3.5" />
-        </span>
+        <Avatar name={b.to ?? ""} small />
       </div>
     );
   }
@@ -551,6 +609,11 @@ function Bubble({ b, flag }: { b: B; flag: string[] }) {
       </span>
       <div className="min-w-0 max-w-[92%] rounded-2xl rounded-tl-sm bg-panel-2 px-3 py-2">
         {!system && <p className="mb-0.5 text-[10.5px] font-semibold uppercase tracking-wide text-ink-3">{b.who}</p>}
+        {b.to && (
+          <p className="mb-1.5 text-[11px] text-ink-3">
+            To <span className="font-semibold text-ink-2">{b.to}</span>
+          </p>
+        )}
         {b.who === "Options offered" ? (
           <OptionList text={b.text} />
         ) : b.who === "System" ? (
