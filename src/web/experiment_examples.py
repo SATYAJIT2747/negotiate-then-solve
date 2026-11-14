@@ -96,6 +96,50 @@ def _option_judge(sc: dict):
     names = {f["id"]: f["name"] for f in inst.get("faculty", [])}
     profiles = {p["owner"]: p for p in sc.get("profiles") or []}
     unavailable = [c for c in sc.get("planted") or [] if c.get("type") == "unavailable" and c.get("hard")]
+    cal = inst.get("calendar") or {}
+    per_day, lunch = cal.get("slots_per_day", 8), cal.get("lunch_slot")
+    day_end = SLOT_HOUR + per_day
+    required = {c["scope"]["session"]: set((c.get("room") or {}).get("equipment") or [])
+                for c in sc.get("planted") or [] if c.get("type") == "require_room" and c.get("scope", {}).get("session")}
+
+    def blocked(fid: str, day: str, span: set[int]) -> bool:
+        for c in unavailable:
+            w = c.get("when") or {}
+            if c.get("owner") == fid and day in (w.get("days") or [day]) and (w.get("slots") is None or span & set(w["slots"])):
+                return True
+        return False
+
+    def places(s2: dict) -> list[tuple[str, set[int], str]]:
+        """Every (day, slots, room) a session could legally take: its teacher free, clear of lunch and the day's
+        end, in a room of its kind with what it needs."""
+        needs = set(s2.get("equipment") or []) | required.get(s2["id"], set())
+        rs = [r for r in inst.get("rooms", []) if r.get("type") == s2.get("room_type") and needs <= set(r.get("equipment") or [])]
+        out = []
+        for d in cal.get("days", []):
+            for start in range(per_day - s2.get("duration", 1) + 1):
+                sp = set(range(start, start + s2.get("duration", 1)))
+                if lunch in sp or blocked(s2["faculty"], d, sp):
+                    continue
+                out += [(d, sp, r["name"]) for r in rs]
+        return out
+
+    def _broken(span: set[int], day: str, room: str, sid: str) -> str:
+        """The hard rule an option breaks, in words, when it can be named: the end of the day, the lunch break,
+        or a room another class can only use at that time."""
+        if max(span) >= per_day:
+            end = SLOT_HOUR + max(span) + 1
+            return f"Runs to {end - 12 if end > 12 else end} pm, past the end of the day ({day_end - 12} pm)"
+        if lunch in span:
+            return f"Overlaps the lunch break at {SLOT_HOUR + lunch - 12 if SLOT_HOUR + lunch > 12 else SLOT_HOUR + lunch} pm"
+        for s2 in inst.get("sessions", []):
+            if s2["id"] == sid or not any(c.get("owner") == s2["faculty"] for c in unavailable):
+                continue
+            ps = places(s2)
+            if ps and all(d == day and r == room and sp & span for d, sp, r in ps):
+                slots = sorted(set().union(*(sp for _, sp, _ in ps)))
+                return (f"{room} is taken: {names.get(s2['faculty'], s2['faculty'])}'s {s2.get('kind', 'class')} can only be there, "
+                        f"{_FULL.get(day, day)} {_hours(slots)}")
+        return ""
 
     def judge(text: str, row: dict) -> dict:
         m = _OPTION.search(text)
@@ -106,6 +150,8 @@ def _option_judge(sc: dict):
         s = sessions[sid]
         span = set(range(hour - SLOT_HOUR, hour - SLOT_HOUR + s.get("duration", 1)))
         who = names.get(s["faculty"], s["faculty"])
+        if why := _broken(span, day, room.strip(), sid):
+            return {"verdict": "bad", "note": why}
         if row.get("offers") and row.get("invalid_offers") == row.get("offers"):
             return {"verdict": "bad", "note": "Impossible: breaks a hard rule"}
         for c in unavailable:
@@ -230,7 +276,7 @@ def main(root: Path, runs: Path) -> list[dict]:
     can_move = {names.get(p["owner"], p["owner"]) for p in sc.get("profiles") or [] if p.get("windows")}
     points = {  # the one sentence each column comes down to
         "Our system": "Asked the teacher who can move, with times the solver had checked.",
-        "LLM proposes, unchecked": "Offered times that break the timetable's rules.",
+        "LLM proposes, unchecked": "Never checked its ideas, so it offered times that cannot happen.",
         "LLM proposes, solver filters": "Legal times, but asked the teacher who can't move, at times they had ruled out.",
     }
     for c in cases:

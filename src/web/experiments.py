@@ -387,6 +387,9 @@ def fairness(runs: Path) -> list[dict]:
 # -- 5. the language model's jobs ----------------------------------------------------------------------------------
 
 
+MODELS_LEFT_OUT = ("2B", "Q6_K")  # the page reports the deployed 4B (Q8_0); the 2B and the Q6_K build are not shown
+
+
 def models(runs: Path) -> list[dict]:
     try:
         from .app import MODEL_ROWS
@@ -394,6 +397,8 @@ def models(runs: Path) -> list[dict]:
         return []
     rows, at = [], None
     for label, rep_f, parse_f, pol_f, _swap in MODEL_ROWS:
+        if any(x in label for x in MODELS_LEFT_OUT):
+            continue
         rep, a1 = _load(runs / f"{rep_f}.json") if rep_f else (None, None)
         par, a2 = _load(runs / f"{parse_f}.json") if parse_f else (None, None)
         pol, a3 = _load(runs / f"{pol_f}.json") if pol_f else (None, None)
@@ -417,12 +422,12 @@ def models(runs: Path) -> list[dict]:
         "models", "cpu", "Teaching a small model the job",
         "The language model reads requests into constraints, reads stakeholders' replies into actions, and checks "
         "requests against the rules. Can a small local model do this well enough, and what does fine-tuning add?",
-        ["Fine-tuned Qwen3.5-4B (and 2B) with LoRA on the system's own tasks, on free Kaggle GPUs.",
+        ["Fine-tuned Qwen3.5-4B with LoRA on the system's own tasks, on free Kaggle GPUs.",
          "Tested each model on 151 unseen requests (read exactly into constraints?), 100 replies (right tool call?) "
          "and 109 policy checks (right verdict?).",
          "Compared with the same models prompted, with Gemini, and with keyword rules."],
-        [_who("Qwen3.5-4B + LoRA", "the deployed model", ours=True), _who("Qwen3.5-2B + LoRA", "smaller"),
-         _who("Prompted models", "the 4B and 2B without adapters, Gemini Flash-Lite"),
+        [_who("Qwen3.5-4B + LoRA", "the deployed model", ours=True),
+         _who("Prompted models", "the 4B without adapters, Gemini Flash-Lite"),
          _who("Keyword rules", "no model")],
         take,
         [_chart("Each model on the three jobs", short,

@@ -548,6 +548,7 @@ function SummaryCard({ c }: { c: Case }) {
               </span>
             ))}
           </span>
+          <Reasons offered={s.offered} />
         </Row>
         {first && (
           <Row label="Reply">
@@ -560,6 +561,33 @@ function SummaryCard({ c }: { c: Case }) {
         {s.point}
       </p>
     </div>
+  );
+}
+
+/** Why the options that don't work don't: each reason once, with the options it covers ("all 5" when it's all). */
+function Reasons({ offered }: { offered: { label: string; verdict: string; note: string }[] }) {
+  const groups = new Map<string, { verdict: string; labels: string[] }>();
+  for (const o of offered) {
+    if (o.verdict === "ok" || !o.note) continue;
+    const g = groups.get(o.note) ?? { verdict: o.verdict, labels: [] };
+    g.labels.push(o.label);
+    groups.set(o.note, g);
+  }
+  if (!groups.size) return null;
+  return (
+    <ul className="mt-1.5 space-y-1">
+      {[...groups].map(([note, g]) => (
+        <li key={note} className={clsx("flex gap-1.5 text-[11.5px] leading-snug", g.verdict === "bad" ? "text-bad" : "text-ink-3")}>
+          <span className="shrink-0">{g.verdict === "bad" ? "✗" : "–"}</span>
+          <span>
+            <span className="font-semibold">
+              {g.labels.length === offered.length && offered.length > 2 ? `All ${offered.length}` : g.labels.join(", ")}:
+            </span>{" "}
+            {note}
+          </span>
+        </li>
+      ))}
+    </ul>
   );
 }
 
