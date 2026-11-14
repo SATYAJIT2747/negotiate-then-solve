@@ -757,4 +757,7 @@ def sections(root: Path, agentic: bool = False) -> list[dict]:
                 *rag(runs), *safety(runs)]
     if agentic:
         chapters += [*head_to_head(runs), *agent_adapters(root)]
+    from .experiment_examples import attach
+
+    attach(root, chapters)  # one worked example per chapter, side by side (web.experiment_examples)
     return [intro(agentic), *chapters, *conclusions(runs)]

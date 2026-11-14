@@ -635,9 +635,17 @@ export type Experiment =
   | {
       id: string; title: string; at: string | null; kind: "chapter"; icon: string; question: string; method: string[];
       compared: { name: string; tag: string; desc: string; ours: boolean }[]; takeaway: string; charts: ChapterChart[];
-      notes: string[]; table: { columns: TableCol[]; rows: TableRow[] } | null; setup: string;
+      notes: string[]; table: { columns: TableCol[]; rows: TableRow[] } | null; setup: string; examples?: WorkedExample[];
     }
   | { id: string; title: string; at: string; kind: "conclusions"; items: Finding[]; pending: string[] };
+
+/** One real case from the result files, side by side across the systems a chapter compares. */
+export interface WorkedExample {
+  title: string;
+  situation: string;
+  lesson: string;
+  cases: { system: string; tag: string; ours: boolean; outcome: string; tone: "ok" | "bad" | "warn" | "muted"; lines: { who: string; text: string }[] }[];
+}
 
 /** A chart in an Experiments chapter (src/web/experiments.py): bars per category, or a line over the categories. */
 export interface ChapterChart {

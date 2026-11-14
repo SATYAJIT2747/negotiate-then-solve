@@ -14,7 +14,7 @@ import { api } from "../lib/api";
 import { useApi } from "../lib/hooks";
 import { ago, num, pct } from "../lib/meta";
 import { useTokens } from "../lib/theme";
-import type { ChapterChart, Experiment, TableCol, TableRow } from "../lib/types";
+import type { ChapterChart, Experiment, TableCol, TableRow, WorkedExample } from "../lib/types";
 
 type Chapter = Extract<Experiment, { kind: "chapter" }>;
 type Intro = Extract<Experiment, { kind: "intro" }>;
@@ -160,6 +160,16 @@ function ChapterView({ c, n }: { c: Chapter; n: number }) {
             ))}
           </div>
         </div>
+        {(c.examples ?? []).length > 0 && (
+          <div className="border-t border-line p-6">
+            <Kicker>In practice</Kicker>
+            <div className="mt-3 space-y-6">
+              {c.examples!.map((x) => (
+                <ExampleView key={x.title + x.situation} x={x} />
+              ))}
+            </div>
+          </div>
+        )}
         {c.notes.filter(Boolean).length > 0 && (
           <div className="border-t border-line px-6 py-5">
             <Kicker>What it means</Kicker>
@@ -411,5 +421,63 @@ function ConclusionsCard({ e, chapters }: { e: Conclusions; chapters: Chapter[] 
         )}
       </Card>
     </section>
+  );
+}
+
+// -- worked examples ---------------------------------------------------------------------------------------------------
+
+const TONE: Record<string, string> = {
+  ok: "bg-ok/10 text-ok", bad: "bg-bad/10 text-bad", warn: "bg-warn/10 text-warn", muted: "bg-panel-2 text-ink-3",
+};
+
+/** One real case: the situation, what each system did (side by side, with its outcome), and the lesson. */
+function ExampleView({ x }: { x: WorkedExample }) {
+  const n = x.cases.length;
+  return (
+    <div>
+      <p className="text-[14px] font-semibold text-ink">{x.title}</p>
+      <p className="mt-1 rounded-md bg-panel-2 px-3 py-2 text-[13px] italic leading-relaxed text-ink-2">{x.situation}</p>
+      <div className={clsx("mt-3 grid gap-3", n === 2 && "md:grid-cols-2", n === 3 && "lg:grid-cols-3", n >= 4 && "md:grid-cols-2")}>
+        {x.cases.map((c) => (
+          <div key={c.system} className={clsx("flex flex-col rounded-lg border p-3.5", c.ours ? "border-brand/50 bg-brand/[0.03]" : "border-line")}>
+            <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+              <span className={clsx("text-[13px]", c.ours ? "font-semibold text-ink" : "font-medium text-ink-2")}>
+                {c.system}
+                {c.tag && <Tag>{c.tag}</Tag>}
+              </span>
+              <span className={clsx("rounded-full px-2 py-0.5 text-[11.5px] font-semibold", TONE[c.tone] ?? TONE.muted)}>{c.outcome}</span>
+            </div>
+            <div className="space-y-2">
+              {c.lines.map((l, i) => (
+                <div key={i}>
+                  <p className="text-[10.5px] font-semibold uppercase tracking-wide text-ink-3">{l.who}</p>
+                  <p className={clsx("text-[12.5px] leading-relaxed", l.who === "Teacher" ? "italic text-ink-2" : "text-ink")}>
+                    {l.who === "Options offered" ? <OptionList text={l.text} /> : l.text}
+                  </p>
+                </div>
+              ))}
+            </div>
+          </div>
+        ))}
+      </div>
+      <p className="mt-3 text-[13px] leading-relaxed text-ink-2">
+        <span className="font-semibold text-ink">Why it matters: </span>
+        {x.lesson}
+      </p>
+    </div>
+  );
+}
+
+function OptionList({ text }: { text: string }) {
+  const items = text.split(" · ");
+  return (
+    <span className="mt-0.5 block space-y-0.5">
+      {items.map((t, i) => (
+        <span key={i} className="block">
+          <span className="font-mono text-ink-3">{String.fromCharCode(65 + i)}) </span>
+          {t}
+        </span>
+      ))}
+    </span>
   );
 }
