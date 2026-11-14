@@ -629,7 +629,16 @@ export type Experiment =
   | { id: string; title: string; subtitle?: string; at: string; kind: "negotiation"; configs: Record<string, NegotiationSummary>; paired?: Record<string, PairedTest>; models?: { configs: string[]; model: string }[]; simulator?: string | null }
   | { id: string; title: string; subtitle?: string; at: string; kind: "models"; rows: ModelRow[] }
   | { id: string; title: string; at: string; kind: "safety"; summary: Record<string, unknown> }
-  | { id: string; title: string; subtitle?: string; at: string; kind: "table"; icon?: string; columns: TableCol[]; rows: TableRow[]; notes: string[] };
+  | { id: string; title: string; subtitle?: string; at: string; kind: "table"; icon?: string; question?: string; takeaway?: string; chart?: string; columns: TableCol[]; rows: TableRow[]; notes: string[] }
+  | { id: string; title: string; at: string; kind: "findings"; items: Finding[]; pending: string[] };
+
+/** One claim on the Experiments page: whether the experiments support it, the deciding numbers, and its section. */
+export interface Finding {
+  claim: string;
+  verdict: "supported" | "partly" | "not";
+  evidence: string;
+  section: string;
+}
 
 /** A column of an Experiments table (src/web/experiments.py). */
 export interface TableCol {
@@ -638,12 +647,15 @@ export interface TableCol {
   fmt: "pct" | "num" | "int" | "text" | "p";
   better: "high" | "low" | null;
   hint: string;
-  bar: boolean;
+  /** shown by default; the rest behind "All measures" */
+  key_col?: boolean;
   digits: number | null;
 }
 
 export interface TableRow {
   label: string;
+  /** the brief's code (B4, A1), shown as a tag */
+  tag?: string;
   sub: string;
   highlight: boolean;
   cells: Record<string, number | string | null>;
