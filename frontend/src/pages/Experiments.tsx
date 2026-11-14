@@ -2,7 +2,7 @@ import clsx from "clsx";
 import { useState, type ReactNode } from "react";
 import {
   BookOpen, CheckCircle2, ChevronDown, CircleDashed, Cpu, FlaskConical, MessagesSquare, Scale, Search, ShieldCheck,
-  Swords, XCircle,
+  Swords, XCircle, Bot, Eye, Quote, UserRound,
 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 import {
@@ -430,32 +430,28 @@ const TONE: Record<string, string> = {
   ok: "bg-ok/10 text-ok", bad: "bg-bad/10 text-bad", warn: "bg-warn/10 text-warn", muted: "bg-panel-2 text-ink-3",
 };
 
-/** One real case: the situation, what each system did (side by side, with its outcome), and the lesson. The long
- * system messages are folded away by default: the options and replies tell the story; "Show messages" opens them. */
+/** One real case: the situation, then each system's conversation side by side as a chat thread, and the lesson. */
 function ExampleView({ x }: { x: WorkedExample }) {
-  const [full, setFull] = useState(false);
   const n = x.cases.length;
-  const hasHidden = x.cases.some((c) => c.lines.some((l) => l.who === "System") && c.lines.some((l) => l.who !== "System"));
   return (
-    <div>
-      <div className="flex flex-wrap items-baseline justify-between gap-2">
-        <p className="text-[14px] font-semibold text-ink">{x.title}</p>
-        {hasHidden && (
-          <button onClick={() => setFull((v) => !v)} className="text-[12px] font-medium text-brand hover:underline">
-            {full ? "Hide full messages" : "Show full messages"}
-          </button>
-        )}
+    <div className="rounded-xl border border-line bg-panel-2/40 p-4">
+      <p className="text-[15px] font-semibold text-ink">{x.title}</p>
+      <div className="mt-2 flex gap-2.5 rounded-lg border-l-[3px] border-brand/60 bg-panel px-3 py-2.5">
+        <Quote className="mt-0.5 size-4 shrink-0 text-brand/70" />
+        <p className="text-[13px] leading-relaxed text-ink-2">{x.situation}</p>
       </div>
-      <p className="mt-1 text-[13px] leading-relaxed text-ink-2">{x.situation}</p>
-      <div className={clsx("mt-3 grid gap-3", n === 2 && "md:grid-cols-2", n === 3 && "lg:grid-cols-3", n >= 4 && "md:grid-cols-2 xl:grid-cols-4")}>
+      <div className={clsx("mt-4 grid items-start gap-3", n === 2 && "md:grid-cols-2", n === 3 && "lg:grid-cols-3", n >= 4 && "md:grid-cols-2")}>
         {x.cases.map((c) => (
-          <CaseCard key={c.system} c={c} full={full} />
+          <CaseCard key={c.system} c={c} />
         ))}
       </div>
-      <p className="mt-3 text-[13px] leading-relaxed text-ink-2">
-        <span className="font-semibold text-ink">Why it matters: </span>
-        {x.lesson}
-      </p>
+      <div className="mt-4 flex gap-2.5 rounded-lg bg-brand/[0.06] px-3 py-2.5">
+        <CheckCircle2 className="mt-0.5 size-4 shrink-0 text-brand" />
+        <p className="text-[13px] leading-relaxed text-ink-2">
+          <span className="font-semibold text-ink">Why it matters: </span>
+          {x.lesson}
+        </p>
+      </div>
     </div>
   );
 }
@@ -473,31 +469,41 @@ function rounds(lines: Line[]): Line[][] {
   return out.filter((r) => r.length > 0);
 }
 
-function CaseCard({ c, full }: { c: Case; full: boolean }) {
-  const onlySystem = c.lines.every((l) => l.who === "System");
+const STRIPE: Record<string, string> = { ok: "bg-ok", bad: "bg-bad", warn: "bg-warn", muted: "bg-ink-3" };
+
+function CaseCard({ c }: { c: Case }) {
   const notes = c.lines.filter((l) => l.who === "Behind the scenes");
   const rs = rounds(c.lines.filter((l) => l.who !== "Behind the scenes"));
   return (
-    <div className={clsx("flex flex-col rounded-lg border p-3.5", c.ours ? "border-brand/50 bg-brand/[0.03]" : "border-line")}>
-      <div className="flex flex-wrap items-center justify-between gap-2">
-        <span className={clsx("text-[13px]", c.ours ? "font-semibold text-ink" : "font-medium text-ink-2")}>
+    <div className={clsx("overflow-hidden rounded-lg border bg-panel", c.ours ? "border-brand/60 ring-1 ring-brand/20" : "border-line")}>
+      <div className={clsx("h-1", STRIPE[c.tone] ?? STRIPE.muted)} />
+      <div className="flex flex-wrap items-center justify-between gap-2 border-b border-line px-3.5 py-2.5">
+        <span className="text-[13.5px] font-semibold text-ink">
           {c.system}
           {c.tag && <Tag>{c.tag}</Tag>}
+          {c.ours && <span className="ml-1.5 rounded bg-brand/15 px-1.5 py-px text-[10.5px] font-semibold text-brand">OURS</span>}
         </span>
         <span className={clsx("rounded-full px-2 py-0.5 text-[11.5px] font-semibold", TONE[c.tone] ?? TONE.muted)}>{c.outcome}</span>
       </div>
-      {notes.map((l, i) => (
-        <p key={i} className="mt-1.5 text-[11.5px] text-ink-3">{l.text}</p>
-      ))}
-      <div className="mt-2.5 space-y-3">
+      <div className="space-y-3 px-3.5 py-3">
+        {notes.map((l, i) => (
+          <p key={i} className="flex items-center gap-1.5 rounded-md bg-panel-2 px-2 py-1 text-[11.5px] text-ink-3">
+            <Eye className="size-3.5 shrink-0" />
+            {l.text}
+          </p>
+        ))}
         {rs.map((r, ri) => (
-          <div key={ri} className={clsx(rs.length > 1 && "border-l-2 border-line pl-2.5")}>
-            {rs.length > 1 && <p className="mb-1 text-[10.5px] font-semibold uppercase tracking-wide text-ink-3">Round {ri + 1}</p>}
-            <div className="space-y-1.5">
-              {r.map((l, i) => (
-                <TurnView key={i} l={l} show={full || onlySystem} />
-              ))}
-            </div>
+          <div key={ri} className="space-y-2">
+            {rs.length > 1 && (
+              <div className="flex items-center gap-2 text-[10.5px] font-semibold uppercase tracking-wide text-ink-3">
+                <span className="h-px flex-1 bg-line" />
+                Round {ri + 1}
+                <span className="h-px flex-1 bg-line" />
+              </div>
+            )}
+            {bubbles(r).map((b, i) => (
+              <Bubble key={i} b={b} />
+            ))}
           </div>
         ))}
       </div>
@@ -505,29 +511,63 @@ function CaseCard({ c, full }: { c: Case; full: boolean }) {
   );
 }
 
-function TurnView({ l, show }: { l: Line; show: boolean }) {
-  if (l.who === "System" && !show) return null;
-  if (l.who === "Options offered") return <OptionList text={l.text} />;
-  if (l.who === "Teacher")
+/** A system message carries the options that follow it; everything else stands alone. */
+type B = { who: string; text: string; options?: string };
+function bubbles(lines: Line[]): B[] {
+  const out: B[] = [];
+  for (const l of lines) {
+    const last = out[out.length - 1];
+    if (l.who === "Options offered" && last?.who === "System" && !last.options) last.options = l.text;
+    else out.push({ ...l });
+  }
+  return out;
+}
+
+function Bubble({ b }: { b: B }) {
+  if (b.who === "Teacher") {
+    const silent = b.text.startsWith("(");
     return (
-      <p className="flex gap-1.5 text-[12.5px] leading-snug text-ink-2">
-        <span className="shrink-0 not-italic text-ink-3">Teacher:</span>
-        <span className="italic">{l.text}</span>
-      </p>
+      <div className="flex justify-end gap-2">
+        <div
+          className={clsx(
+            "max-w-[88%] rounded-2xl rounded-tr-sm px-3 py-2 text-[12.5px] leading-relaxed",
+            silent ? "border border-dashed border-line italic text-ink-3" : "bg-brand/10 text-ink",
+          )}
+        >
+          {b.text}
+        </div>
+        <span className="mt-0.5 grid size-6 shrink-0 place-items-center rounded-full bg-panel-2 text-ink-3" title="Teacher">
+          <UserRound className="size-3.5" />
+        </span>
+      </div>
     );
-  if (l.who === "System")
-    return <p className="rounded bg-panel-2 px-2 py-1.5 text-[12px] leading-relaxed text-ink-2">{l.text}</p>;
+  }
+  const system = b.who === "System" || b.who === "Options offered";
   return (
-    <div>
-      <p className="text-[10.5px] font-semibold uppercase tracking-wide text-ink-3">{l.who}</p>
-      <p className="text-[12.5px] leading-relaxed text-ink">{l.text}</p>
+    <div className="flex gap-2">
+      <span className="mt-0.5 grid size-6 shrink-0 place-items-center rounded-full bg-panel-2 text-ink-3" title={b.who}>
+        <Bot className="size-3.5" />
+      </span>
+      <div className="min-w-0 max-w-[92%] rounded-2xl rounded-tl-sm bg-panel-2 px-3 py-2">
+        {!system && <p className="mb-0.5 text-[10.5px] font-semibold uppercase tracking-wide text-ink-3">{b.who}</p>}
+        {b.who === "Options offered" ? (
+          <OptionList text={b.text} />
+        ) : (
+          <p className="text-[12.5px] leading-relaxed text-ink">{b.text}</p>
+        )}
+        {b.options && (
+          <div className="mt-2 border-t border-line pt-2">
+            <OptionList text={b.options} />
+          </div>
+        )}
+      </div>
     </div>
   );
 }
 
 const DAY: Record<string, string> = { Monday: "Mon", Tuesday: "Tue", Wednesday: "Wed", Thursday: "Thu", Friday: "Fri", Saturday: "Sat" };
 
-/** "the Computer Networks practical (C3-P) on Monday at 3 pm in Lab 1" -> class "C3-P", slot "Mon 3 pm · Lab 1". */
+/** "the Computer Networks practical (C3-P) on Monday at 3 pm in Lab 1" -> class "C3-P", slot "Mon 3 pm", room "Lab 1". */
 function parseOption(t: string) {
   const m = t.match(/^(?:the )?(.*?)\s*\(([^)]+)\)\s+on\s+(\w+)\s+at\s+(.+?)\s+in\s+(.+)$/);
   if (!m) return null;
@@ -541,24 +581,32 @@ function OptionList({ text }: { text: string }) {
   const shared = parsed.every(Boolean) && codes.size === 1 ? parsed[0]! : null;
   return (
     <div>
-      <p className="text-[11.5px] text-ink-3">
-        {shared ? (
-          <>
-            Offers to move <span className="font-medium text-ink-2">{shared.name}</span>
-            <Tag>{shared.code}</Tag> to:
-          </>
-        ) : (
-          "Offers:"
+      <p className="text-[10.5px] font-semibold uppercase tracking-wide text-ink-3">
+        Options
+        {shared && (
+          <span className="font-normal normal-case tracking-normal">
+            {" "}· move {shared.name} ({shared.code})
+          </span>
         )}
       </p>
-      <div className="mt-1 flex flex-wrap gap-1.5">
+      <div className="mt-1.5 grid gap-1">
         {items.map((t, i) => {
           const o = parsed[i];
           return (
-            <span key={i} className="rounded-md border border-line bg-panel px-2 py-0.5 text-[12px] text-ink">
-              <span className="mr-1 font-mono text-ink-3">{String.fromCharCode(65 + i)}</span>
-              {shared && o ? `${o.slot} · ${o.room}` : o ? `${o.code} ${o.slot} · ${o.room}` : t}
-            </span>
+            <div key={i} className="flex items-center gap-2 rounded-md border border-line bg-panel px-2 py-1 text-[12px]">
+              <span className="grid size-5 shrink-0 place-items-center rounded bg-panel-2 font-mono text-[11px] font-semibold text-ink-2">
+                {String.fromCharCode(65 + i)}
+              </span>
+              {o ? (
+                <span className="text-ink">
+                  {!shared && <span className="mr-1 font-mono text-ink-3">{o.code}</span>}
+                  <span className="font-medium">{o.slot}</span>
+                  <span className="text-ink-3"> · {o.room}</span>
+                </span>
+              ) : (
+                <span className="text-ink">{t}</span>
+              )}
+            </div>
           );
         })}
       </div>
