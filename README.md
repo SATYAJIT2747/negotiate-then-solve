@@ -33,15 +33,23 @@ in WSL. WSL forwards `localhost`, so the app reaches `llama-server` at the
 default `http://localhost:8080/v1` without extra setup.
 
 **1. Start the local model in WSL** (skip this for the offline or Gemini
-parser). The fine-tuned weights from the latest training run are in
-`qwen3.5-2b-nts-gguf/` next to this repository (Qwen3.5-2B, Q5_K_M GGUF). From a WSL terminal, with llama.cpp built (adjust the path to your
-`llama-server` binary):
+parser). The main model is **Qwen3.5-4B** (Q8_0 GGUF) with a LoRA adapter
+per task group (`adapters-lora.toml`: intents, policy/replies/explanations,
+lookups, memory). From a WSL terminal, with llama.cpp built (adjust the
+paths to your `llama-server` binary and model folder):
 
 ```sh
 ~/llama-bin/llama.cpp/llama-server \
-  -m "/mnt/c/Users/Shubh/Desktop/LMA Major Project/qwen3.5-2b-nts-gguf/Qwen3.5-2B.Q5_K_M-mutitask-finetune.gguf" \
+  -m Qwen3.5-4B-Base-Q8_0.gguf \
+  --lora loras/nts-intents-v12-read-100.gguf --lora loras/nts-read100.gguf \
+  --lora loras/nts-lookup-v3.gguf --lora-init-without-apply \
   --jinja -ngl 99 -c 4096 --cache-ram 1024 --host 0.0.0.0 --port 8080
 ```
+
+then start the app with `--adapters adapters-lora.toml` (or
+`scripts/host.ps1`, which does this). The older single-file Qwen3.5-2B
+fine-tune (`qwen3.5-2b-nts-gguf/`, Q5_K_M) still works with `-m` alone and is
+kept as a smaller comparison point.
 
 `--cache-ram 1024` caps llama.cpp's prompt cache in RAM (default 8 GB); without
 it the server grows past WSL's memory during long evaluations and is killed.

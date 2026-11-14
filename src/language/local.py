@@ -2,7 +2,8 @@
 ``llama-server``, Ollama, LM Studio). Same interface as ``GeminiClient``,
 so parsers and evaluations take either.
 
-    llama-server -m Qwen3.5-2B.Q5_K_M-mutitask-finetune.gguf --jinja -ngl 99 -c 4096 --cache-ram 1024 --port 8080
+    llama-server -m Qwen3.5-4B-Base-Q8_0.gguf --lora loras/nts-read100.gguf --lora-init-without-apply \
+        --jinja -ngl 99 -c 4096 --cache-ram 1024 --port 8080
 
 * Output is constrained to the Pydantic schema (``response_format`` with a
   JSON schema; llama.cpp turns it into a grammar), so it always parses.

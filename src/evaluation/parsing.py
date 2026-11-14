@@ -170,6 +170,9 @@ def main() -> None:
     ap.add_argument("--local", metavar="URL", nargs="?", const="http://localhost:8080/v1", default=None,
                     help="use the fine-tuned compiler on a local OpenAI-compatible server instead of Gemini")
     ap.add_argument("--local-model", default=None, help="model to run on a router-mode server (default NTS_LOCAL_MODEL)")
+    ap.add_argument("--prompted", action="store_true",
+                    help="with --local: give the local model the full prompt the Gemini parser gets (the prompted "
+                         "base-model baseline) instead of the fine-tuned compiler's short prompt")
     ap.add_argument("--skip-llm", action="store_true")
     ap.add_argument("--out", type=Path, default=None)
     args = ap.parse_args()
@@ -186,7 +189,7 @@ def main() -> None:
             from language.compiler import CompilerParser
             from language.local import LocalClient
             client = LocalClient(args.model, base_url=args.local, server_model=args.local_model)
-            parser = CompilerParser(instance, client)
+            parser = None if args.prompted else CompilerParser(instance, client)
         else:
             client = GeminiClient(args.model)
         report["system_two"] = eval_system_two(corpus, instance, client, args.limit, args.split, args.workers,

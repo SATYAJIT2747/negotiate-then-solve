@@ -493,7 +493,7 @@ change state.
 \toprule
 \textbf{Capability} & \textbf{Why the problem needs it} & \textbf{Measured by (vs.\ what)}\\
 \midrule
-Fine-tuning & Requests arrive continuously and include private staff details, so they must be compiled locally and cheaply; a prompted 2B model misreads local conventions (slot names, lab blocks) & Compilation F1: LoRA Qwen3.5-2B vs prompted 2B vs prompted Gemini Flash\\
+Fine-tuning & Requests arrive continuously and include private staff details, so they must be compiled locally and cheaply; a prompted 4B model misreads local conventions (slot names, lab blocks) & Compilation F1: LoRA Qwen3.5-4B vs prompted 4B vs prompted Gemini Flash\\
 RAG & Whether a request is allowed depends on this institute's handbook and circulars, which change each semester and no model knows & Recall@k, citation precision, verdict accuracy, abstention; vs no retrieval\\
 Reasoning & Turning a partial reply into a weakened constraint and writing a contrastive explanation are multi-step inferences over the conflict; each step is checked & Claim-level faithfulness, reply-to-constraint accuracy; A2\\
 Agentic & Negotiation spans many rounds and people; the ledger is memory across requests; escalation is a hand-off to a human & Resolution rate, rounds, escalation precision; vs B2 (no negotiation)\\
@@ -654,9 +654,10 @@ cost-sensitive, history-sensitive) test cross-family robustness.
 $\kappa$ against the faithfulness verifier and the simulator, and report
 LLM-scored metrics only where $\kappa\ge0.6$.
 
-\textbf{Models.} All LLM roles use local Qwen3.5-2B Q5\_K\_M (GGUF) via
-llama.cpp: prompted for negotiation, explanation, simulation and fallback
-parsing; LoRA-tuned for routine compilation. Gemini Flash is the large
+\textbf{Models.} The main model is local Qwen3.5-4B Q8\_0 (GGUF) via
+llama.cpp, with a LoRA adapter per task group: routine compilation, and the
+policy agent, reply tool calls and explanations; the prompted base model is
+the fallback parser. Qwen3.5-2B + LoRA is kept as a smaller comparison point. Gemini Flash is the large
 prompted parsing reference and re-runs a subset to check model bias.
 
 \subsection{Baselines and Ablations}
@@ -723,11 +724,12 @@ produce a proposal the checks or coordinator reject. Private reasons are
 never exposed; experiments use synthetic data in a sandboxed database.
 \end{tcolorbox}
 % ------------------------------------------------------------------
-\medskip\noindent\textbf{Compute.} LoRA training of the 2B compiler on $\approx$850 examples takes
-$\approx$1--2 GPU-hours per run on a free Kaggle T4 (16\,GB); we budget 3
-runs, $\approx$6 GPU-hours. The 650 runs and 100 reply cases need
-$\approx$6{,}000 short calls ($\approx$2.5 GPU-hours at $\approx$1.5\,s on a
-T4): $\approx$9 GPU-hours in total; the solver runs on a CPU.
+\medskip\noindent\textbf{Compute.} LoRA training of the 4B model on $\approx$850 examples is
+split across a free Kaggle 2$\times$T4 (16\,GB each), with checkpoints
+resumed across the 12-hour session limit: $\approx$3--5 GPU-hours per run;
+we budget 3 runs, $\approx$15 GPU-hours. The 650 runs and 100 reply cases need
+$\approx$6{,}000 short calls ($\approx$3.5 GPU-hours at $\approx$2\,s on a
+T4): $\approx$19 GPU-hours in total; the solver runs on a CPU.
 Gemini Flash (parsing reference on 151 requests; ours vs B4
 on 20 scenarios to check model bias) needs $\approx$600 free-tier calls (\$0).
 
@@ -745,7 +747,7 @@ restrict to the affected sub-problem, cap $K$. MCS misses acceptable options
 $\to$ admit verified stakeholder proposals; report the loss via oracle gap.
 Simulators biased or sharing a model $\to$ four families, rule-decided
 acceptance, Gemini Flash cross-check. Fine-tuned parser underperforms $\to$
-prompted model; report the negative result. 2B model misreads replies
+prompted model; report the negative result. 4B model misreads replies
 $\to$ grammar-constrained calls, coordinator fallback. Schedule slips $\to$ cut the
 router, then A3, then the pilot; never Ours vs B4.
 \end{document}
