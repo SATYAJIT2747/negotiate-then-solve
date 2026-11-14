@@ -472,6 +472,7 @@ function rounds(lines: Line[]): Line[][] {
 const STRIPE: Record<string, string> = { ok: "bg-ok", bad: "bg-bad", warn: "bg-warn", muted: "bg-ink-3" };
 
 function CaseCard({ c }: { c: Case }) {
+  const flag = [...c.outcome.matchAll(/“([^”]+)”/g)].map((m) => m[1]); // a leaked reason, named in the outcome
   const notes = c.lines.filter((l) => l.who === "Behind the scenes");
   const rs = rounds(c.lines.filter((l) => l.who !== "Behind the scenes"));
   return (
@@ -502,7 +503,7 @@ function CaseCard({ c }: { c: Case }) {
               </div>
             )}
             {bubbles(r).map((b, i) => (
-              <Bubble key={i} b={b} />
+              <Bubble key={i} b={b} flag={flag} />
             ))}
           </div>
         ))}
@@ -523,7 +524,7 @@ function bubbles(lines: Line[]): B[] {
   return out;
 }
 
-function Bubble({ b }: { b: B }) {
+function Bubble({ b, flag }: { b: B; flag: string[] }) {
   if (b.who === "Teacher") {
     const silent = b.text.startsWith("(");
     return (
@@ -552,8 +553,10 @@ function Bubble({ b }: { b: B }) {
         {!system && <p className="mb-0.5 text-[10.5px] font-semibold uppercase tracking-wide text-ink-3">{b.who}</p>}
         {b.who === "Options offered" ? (
           <OptionList text={b.text} />
+        ) : b.who === "System" ? (
+          <SystemMessage text={b.text} hasOptions={!!b.options} flag={flag} />
         ) : (
-          <p className="text-[12.5px] leading-relaxed text-ink">{b.text}</p>
+          <p className="text-[12.5px] leading-relaxed text-ink">{rich(b.text, flag)}</p>
         )}
         {b.options && (
           <div className="mt-2 border-t border-line pt-2">
@@ -613,3 +616,147 @@ function OptionList({ text }: { text: string }) {
     </div>
   );
 }
+
+// -- a system message, laid out: what was asked for, why it can't go as asked, what is offered -------------------------
+
+/** Sentences, not split after a title ("Dr. Nair") or inside a time ("9 am."). */
+function sentences(text: string): string[] {
+  return text
+    .split(/(?<=[.?!])\s+(?<!\b(?:Dr|Mr|Mrs|Ms|Prof|St)\.\s+)(?=[A-Z])/)
+    .map((s) => s.trim())
+    .filter(Boolean);
+}
+
+const strip = (s: string) => s.replace(/[.\s]+$/, "");
+const cap = (s: string) => s.charAt(0).toUpperCase() + s.slice(1);
+
+/** Splits the message into its parts. ``hasOptions``: the options are drawn below as chips, so the sentences that
+ * spell them out are left out here (they say the same thing). */
+function partsOf(text: string, hasOptions: boolean) {
+  const asked: string[] = [];
+  const why: string[] = [];
+  const offers: string[] = [];
+  const asks: string[] = [];
+  for (const s of sentences(text)) {
+    if (/\bOption [A-Z]\b/.test(s)) {
+      if (!hasOptions) offers.push(...s.split(/,\s+(?:and\s+)?(?=Option [A-Z])/).map(strip).filter((o) => /^Option [A-Z]\b/.test(o)));
+    } else if (/\?$/.test(s)) asks.push(s);
+    else if (/^(?:You requested|You asked for)\b/.test(s)) asked.push(cap(strip(s).replace(/^You (?:requested|asked for)\s+(?:the\s+)?/, "")));
+    else if (/\bneeds the\b/.test(s)) asked.push(strip(s));
+    else why.push(...s.split(/,\s+and\s+(?=[A-Z])/).map(strip));
+  }
+  return { asked, why, offers, asks };
+}
+
+function SystemMessage({ text, hasOptions, flag }: { text: string; hasOptions: boolean; flag: string[] }) {
+  const [raw, setRaw] = useState(false);
+  const p = partsOf(text, hasOptions);
+  const structured = p.asked.length + p.why.length + p.offers.length + p.asks.length > 1;
+  if (!structured || raw)
+    return (
+      <div>
+        <p className="text-[12.5px] leading-relaxed text-ink">{rich(text, flag)}</p>
+        {structured && <RawToggle raw={raw} onClick={() => setRaw(false)} />}
+      </div>
+    );
+  return (
+    <div className="space-y-2">
+      {p.asked.map((s, i) => (
+        <Part key={`a${i}`} label="Asked for">
+          <p className="text-[12.5px] leading-snug text-ink">{rich(s, flag)}</p>
+        </Part>
+      ))}
+      {p.why.length > 0 && (
+        <Part label={p.asked.length ? "Why it can't go as asked" : "What it says"}>
+          <ul className="space-y-1">
+            {p.why.map((s, i) => (
+              <li key={i} className="flex gap-2 text-[12.5px] leading-snug text-ink">
+                <span className="mt-[7px] size-1.5 shrink-0 rounded-full bg-ink-3/70" />
+                <span className="min-w-0">{rich(s, flag)}</span>
+              </li>
+            ))}
+          </ul>
+        </Part>
+      )}
+      {p.offers.length > 0 && (
+        <Part label="Offers">
+          <ul className="space-y-1">
+            {p.offers.map((s, i) => {
+              const m = /^Option ([A-Z])\s+(.*)$/.exec(s);
+              return (
+                <li key={i} className="flex items-start gap-2 text-[12.5px] leading-snug text-ink">
+                  <span className="grid size-5 shrink-0 place-items-center rounded bg-panel font-mono text-[11px] font-semibold text-ink-2">
+                    {m ? m[1] : "·"}
+                  </span>
+                  <span className="min-w-0 pt-px">{rich(m ? cap(m[2]) : s, flag)}</span>
+                </li>
+              );
+            })}
+          </ul>
+        </Part>
+      )}
+      {p.asks.map((s, i) => (
+        <p key={`q${i}`} className="text-[12.5px] italic leading-snug text-ink-2">{rich(s, flag)}</p>
+      ))}
+      <RawToggle raw={raw} onClick={() => setRaw(true)} />
+    </div>
+  );
+}
+
+function Part({ label, children }: { label: string; children: ReactNode }) {
+  return (
+    <div>
+      <p className="mb-0.5 text-[10.5px] font-semibold uppercase tracking-wide text-ink-3">{label}</p>
+      {children}
+    </div>
+  );
+}
+
+function RawToggle({ raw, onClick }: { raw: boolean; onClick: () => void }) {
+  return (
+    <button onClick={onClick} className="text-[11px] text-ink-3 underline-offset-2 hover:text-ink hover:underline">
+      {raw ? "Show laid out" : "Show the message as sent"}
+    </button>
+  );
+}
+
+const DAY_W = "(?:Mon|Tues|Wednes|Thurs|Fri|Satur)day";
+const CLK = "\\d{1,2}(?::\\d{2})?\\s?(?:am|pm)";
+const RICH = new RegExp(
+  [
+    `(\\[[A-Z][A-Z0-9-]+\\])`, // a rule id
+    `(\\b(?:Room|Lab|Hall)\\s+\\d+\\b)`, // a room
+    `(\\(([A-Z]\\d+-[A-Z])\\))`, // a class code
+    `(\\b${DAY_W}(?:,?\\s+(?:from\\s+${CLK}\\s+to\\s+${CLK}|at\\s+${CLK}|in the (?:morning|afternoon)|afternoon|morning))?)`, // a day, with its time
+    `(\\b(?:from\\s+)?${CLK}(?:\\s+to\\s+${CLK})?)`, // a time
+  ].join("|"),
+  "g",
+);
+
+/** The message's facts picked out: days and times in medium weight, rooms and classes as tags, the rule a reason
+ * comes from as a rule tag; ``flag``: words to mark as a problem (a private reason that leaked). */
+function rich(text: string, flag: string[]): ReactNode[] {
+  const marked = flag.filter(Boolean);
+  const out: ReactNode[] = [];
+  let k = 0;
+  const pieces = marked.length ? text.split(new RegExp(`(${marked.map(esc).join("|")})`, "gi")) : [text];
+  for (const piece of pieces) {
+    if (marked.some((f) => f.toLowerCase() === piece.toLowerCase())) {
+      out.push(<mark key={k++} className="rounded bg-bad/15 px-0.5 font-medium text-bad">{piece}</mark>);
+      continue;
+    }
+    let at = 0;
+    for (const m of piece.matchAll(RICH)) {
+      if (m.index! > at) out.push(piece.slice(at, m.index));
+      if (m[1]) out.push(<span key={k++} className="rounded bg-info/10 px-1 py-px font-mono text-[10.5px] text-info">{m[1].slice(1, -1)}</span>);
+      else if (m[2]) out.push(<span key={k++} className="whitespace-nowrap rounded border border-line bg-panel px-1 py-px text-[11.5px]">{m[2]}</span>);
+      else if (m[3]) out.push(<span key={k++} className="ml-0.5 rounded bg-panel px-1 py-px font-mono text-[10.5px] text-ink-3">{m[4]}</span>);
+      else out.push(<span key={k++} className="font-semibold">{m[0]}</span>);
+      at = m.index! + m[0].length;
+    }
+    if (at < piece.length) out.push(piece.slice(at));
+  }
+  return out;
+}
+
+const esc = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
