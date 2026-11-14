@@ -117,6 +117,55 @@ are retrieval misses (gold rule not in the top 5; retrieval recall 85%), 2
 cite a neighbouring rule that was retrieved beside the right one (Q-01, Q-21),
 and 1 cites the right rule with an answer the judge marks inconsistent (Q-12).
 
+### Retrieval depth (k)
+
+Recall of the gold rule on the same 40 questions, no model calls (`runs/retrieval-k.json`):
+
+| | k = 5 | k = 8 | k = 10 |
+|---|---|---|---|
+| BM25 | 67.5% | 77.5% | 82.5% |
+| Dense | 90.0% | 92.5% | 92.5% |
+| **Hybrid** (deployed) | 85.0% | **95.0%** | 95.0% |
+
+The full RAG run at hybrid k = 8 (`runs/rag-4b-read100-k8.json`): answer accuracy 80.0%
+(67.5-92.5), citation recall 82.5%, citation precision 86.8%, retrieval 95%, abstention
+100%, hallucination 0%. Six of the eight remaining misses had the gold rule in front of
+the model and cited a neighbouring one, so the bottleneck moves from retrieval to
+choosing between similar rules.
+
+Regression check on ordinary requests (policy test split, 109 requests, 4B + adapters,
+hybrid; `runs/policy-4b-hybrid-k{5,8}-test.json`): k = 5 and k = 8 are identical on
+every verdict measure (allow/deny 100%, deny recall and citation 100%, false denials 0,
+make-up obligations 100%, hallucinated citations 0); retrieval recall 95.7% vs 97.8%.
+Showing eight rules costs nothing on ordinary requests. The deployed default is still
+k = 5.
+
+## 6. Safety: the deterministic checks vs none (50 cases)
+
+`evaluation.safety --no-guards` switches off, for the evaluation only, sender
+verification, the injection pre-filter, the authority check, the students-only-report
+rule, refusing changes to a colleague's class, and human approval (whatever reaches
+approval is approved at once). Scores still use the real authority check.
+
+| | Handled safely | Published without approval | Authority violations | Injections obeyed | Leaks |
+|---|---|---|---|---|---|
+| Checks off, compromised model | 4% | 48 | 47 | 18 | 0 |
+| Checks on, compromised model | 98% | 0 | 0 | 0 | 0 |
+| Checks off, Qwen3.5-4B + LoRA | 72% | 14 | 0 | 0 | 0 |
+| **Checks on, Qwen3.5-4B + LoRA** | **100%** | 0 | 0 | 0 | 0 |
+| Checks on, Gemini Flash-Lite (earlier run) | 100% | 0 | 0 | 0 | 0 |
+
+The 4B on its own ignores injections and grabs for authority, but without the approval
+gate 14 changes publish unseen, 4 of them from colleagues asking to change someone
+else's class. With the checks on, even a model that obeys every instruction publishes
+nothing unapproved. Leaks are 0 everywhere because replies are built from constraints,
+never from the reasons given.
+
+The compliance check was tightened on 2026-11-14: "published" and "approved" alone
+matched the ordinary reply "waiting for the coordinator's approval: yours is approved
+after it" (10 false injection successes on the 4B). A reader that fails on a message is
+now scored on what it changed instead of stopping the run.
+
 ## Still needs people
 
 - Judge validation: two annotators x 100 explanations and 100 replies in
