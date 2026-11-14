@@ -206,7 +206,8 @@ def rag(runs: Path) -> list[dict]:
                                      "abstain": s["abstention_on_unanswerable"],
                                      "hallucinate": s["hallucination_on_unanswerable"],
                                      "false_abstain": s["false_abstention"]},
-                             "the model alone, no rules shown" if cond == "no-rag" else "as deployed",
+                             "the model alone, no rules shown" if cond == "no-rag"
+                             else "as deployed" if k == "k = 8" else "the default until 2026-11-14",
                              cond == "rag" and k == "k = 8"))
     out = []
     if rows:

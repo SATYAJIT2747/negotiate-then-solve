@@ -414,7 +414,7 @@ def _slot_denial(instance: Instance, rule: Rule) -> tuple[str, str]:
 
 
 class PolicyAgent:
-    def __init__(self, rules: list[Rule], client: GeminiClient, instance: Instance, k: int = 5,
+    def __init__(self, rules: list[Rule], client: GeminiClient, instance: Instance, k: int = 8,
                  retriever: str = "bm25") -> None:
         self.retriever_kind = retriever
         self.set_rules(rules)
@@ -491,7 +491,7 @@ class RulePolicyAgent:
 
     mode = "offline"
 
-    def __init__(self, rules: list[Rule], instance: Instance, k: int = 5, retriever: str = "bm25") -> None:
+    def __init__(self, rules: list[Rule], instance: Instance, k: int = 8, retriever: str = "bm25") -> None:
         self.retriever_kind = retriever
         self.set_rules(rules)
         self.instance = instance
@@ -499,7 +499,7 @@ class RulePolicyAgent:
 
     def set_rules(self, rules: list[Rule]) -> None:
         self.rules = {r.id: r for r in rules}
-        # stemming helps the top-1 answer; the LLM path sees top-5
+        # stemming helps the top-1 answer; the LLM path sees top-8
         self.retriever = make_retriever(rules, self.retriever_kind, stem=True)
 
     def review(self, text: str, parse: ParseResult | None = None) -> PolicyDecision:

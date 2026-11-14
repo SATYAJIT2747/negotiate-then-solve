@@ -177,7 +177,8 @@ train System One on templates and test it on paraphrases.
 (`data/handbook.md`, **a synthetic stand-in**: replace it with the
 institute's handbook, one `## <number> <title> [RULE-ID]` heading per rule).
 
-1. Retrieval returns the top 5 rules. The query is extended with what the
+1. Retrieval returns the top 8 rules (5 until 2026-11-14: at 8 the hybrid retriever finds the rule for 95% of
+   paraphrased questions against 85%, with every verdict on the policy test unchanged; docs/remaining-runs-2026-11-14.md). The query is extended with what the
    parse implies (a one-off absence adds "make-up", a run of more hours than
    the limit adds "consecutive"). Three retrievers (`--retriever`, or
    `NTS_RETRIEVER` in the web app):

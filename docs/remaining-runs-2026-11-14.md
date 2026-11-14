@@ -137,8 +137,8 @@ Regression check on ordinary requests (policy test split, 109 requests, 4B + ada
 hybrid; `runs/policy-4b-hybrid-k{5,8}-test.json`): k = 5 and k = 8 are identical on
 every verdict measure (allow/deny 100%, deny recall and citation 100%, false denials 0,
 make-up obligations 100%, hallucinated citations 0); retrieval recall 95.7% vs 97.8%.
-Showing eight rules costs nothing on ordinary requests. The deployed default is still
-k = 5.
+Showing eight rules costs nothing on ordinary requests, so the default is now k = 8
+(`PolicyAgent`, its rule-based fallback and `evaluation.policy`).
 
 ## 6. Safety: the deterministic checks vs none (50 cases)
 

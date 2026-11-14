@@ -125,7 +125,7 @@ def main() -> None:
     ap.add_argument("--workers", type=int, default=4)
     ap.add_argument("--parser-model", default=None, help="default: the agent model")
     ap.add_argument("--policy-model", default=None, help="default: the agent model")
-    ap.add_argument("--k", type=int, default=5, help="rules retrieved per request")
+    ap.add_argument("--k", type=int, default=8, help="rules retrieved per request (8 since 2026-11-14; the earlier recorded runs used 5)")
     ap.add_argument("--retriever", default="bm25", choices=RETRIEVERS,
                     help="bm25 (the recorded runs), dense, or hybrid (BM25 + embeddings, reciprocal rank fusion)")
     ap.add_argument("--local", action="store_true",
