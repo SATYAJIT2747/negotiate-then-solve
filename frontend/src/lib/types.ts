@@ -630,7 +630,27 @@ export type Experiment =
   | { id: string; title: string; subtitle?: string; at: string; kind: "models"; rows: ModelRow[] }
   | { id: string; title: string; at: string; kind: "safety"; summary: Record<string, unknown> }
   | { id: string; title: string; subtitle?: string; at: string; kind: "table"; icon?: string; question?: string; takeaway?: string; chart?: string; columns: TableCol[]; rows: TableRow[]; notes: string[] }
-  | { id: string; title: string; at: string; kind: "findings"; items: Finding[]; pending: string[] };
+  | { id: string; title: string; at: string; kind: "findings"; items: Finding[]; pending: string[] }
+  | { id: string; title: string; at: string; kind: "intro"; problem: string; question: string; approach: string[] }
+  | {
+      id: string; title: string; at: string | null; kind: "chapter"; icon: string; question: string; method: string[];
+      compared: { name: string; tag: string; desc: string; ours: boolean }[]; takeaway: string; charts: ChapterChart[];
+      notes: string[]; table: { columns: TableCol[]; rows: TableRow[] } | null; setup: string;
+    }
+  | { id: string; title: string; at: string; kind: "conclusions"; items: Finding[]; pending: string[] };
+
+/** A chart in an Experiments chapter (src/web/experiments.py): bars per category, or a line over the categories. */
+export interface ChapterChart {
+  type: "bar" | "line";
+  title: string;
+  caption: string;
+  categories: string[];
+  series: { name: string; data: (number | null)[]; ours: boolean; error: [number, number][] | null }[];
+  fmt: "pct" | "num" | "int";
+  max: number | null;
+  x_label: string;
+  y_label: string;
+}
 
 /** One claim on the Experiments page: whether the experiments support it, the deciding numbers, and its section. */
 export interface Finding {
