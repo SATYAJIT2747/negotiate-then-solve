@@ -6,7 +6,8 @@ import {
 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 import {
-  Bar, BarChart, CartesianGrid, ErrorBar, LabelList, Legend, Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis,
+  Bar, BarChart, CartesianGrid, Cell, ErrorBar, LabelList, Legend, Line, LineChart, ReferenceLine, ResponsiveContainer, Tooltip,
+  XAxis, YAxis,
 } from "recharts";
 import { Card, EmptyState, PageHeader, Skeleton } from "../components/ui";
 import { api } from "../lib/api";
@@ -202,8 +203,8 @@ const fmtValue = (fmt: ChapterChart["fmt"], v: number | null | undefined) =>
 
 function usePalette() {
   const t = useTokens();
-  // our system in the brand colour; the others in quieter, distinct colours
-  return { ours: t.brand, others: [t["ink-3"], t.info, t.warn, t.bad, t.ok], grid: t.line, ink: t["ink-3"] };
+  // the brand colour means our system and nothing else; other systems and measures get quieter, distinct colours
+  return { ours: t.brand, others: [t["ink-3"], t.info, t.warn, t.bad, t.ok], grid: t.line, ink: t["ink-3"], ink2: t["ink-2"], text: t.ink, muted: t.line };
 }
 
 function ChartView({ ch, wide }: { ch: ChapterChart; wide?: boolean }) {
@@ -223,30 +224,58 @@ function colours(ch: ChapterChart, p: ReturnType<typeof usePalette>) {
   return ch.series.map((s) => (s.ours ? p.ours : p.others[i++ % p.others.length]));
 }
 
-/** Horizontal bars: one row per category, a bar per series, values written at the bar's end. */
+/** Horizontal bars: one row per category, a bar per series, the value written at every bar's end (also 0, and
+ * "n/a" when there is none). With one series our system's bar is the only coloured one; with several, the series
+ * are measures in neutral colours (or systems, ours in the brand colour) and our system's row is labelled in bold. */
 function BarsView({ ch }: { ch: ChapterChart }) {
   const p = usePalette();
-  const cols = colours(ch, p);
+  const single = ch.series.length === 1;
+  const seriesOurs = ch.series.some((s) => s.ours);
+  const cols = seriesOurs ? colours(ch, p) : ch.series.map((_, j) => (single ? p.others[0] : [p.ink2, p.others[1], p.others[2], p.others[3]][j % 4]));
+  const isOurs = (name: string) => ch.ours.includes(name);
   const data = ch.categories.map((c, i) => ({
     name: c,
-    ...Object.fromEntries(ch.series.map((s, j) => [`s${j}`, s.data[i]])),
-    ...Object.fromEntries(ch.series.map((s, j) => [`e${j}`, s.error?.[i] ? [s.data[i]! - s.error[i][0], s.error[i][1] - s.data[i]!] : undefined])),
+    ...Object.fromEntries(ch.series.map((s, j) => [`s${j}`, s.data[i] ?? 0])),
+    ...Object.fromEntries(ch.series.map((s, j) => [`v${j}`, s.data[i]])),
+    ...Object.fromEntries(ch.series.map((s, j) => [`e${j}`, s.error?.[i] && s.data[i] !== null ? [s.data[i]! - s.error[i][0], s.error[i][1] - s.data[i]!] : undefined])),
   }));
-  const single = ch.series.length === 1;
-  const height = ch.categories.length * (single ? 34 : 18 * ch.series.length + 14) + (single ? 20 : 48);
+  const height = ch.categories.length * (single ? 34 : 18 * ch.series.length + 14) + (single ? 24 : 52) + (ch.reference ? 16 : 0);
   const max = ch.max ?? (ch.fmt === "pct" ? 1 : undefined);
+  const Tick = ({ x, y, payload }: { x?: number; y?: number; payload?: { value: string } }) => {
+    const v = payload?.value ?? "";
+    return (
+      <text x={x} y={y} dy={4} textAnchor="end" fontSize={12} fill={isOurs(v) ? p.text : p.ink} fontWeight={isOurs(v) ? 700 : 400}>
+        {v.length > 26 ? `${v.slice(0, 25)}…` : v}
+      </text>
+    );
+  };
   return (
     <div style={{ height }}>
       <ResponsiveContainer>
-        <BarChart data={data} layout="vertical" margin={{ top: 0, right: 48, bottom: 0, left: 0 }} barCategoryGap={single ? 8 : 10} barGap={2}>
+        <BarChart data={data} layout="vertical" margin={{ top: ch.reference ? 16 : 0, right: 52, bottom: 0, left: 0 }} barCategoryGap={single ? 8 : 10} barGap={2}>
           <CartesianGrid horizontal={false} stroke={p.grid} strokeDasharray="3 3" />
           <XAxis type="number" domain={[0, max ?? "auto"]} tickFormatter={(v) => fmtValue(ch.fmt, v)} tick={{ fill: p.ink, fontSize: 11 }} axisLine={false} tickLine={false} />
-          <YAxis type="category" dataKey="name" width={170} tick={{ fill: p.ink, fontSize: 12 }} axisLine={false} tickLine={false} interval={0} />
-          <Tooltip cursor={{ fill: "var(--panel-2)" }} formatter={(v) => fmtValue(ch.fmt, Number(v))} contentStyle={{ background: "var(--panel)", border: "1px solid var(--line)", borderRadius: 6, fontSize: 12 }} />
+          <YAxis type="category" dataKey="name" width={180} tick={<Tick />} axisLine={false} tickLine={false} interval={0} />
+          <Tooltip cursor={{ fill: "var(--panel-2)" }} formatter={(_v, name, item) => {
+            const j = ch.series.findIndex((s) => s.name === name);
+            return [fmtValue(ch.fmt, (item?.payload as Record<string, number | null>)?.[`v${j}`]), name];
+          }} contentStyle={{ background: "var(--panel)", border: "1px solid var(--line)", borderRadius: 6, fontSize: 12 }} />
           {!single && <Legend verticalAlign="top" align="left" iconSize={9} wrapperStyle={{ fontSize: 12, paddingBottom: 6 }} />}
+          {ch.reference && (
+            <ReferenceLine x={ch.reference.value} stroke={p.ink} strokeDasharray="5 4" ifOverflow="extendDomain"
+              label={{ value: `${ch.reference.label}: ${fmtValue(ch.fmt, ch.reference.value)} (best possible)`, position: "top", fill: p.ink, fontSize: 11 }} />
+          )}
           {ch.series.map((s, j) => (
-            <Bar key={s.name} dataKey={`s${j}`} name={s.name} fill={cols[j]} radius={[0, 3, 3, 0]} isAnimationActive={false}>
-              <LabelList dataKey={`s${j}`} position="right" formatter={(v: unknown) => fmtValue(ch.fmt, v as number)} style={{ fill: "var(--ink-2)", fontSize: 11 }} />
+            <Bar key={s.name} dataKey={`s${j}`} name={s.name} fill={cols[j]} radius={[0, 3, 3, 0]} isAnimationActive={false} minPointSize={0}>
+              {single && data.map((d) => <Cell key={d.name} fill={isOurs(d.name) ? p.ours : p.others[0]} />)}
+              <LabelList dataKey={`v${j}`} content={(props) => {
+                const { x, y, width, height: h, value } = props as { x: number; y: number; width: number; height: number; value: number | null };
+                return (
+                  <text x={Number(x) + Number(width) + 5} y={Number(y) + Number(h) / 2} dy={4} fontSize={11} fill={value === null || value === undefined ? p.ink : "var(--ink-2)"}>
+                    {value === null || value === undefined ? "n/a" : fmtValue(ch.fmt, value)}
+                  </text>
+                );
+              }} />
               {s.error && <ErrorBar dataKey={`e${j}`} width={4} stroke={p.ink} direction="x" />}
             </Bar>
           ))}

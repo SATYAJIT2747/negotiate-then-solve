@@ -10,7 +10,12 @@ A chapter tells one experiment in order: the question, what we did (``method`` s
 
     chart = {"type": "bar" | "line", "title", "caption", "categories": [str],
              "series": [{"name", "data": [number | None], "ours": bool, "error": [[lo, hi]] | None}],
-             "fmt": "pct" | "num" | "int", "max": number | None, "x_label", "y_label"}
+             "fmt": "pct" | "num" | "int", "max": number | None, "x_label", "y_label",
+             "ours": [category], "reference": {"label", "value"} | None}
+
+Colour means one thing on the page: our system. A series is ``ours`` only when the series are systems (a line
+per version); when the series are measures, our system is named in ``ours`` (its categories) and the measures
+get neutral colours. ``reference`` is a dashed line such as the oracle's best possible value.
 
 ``intro`` and ``conclusions`` frame them. Every number is read from a result file in ``runs/`` (or, for the agent
 adapters, ``docs/regression-matrix.md``); a chapter whose files are missing is left out, so the same module serves
@@ -50,9 +55,10 @@ def _series(name, data, ours=False, error=None):
     return {"name": name, "data": data, "ours": ours, "error": error}
 
 
-def _chart(title, categories, series, fmt="pct", caption="", type_="bar", max_=None, x_label="", y_label=""):
+def _chart(title, categories, series, fmt="pct", caption="", type_="bar", max_=None, x_label="", y_label="",
+           ours=(), reference=None):
     return {"type": type_, "title": title, "caption": caption, "categories": categories, "series": series, "fmt": fmt,
-            "max": max_, "x_label": x_label, "y_label": y_label}
+            "max": max_, "x_label": x_label, "y_label": y_label, "ours": list(ours), "reference": reference}
 
 
 def _who(name, desc, tag="", ours=False):
@@ -100,26 +106,36 @@ def main_comparison(runs: Path) -> list[dict]:
     paired, _ = _load(runs / "negotiation-main-paired.json")
     order = [k for k in MAIN_NAMES if k in configs]
     names = [MAIN_NAMES[k][0] for k in order]
+    systems = [k for k in order if k != "oracle"]  # the oracle is the line they are measured against, not a bar
+    snames = [MAIN_NAMES[k][0] for k in systems]
+    oracle = configs.get("oracle", {})
     o, b4 = configs["ours-llm"], configs["B4"]
     pv = (paired or {}).get("ours-llm vs B4", {})
     charts = [
-        _chart("How many conflicts each system resolves", names,
-               [_series("Conflicts resolved", [configs[k].get("agreement_rate") for k in order], True),
-                _series("Ended as the oracle did", [configs[k].get("correct_outcome") for k in order])],
-               caption="Resolved: a resolvable conflict ended in an agreement everyone accepted. The oracle resolves "
-                       "every resolvable one."),
-        _chart("How far from the best possible timetable", [n for k, n in zip(order, names, strict=True)
-                                                           if configs[k].get("objective_gap_abs_mean") is not None],
-               [_series("Gap to the oracle's cost", [configs[k]["objective_gap_abs_mean"] for k in order
-                                                     if configs[k].get("objective_gap_abs_mean") is not None], True)],
-               fmt="num", caption="Mean distance of the final timetable's cost from the oracle's. Lower is better."),
+        _chart("How many conflicts each system resolves", snames,
+               [_series("Conflicts resolved", [configs[k].get("agreement_rate") or 0 for k in systems])],
+               caption="Of the conflicts that can be settled, the share that ended in an agreement everyone accepted. "
+                       "Imposing a fix (solver decides) or writing the timetable (LLM) never ends in an agreement.",
+               ours=["Our system"], reference={"label": "Oracle", "value": oracle.get("agreement_rate", 1.0)}),
+        _chart("Did each conflict end the right way?", snames,
+               [_series("Ended as the oracle did", [configs[k].get("correct_outcome") or 0 for k in systems])],
+               caption="All 60 conflicts: settled where it could be, escalated to a person where nobody could give "
+                       "way. Higher than the chart beside it because escalating the impossible ones counts as right.",
+               ours=["Our system"], reference={"label": "Oracle", "value": oracle.get("correct_outcome", 1.0)}),
+        _chart("How far from the best possible timetable",
+               [MAIN_NAMES[k][0] for k in systems if configs[k].get("objective_gap_abs_mean") is not None],
+               [_series("Gap to the oracle's cost", [configs[k]["objective_gap_abs_mean"] for k in systems
+                                                     if configs[k].get("objective_gap_abs_mean") is not None])],
+               fmt="num", ours=["Our system"],
+               caption="Mean distance of the final timetable's cost from the oracle's (0 = as good as the best "
+                       "possible). Lower is better."),
     ]
     inv = [k for k in ("ours-llm", "B3", "B4") if k in configs]
     charts.append(_chart(
         "What inventing options costs", [MAIN_NAMES[k][0] for k in inv],
-        [_series("LLM calls to make options", [configs[k].get("option_calls_per_scenario") or 0 for k in inv], True),
+        [_series("LLM calls to make options", [configs[k].get("option_calls_per_scenario") or 0 for k in inv]),
          _series("Impossible options thrown away", [configs[k].get("filtered_per_scenario") or 0 for k in inv])],
-        fmt="num", caption=f"Per conflict. Unchecked, {_pct(configs.get('B3', {}).get('invalid_candidate_rate'))} of "
+        fmt="num", ours=["Our system"], caption=f"Per conflict. Unchecked, {_pct(configs.get('B3', {}).get('invalid_candidate_rate'))} of "
                            "the invented options are impossible; our system needs no calls because the solver "
                            "enumerates the options."))
     fams = [f for f in FAMILY if any(r.get("family") == f for r in rows["ours-llm"])]
@@ -223,7 +239,8 @@ def bias_check(runs: Path) -> list[dict]:
         f"conflicts and the baseline {rows[-1]['cells']['resolved']}; our system resolves the same conflicts on either "
         "model.",
         [_chart("Conflicts resolved on the same 20 scenarios", [r["label"] for r in rows],
-                [_series("Resolved", [r["cells"]["resolved"] for r in rows], True)], fmt="int",
+                [_series("Resolved", [r["cells"]["resolved"] for r in rows])], fmt="int",
+                ours=[r["label"] for r in rows if r["highlight"]],
                 caption="Our system's result does not depend on which model writes its messages.")],
         [f"20 scenarios are too few for significance on their own ({p.get('only_first', '?')} vs "
          f"{p.get('only_second', '?')} discordant, {_p(p.get('p'))}); the 180-pair main run is significant."],
@@ -275,9 +292,10 @@ def ablations(runs: Path) -> list[dict]:
         "colleague, against none. The other parts make no difference on these one-off conflicts; they matter where "
         "the next chapters test them.",
         [_chart("Private reasons that reached a colleague", names,
-                [_series("Leaks", [r["cells"]["leaks"] for r in rows], True)], fmt="int",
+                [_series("Leaks", [r["cells"]["leaks"] for r in rows])], fmt="int", ours=["Our system"],
                 caption="A teacher's private reason (an illness, say) named in a message to someone else."),
-         _chart("First offer accepted", names, [_series("Accepted", [r["cells"]["first"] for r in rows], True)],
+         _chart("First offer accepted", names, [_series("Accepted", [r["cells"]["first"] for r in rows])],
+                ours=["Our system"],
                 caption="Negotiations where the first option offered was taken.")],
         ["Without grounding, a private reason leaked in every scenario that had one to leak (4 of 4); with grounding, "
          "in none.",
@@ -347,8 +365,8 @@ def fairness(runs: Path) -> list[dict]:
                  for k in keys], fmt="num",
                 caption=f"Mean over {rep['seeds']} semesters of {rep['conflicts']} conflicts."),
          _chart("The price of fairness", [FAIRNESS_NAMES[k][0] for k in keys],
-                [_series("Students affected per conflict", [s[k].get("students_per_conflict") for k in keys], True)],
-                fmt="num", caption="Students in the section of the teacher who gave way: spreading the burden means "
+                [_series("Students affected per conflict", [s[k].get("students_per_conflict") for k in keys])],
+                fmt="num", ours=["Our system"], caption="Students in the section of the teacher who gave way: spreading the burden means "
                                    "sometimes moving a bigger section.")],
         [f"Flat weights look about as even (p = {p('ours vs flat', 'gini'):.2f}), but only because they ignore who is "
          f"affected: they move bigger sections ({s['flat']['students_per_conflict']:.1f} students per conflict against "
@@ -391,7 +409,7 @@ def models(runs: Path) -> list[dict]:
         return []
     ft = next((r for r in rows if r["highlight"]), rows[0])
     base = next((r for r in rows if "4B base" in r["label"]), None)
-    short = [r["label"].split(" · ")[0].replace("Qwen3.5-", "").replace(" (prompted)", "") for r in rows]
+    short = [r["label"].replace("Qwen3.5-", "").replace(" (prompted)", "").replace("Gemini 3.5 ", "Gemini ") for r in rows]
     take = (f"Fine-tuning is what makes the small local model usable: with its adapter the 4B reads "
             f"{_pct(ft['cells']['read'])} of requests exactly and gets {_pct(ft['cells']['reply'])} of replies right, "
             f"against {_pct(base['cells']['read'])} and {_pct(base['cells']['reply'])} prompted.") if base else ""
@@ -408,10 +426,11 @@ def models(runs: Path) -> list[dict]:
          _who("Keyword rules", "no model")],
         take,
         [_chart("Each model on the three jobs", short,
-                [_series("Requests read exactly", [r["cells"]["read"] for r in rows], True),
+                [_series("Requests read exactly", [r["cells"]["read"] for r in rows]),
                  _series("Replies: right tool call", [r["cells"]["reply"] for r in rows]),
                  _series("Policy: right verdict", [r["cells"]["policy"] for r in rows])],
-                caption="A missing bar: that model was not run on that job.")],
+                caption="\"n/a\": that model was not run on that job.",
+                ours=[short[i] for i, r in enumerate(rows) if r["highlight"]])],
         ["The prompted 4B reads under half the requests exactly and takes 13 s per request; with the adapter it reads "
          "98% in 2 s, because the adapter needs only a short prompt.",
          "The fine-tuned 4B matches or beats Gemini Flash-Lite on every job while running on a single local GPU."],
@@ -531,11 +550,13 @@ def safety(runs: Path) -> list[dict]:
         [_who(r["label"], r["sub"], ours=r["highlight"]) for r in rows],
         "The safety lives in the code checks, not the model: with them on, nothing is published without approval even "
         f"when the model obeys every instruction; with them off, {worst['unapproved']} of 50 attacks get published.",
-        [_chart("Attacks handled safely", names, [_series("Handled safely", [r["cells"]["pass"] for r in rows], True)]),
+        [_chart("Attacks handled safely", names, [_series("Handled safely", [r["cells"]["pass"] for r in rows])],
+                ours=[r["label"] for r in rows if r["highlight"]]),
          _chart("What got through", names,
                 [_series("Published without approval", [r["cells"]["unapproved"] for r in rows]),
                  _series("Authority violations", [r["cells"]["authority"] for r in rows]),
                  _series("Injections obeyed", [r["cells"]["injection"] for r in rows])], fmt="int",
+                ours=[r["label"] for r in rows if r["highlight"]],
                 caption="Counts out of 50 attacks.")],
         ["Even on its own the fine-tuned model ignores injections and authority claims; without human approval, "
          "though, 14 changes go out that nobody checked.",
@@ -595,7 +616,8 @@ def head_to_head(runs: Path) -> list[dict]:
                          s == "agent") for s in systems],
                 caption="Share of each kind of request handled correctly."),
          _chart("Time per request", [r["label"] for r in rows],
-                [_series("Median seconds", [r["cells"]["median"] for r in rows], True)], fmt="num")],
+                [_series("Median seconds", [r["cells"]["median"] for r in rows])], fmt="num",
+                ours=[r["label"] for r in rows if r["highlight"]])],
         ["The agent's result includes five requests rerun after a fix for absences."] if fixed else [],
         {"columns": [_col("passed", "Passed", "text"), _col("pass", "Pass rate", "pct", "high"),
                      _col("action", "Right action", "pct", "high"), _col("median", "Median seconds", "num", "low")],
@@ -636,9 +658,9 @@ def agent_adapters(root: Path) -> list[dict]:
         [_who(r["label"], r["sub"], ours=r["highlight"]) for r in rows],
         "No: both v7 adapters scored lower, so the deployed v6 stays.",
         [_chart("Episodes passed", [r["label"] for r in rows],
-                [_series("Passed", [r["cells"]["rate"] for r in rows], True,
+                [_series("Passed", [r["cells"]["rate"] for r in rows], False,
                          [[r["cells"]["lo"], r["cells"]["hi"]] for r in rows])],
-                caption="With 95% intervals.")],
+                caption="With 95% intervals.", ours=[r["label"] for r in rows if r["highlight"]])],
         ["v7 lost ground on counter-offers, no reply and fallbacks."],
         {"columns": [_col("rate", "Passed", "pct", "high"), _col("passed", "Count", "text")], "rows": rows}, "", at)]
 

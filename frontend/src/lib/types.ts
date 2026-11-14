@@ -650,6 +650,10 @@ export interface ChapterChart {
   max: number | null;
   x_label: string;
   y_label: string;
+  /** categories that are our system: drawn in the brand colour, labelled in bold */
+  ours: string[];
+  /** a dashed line to measure against, such as the oracle's best possible value */
+  reference: { label: string; value: number } | null;
 }
 
 /** One claim on the Experiments page: whether the experiments support it, the deciding numbers, and its section. */
