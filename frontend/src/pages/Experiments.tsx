@@ -444,6 +444,15 @@ function ExampleView({ x }: { x: WorkedExample }) {
               <RequestCard key={r.who + r.text} r={r} />
             ))}
           </div>
+          {x.hidden && (
+            <div className="mt-2.5 flex gap-2.5 rounded-lg border border-dashed border-line px-3 py-2">
+              <Eye className="mt-0.5 size-4 shrink-0 text-ink-3" />
+              <p className="text-[12.5px] leading-relaxed text-ink-2">
+                <span className="font-semibold text-ink">What no system is told: </span>
+                {x.hidden}. Each option below is checked against this.
+              </p>
+            </div>
+          )}
         </>
       ) : (
         <div className="mt-2 flex gap-2.5 rounded-lg border-l-[3px] border-brand/60 bg-panel px-3 py-2.5">
@@ -513,6 +522,25 @@ function Avatar({ name, small = false }: { name: string; small?: boolean }) {
   );
 }
 
+/** How many of a system's offers the person asked could actually take: the number that decides the example. */
+function Usable({ u }: { u: { ok: number; of: number; bad: number } }) {
+  return (
+    <div className="flex items-center gap-2.5 border-b border-line px-3.5 py-2">
+      <div className="flex gap-0.5">
+        {Array.from({ length: u.of }, (_, i) => (
+          <span key={i} className={clsx("h-2 w-3 rounded-sm", i < u.ok ? "bg-ok" : i < u.ok + u.bad ? "bg-bad/70" : "bg-ink-3/40")} />
+        ))}
+      </div>
+      <p className="text-[12px] text-ink-2">
+        <span className={clsx("font-semibold", u.ok ? "text-ok" : "text-bad")}>
+          {u.ok} of {u.of}
+        </span>{" "}
+        options the teacher could take
+      </p>
+    </div>
+  );
+}
+
 type Case = WorkedExample["cases"][number];
 type Line = Case["lines"][number];
 
@@ -543,6 +571,7 @@ function CaseCard({ c }: { c: Case }) {
         </span>
         <span className={clsx("rounded-full px-2 py-0.5 text-[11.5px] font-semibold", TONE[c.tone] ?? TONE.muted)}>{c.outcome}</span>
       </div>
+      {c.usable && <Usable u={c.usable} />}
       <div className="space-y-3 px-3.5 py-3">
         {notes.map((l, i) => (
           <p key={i} className="flex items-center gap-1.5 rounded-md bg-panel-2 px-2 py-1 text-[11.5px] text-ink-3">
@@ -570,12 +599,15 @@ function CaseCard({ c }: { c: Case }) {
 }
 
 /** A system message carries the options that follow it; everything else stands alone. */
-type B = { who: string; text: string; to?: string; options?: string };
+type B = { who: string; text: string; to?: string; options?: string; verdicts?: Verdict[] };
 function bubbles(lines: Line[]): B[] {
   const out: B[] = [];
   for (const l of lines) {
     const last = out[out.length - 1];
-    if (l.who === "Options offered" && last?.who === "System" && !last.options) last.options = l.text;
+    if (l.who === "Options offered" && last?.who === "System" && !last.options) {
+      last.options = l.text;
+      last.verdicts = l.verdicts;
+    }
     else out.push({ ...l });
   }
   return out;
@@ -615,7 +647,7 @@ function Bubble({ b, flag }: { b: B; flag: string[] }) {
           </p>
         )}
         {b.who === "Options offered" ? (
-          <OptionList text={b.text} />
+          <OptionList text={b.text} verdicts={b.verdicts} />
         ) : b.who === "System" ? (
           <SystemMessage text={b.text} hasOptions={!!b.options} flag={flag} />
         ) : (
@@ -623,7 +655,7 @@ function Bubble({ b, flag }: { b: B; flag: string[] }) {
         )}
         {b.options && (
           <div className="mt-2 border-t border-line pt-2">
-            <OptionList text={b.options} />
+            <OptionList text={b.options} verdicts={b.verdicts} />
           </div>
         )}
       </div>
@@ -640,7 +672,14 @@ function parseOption(t: string) {
   return { name: m[1], code: m[2], slot: `${DAY[m[3]] ?? m[3]} ${m[4]}`, room: m[5] };
 }
 
-function OptionList({ text }: { text: string }) {
+type Verdict = { verdict: "ok" | "meh" | "bad" | ""; note: string };
+const OPTION_LOOK: Record<string, { icon: typeof CheckCircle2; cls: string; row: string }> = {
+  ok: { icon: CheckCircle2, cls: "text-ok", row: "border-ok/40 bg-ok/[0.06]" },
+  meh: { icon: CircleDashed, cls: "text-ink-3", row: "border-line bg-panel" },
+  bad: { icon: XCircle, cls: "text-bad", row: "border-bad/30 bg-bad/[0.05]" },
+};
+
+function OptionList({ text, verdicts }: { text: string; verdicts?: Verdict[] }) {
   const items = text.split(" · ");
   const parsed = items.map(parseOption);
   const codes = new Set(parsed.map((o) => o?.code));
@@ -658,20 +697,26 @@ function OptionList({ text }: { text: string }) {
       <div className="mt-1.5 grid gap-1">
         {items.map((t, i) => {
           const o = parsed[i];
+          const v = verdicts?.[i];
+          const look = v?.verdict ? OPTION_LOOK[v.verdict] : null;
           return (
-            <div key={i} className="flex items-center gap-2 rounded-md border border-line bg-panel px-2 py-1 text-[12px]">
-              <span className="grid size-5 shrink-0 place-items-center rounded bg-panel-2 font-mono text-[11px] font-semibold text-ink-2">
-                {String.fromCharCode(65 + i)}
-              </span>
-              {o ? (
-                <span className="text-ink">
-                  {!shared && <span className="mr-1 font-mono text-ink-3">{o.code}</span>}
-                  <span className="font-medium">{o.slot}</span>
-                  <span className="text-ink-3"> · {o.room}</span>
+            <div key={i} className={clsx("rounded-md border px-2 py-1 text-[12px]", look?.row ?? "border-line bg-panel")}>
+              <div className="flex items-center gap-2">
+                <span className="grid size-5 shrink-0 place-items-center rounded bg-panel-2 font-mono text-[11px] font-semibold text-ink-2">
+                  {String.fromCharCode(65 + i)}
                 </span>
-              ) : (
-                <span className="text-ink">{t}</span>
-              )}
+                {o ? (
+                  <span className="flex-1 text-ink">
+                    {!shared && <span className="mr-1 font-mono text-ink-3">{o.code}</span>}
+                    <span className="font-medium">{o.slot}</span>
+                    <span className="text-ink-3"> · {o.room}</span>
+                  </span>
+                ) : (
+                  <span className="flex-1 text-ink">{t}</span>
+                )}
+                {look && <look.icon className={clsx("size-4 shrink-0", look.cls)} />}
+              </div>
+              {v?.note && <p className={clsx("mt-0.5 pl-7 text-[11px] leading-snug", look?.cls)}>{v.note}</p>}
             </div>
           );
         })}

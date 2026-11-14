@@ -72,14 +72,95 @@ def _recipient(prose: str, reqs: list[dict]) -> str:
     return next((n for n in names if n not in named), "") if len(named) == 1 else ""
 
 
-def _negotiation(r: dict, limit: int, reqs: list[dict] | None = None) -> list[dict]:
+_DAYS = {"Monday": "Mon", "Tuesday": "Tue", "Wednesday": "Wed", "Thursday": "Thu", "Friday": "Fri"}
+_OPTION = re.compile(r"\(([^)]+)\)\s+on\s+(\w+day)\s+at\s+(\d{1,2})(?::\d{2})?\s*(am|pm)\s+in\s+(.+)$")
+
+
+def _hours(slots: list[int]) -> str:
+    """Slots 5-7 -> "2–5 pm" (each slot is an hour from 9 am)."""
+    def h(s):
+        x = SLOT_HOUR + s
+        return x - 12 if x > 12 else x
+    lo, hi = min(slots), max(slots) + 1
+    return f"{h(lo)}–{h(hi)} {'pm' if SLOT_HOUR + hi >= 12 else 'am'}"
+
+
+def _option_judge(sc: dict):
+    """Checks an offered option against what the scenario knows and no negotiator is told: each teacher's hidden
+    availability (``profiles``: the times that would really work for them) and what they said they cannot do
+    (their own hard ``unavailable`` constraints). Returns judge(option_text, row) -> {"verdict", "note"}, where
+    verdict is ok (the person asked can take it), meh (allowed, but not a time they can do) or bad."""
+    inst = sc.get("instance") or {}
+    sessions = {s["id"]: s for s in inst.get("sessions", [])}
+    rooms = {r["name"]: r for r in inst.get("rooms", [])}
+    names = {f["id"]: f["name"] for f in inst.get("faculty", [])}
+    profiles = {p["owner"]: p for p in sc.get("profiles") or []}
+    unavailable = [c for c in sc.get("planted") or [] if c.get("type") == "unavailable" and c.get("hard")]
+
+    def judge(text: str, row: dict) -> dict:
+        m = _OPTION.search(text)
+        if not m or m.group(1) not in sessions:
+            return {"verdict": "", "note": ""}
+        sid, day, hour, ampm, room = m.group(1), _DAYS.get(m.group(2), m.group(2)), int(m.group(3)), m.group(4), m.group(5)
+        hour = hour + 12 if ampm == "pm" and hour != 12 else hour
+        s = sessions[sid]
+        span = set(range(hour - SLOT_HOUR, hour - SLOT_HOUR + s.get("duration", 1)))
+        who = names.get(s["faculty"], s["faculty"])
+        if row.get("offers") and row.get("invalid_offers") == row.get("offers"):
+            return {"verdict": "bad", "note": "Impossible: breaks a hard rule"}
+        for c in unavailable:
+            w = c.get("when") or {}
+            if c.get("owner") == s["faculty"] and day in (w.get("days") or [day]) \
+                    and (w.get("slots") is None or span & set(w["slots"])):
+                return {"verdict": "bad", "note": f"{who} said they can't teach then"}
+        p = profiles.get(s["faculty"])
+        if p is not None:
+            fits = any(day in (w.get("days") or [day]) and span <= set(w.get("slots") or range(24))
+                       for w in p.get("windows") or [])
+            r = rooms.get(room.strip(), {})
+            needs = set(p.get("needs") or []) | set(s.get("equipment") or [])
+            room_ok = p.get("room_flexible") or needs <= set(r.get("equipment") or [])
+            if fits and room_ok:
+                return {"verdict": "ok", "note": f"{who} can do this"}
+            return {"verdict": "meh", "note": f"Allowed, but {who} can't make it"}
+        return {"verdict": "", "note": ""}
+
+    return judge
+
+
+def _hidden(sc: dict) -> str:
+    """What no negotiator is told: who could give way, and when."""
+    inst = sc.get("instance") or {}
+    names = {f["id"]: f["name"] for f in inst.get("faculty", [])}
+    out = []
+    for p in sc.get("profiles") or []:
+        who = names.get(p["owner"], p["owner"])
+        ws = [w for w in p.get("windows") or [] if w.get("slots")]
+        if ws:
+            order = list(_DAYS.values())
+            days = " or ".join(_FULL.get(d, d) for d in sorted({d for w in ws for d in (w.get("days") or [])},
+                                                                key=lambda d: order.index(d) if d in order else 9))
+            out.append(f"{who} could also teach on {days}, {_hours(ws[0]['slots'])}")
+        else:
+            out.append(f"{who} has no other time that works")
+    return "; ".join(out)
+
+
+_FULL = {v: k for k, v in _DAYS.items()}
+
+
+def _negotiation(r: dict, limit: int, reqs: list[dict] | None = None, judge=None) -> list[dict]:
     out = []
     for m, rep in list(zip(r.get("messages", []), [*r.get("replies", []), *[{}] * 9], strict=False))[:limit]:
         prose, options = _prose(m)
         to = _recipient(prose, reqs or [])
         out.append({**_line("System", prose), "to": to})
         if options:
-            out.append(_line("Options offered", " · ".join(o.split(") ", 1)[-1] for o in options)))
+            texts = [o.split(") ", 1)[-1] for o in options]
+            line = _line("Options offered", " · ".join(texts))
+            if judge:
+                line["verdicts"] = [judge(t, r) for t in texts]
+            out.append(line)
         if rep.get("text"):
             out.append({**_line("Teacher", rep["text"]), "to": to})
         elif rep.get("decision") == "no_reply":
@@ -113,23 +194,36 @@ def main(root: Path, runs: Path) -> list[dict]:
     n4 = len(r_4.get("replies") or [])
     b4_out = (f"Escalated: offers turned down {n4} times" if clear_failure(pick)
               else "Escalated: " + (r_4.get("escalation_reason") or "no agreement"))
+    judge = _option_judge(sc)
+    cases = [
+        _case("Our system", "Resolved in 1 round", "ok", _negotiation(r_o, 1, reqs, judge), ours=True),
+        _case("LLM proposes, unchecked", f"{r_3['invalid_offers']} of {r_3['offers']} options impossible", "bad",
+              _negotiation(r_3, 1, reqs, judge), "B3"),
+        _case("LLM proposes, solver filters", b4_out, "bad",
+              [_line("Behind the scenes", f"{r_4.get('option_calls', 0)} LLM calls; {r_4.get('filtered', 0)} invented "
+                                          "options were impossible and thrown away"), *_negotiation(r_4, 2, reqs, judge)],
+              "B4"),
+    ]
+    for c in cases:  # the comparison that decides it: how many of the offers could the person asked actually take
+        vs = [v for ln in c["lines"] for v in ln.get("verdicts", [])]
+        if vs:
+            c["usable"] = {"ok": sum(v["verdict"] == "ok" for v in vs), "of": len(vs),
+                           "bad": sum(v["verdict"] == "bad" for v in vs)}
+    hidden = _hidden(sc)
+    asker = next((q["who"] for q in reqs if not q["private"]), "the asker")
+    other = next((q["who"] for q in reqs if q["private"]), "the other teacher")
     return [_ex(
         "One conflict, three negotiators",
         "Both teachers want the only GPU lab on the same afternoon, so one of them has to give way."
         + (f" The reason “{private}” was given in confidence: no message may mention it." if private else ""),
-        [_case("Our system", "Resolved in 1 round", "ok", _negotiation(r_o, 1, reqs), ours=True),
-         _case("LLM proposes, unchecked", f"{r_3['invalid_offers']} of {r_3['offers']} options impossible", "bad",
-               _negotiation(r_3, 1, reqs), "B3"),
-         _case("LLM proposes, solver filters", b4_out, "bad",
-               [_line("Behind the scenes", f"{r_4.get('option_calls', 0)} LLM calls; {r_4.get('filtered', 0)} invented "
-                                           "options were impossible and thrown away"), *_negotiation(r_4, 2, reqs)],
-               "B4")],
-        "Our system worked out with the solver who can give way and offered only times that work, and the first was "
-        "accepted. The unchecked LLM offered times that clash with the rules. Filtering its ideas keeps only legal "
-        "times, but they were still the wrong ones to offer: the LLM asked the teacher who cannot move, and the offers "
-        "were turned down until nobody was left to ask. Our system also names the constraint, never the private "
-        "reason.",
-    ) | {"requests": reqs}]
+        cases,
+        "Each option is checked against what the teachers would really accept. Our system's solver weighed the two "
+        f"requests and asked the teacher who can move ({other}'s limit is a verified hard constraint, {asker}'s is a "
+        f"preference); every time it offered is legal and one of them suited {asker}, who took it. The unchecked LLM "
+        "offered times that break the rules. Filtering its ideas keeps only legal times, but it still asked the wrong "
+        f"person: {other}, at times they had already said they cannot teach, so nothing it offered could ever be "
+        "accepted. Our system also names the constraint, never the private reason.",
+    ) | {"requests": reqs, "hidden": hidden}]
 
 
 def ablations(root: Path, runs: Path) -> list[dict]:

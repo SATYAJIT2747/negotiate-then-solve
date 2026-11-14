@@ -645,8 +645,13 @@ export interface WorkedExample {
   situation: string;
   /** the requests behind the conflict, as each teacher wrote them; ``private``: the reason given in confidence */
   requests?: { who: string; text: string; private: string }[];
+  /** what no negotiator is told (who could give way, and when): each option is checked against it */
+  hidden?: string;
   lesson: string;
-  cases: { system: string; tag: string; ours: boolean; outcome: string; tone: "ok" | "bad" | "warn" | "muted"; lines: { who: string; text: string; to?: string }[] }[];
+  cases: { system: string; tag: string; ours: boolean; outcome: string; tone: "ok" | "bad" | "warn" | "muted";
+    /** how many offers the person asked could take */
+    usable?: { ok: number; of: number; bad: number };
+    lines: { who: string; text: string; to?: string; verdicts?: { verdict: "ok" | "meh" | "bad" | ""; note: string }[] }[] }[];
 }
 
 /** A chart in an Experiments chapter (src/web/experiments.py): bars per category, or a line over the categories. */
