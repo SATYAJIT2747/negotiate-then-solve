@@ -94,6 +94,26 @@ TEACHERS = {  # invented surnames, by area
 VISITORS = {"CS": ["Fernandes", "Thomas"], "EC": ["Sinha"], "HS": ["Bhatt"]}
 
 
+# what the campus's teachers and class reps asked of its semester timetable, added before the start-up build
+# (``SemesterPlanner.bootstrap_demo``): hard and soft, one course only, "only after", a guest's days, a day with
+# no classes anyway (Saturday), sections' own wishes. Dr. Fernandes's days cannot all be kept, so the build
+# shows one wish it had to give up.
+PREFERENCES = [
+    ("Dr. Naidu", "Dr. Naidu is unavailable on Fridays because of HoD meetings."),
+    ("Dr. Menon", "Dr. Menon prefers not to teach before 10 am."),
+    ("Dr. Iyer", "Dr. Iyer can teach Data Structures only after 11:30 on Mondays."),
+    ("Dr. Das", "Digital Systems should be in the morning."),
+    ("Dr. Pillai", "Dr. Pillai has a research group meeting every Thursday 2-4 pm."),
+    ("Dr. Sharma", "Dr. Sharma: Mondays are bad for me."),
+    ("Dr. Fernandes", "Dr. Fernandes can only teach on Tuesdays and Thursdays."),
+    ("Dr. Kulkarni", "Dr. Kulkarni would like Wednesday afternoons free."),
+    ("Dr. Singh", "Dr. Singh would like Saturdays off."),
+    ("Class rep, I year Section A", "B.Tech I year CSE+ECE - Section A would like no classes after 4 pm on Friday."),
+    ("Class rep, III year ECE", "B.Tech III year ECE wants Tuesday afternoons free."),
+    ("Class rep, IV year CSE", "B.Tech IV year CSE would rather not have classes at 8:30 on Monday."),
+]
+
+
 def campus_offerings() -> OfferingDoc:
     load: Counter[str] = Counter()
     courses: dict[str, Offering] = {}

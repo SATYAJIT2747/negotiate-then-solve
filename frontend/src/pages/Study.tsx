@@ -1,4 +1,5 @@
-import { ArrowLeft, ArrowRight, Check, ClipboardCheck, LogOut, MessageSquareText, Play, Star, X } from "lucide-react";
+import clsx from "clsx";
+import { ArrowLeft, ArrowRight, BookOpen, Check, ClipboardCheck, LogOut, MessageSquareText, Play, Star, X } from "lucide-react";
 import { useCallback, useEffect, useState, type ReactNode } from "react";
 import { useNavigate } from "react-router-dom";
 import { LetterView, parsePlacement, type Placement } from "../components/LetterView";
@@ -7,7 +8,7 @@ import { Button, Card, CardHeader, Label, Mark, Meter, Skeleton } from "../compo
 import { setCurrentWorld } from "../lib/api";
 import { useAuth } from "../lib/auth";
 import { TIER } from "../lib/meta";
-import { setStudyCode, setStudyTask, study, studyCode, type NextItem, type StudySession, type StudyTask } from "../lib/study";
+import { setStudyCode, setStudyStep, setStudyTask, study, studyCode, type LiveStep, type NextItem, type StudySession, type StudyTask } from "../lib/study";
 
 const TASK: Record<StudyTask, { title: string; text: string; icon: typeof Star }> = {
   ratings: {
@@ -19,6 +20,11 @@ const TASK: Record<StudyTask, { title: string; text: string; icon: typeof Star }
     title: "Check claims",
     text: "One sentence from an explanation, and the facts it was allowed to use. Is everything it states backed by those facts?",
     icon: ClipboardCheck,
+  },
+  rules: {
+    title: "Check rule answers",
+    text: "A faculty member's question about the institute's rules, the assistant's answer, and the official rule (if there is one). What does the answer do?",
+    icon: BookOpen,
   },
   replies: {
     title: "Label replies",
@@ -76,7 +82,7 @@ export default function Study() {
         ) : task ? (
           <Labeler task={session.kind === "pilot" && task !== "ratings" ? "ratings" : task} session={session} onBack={() => { setTask(null); void refresh(); }} />
         ) : (
-          <Home session={session} onTask={setTask} />
+          <Home session={session} onTask={setTask} onSaved={() => void refresh()} />
         )}
       </main>
     </div>
@@ -129,8 +135,8 @@ function Consent({ session, onDone }: { session: StudySession; onDone: (s: Study
       <div className="space-y-4 p-5 text-[14px] leading-relaxed">
         <p>
           {session.kind === "pilot"
-            ? "This study looks at how a timetabling assistant writes to faculty when a request clashes with someone else's. You will rate some messages it wrote, then try it yourself in a short practice session, about 20 minutes in all."
-            : "Team labelling for judge validation: you will rate messages, check explanation claims against their facts, and label replies."}
+            ? "This study looks at a timetabling assistant for faculty: answering questions about your timetable and the rules, taking requests, and writing to you when a request clashes with someone else's. You will rate some messages it wrote, then try it yourself step by step, about 25 minutes in all."
+            : "Team labelling for judge validation: you will rate messages, check explanation claims against their facts, label replies, and check the assistant's answers about the rules."}
         </p>
         <ul className="list-disc space-y-1.5 pl-5 text-ink-2">
           {session.consent_text.map((t) => (
@@ -157,7 +163,7 @@ function Consent({ session, onDone }: { session: StudySession; onDone: (s: Study
   );
 }
 
-function Home({ session, onTask }: { session: StudySession; onTask: (t: StudyTask) => void }) {
+function Home({ session, onTask, onSaved }: { session: StudySession; onTask: (t: StudyTask) => void; onSaved: () => void }) {
   if (!session.items_ready)
     return (
       <Card className="p-6 text-[14px] text-ink-2">
@@ -169,7 +175,7 @@ function Home({ session, onTask }: { session: StudySession; onTask: (t: StudyTas
       <div>
         <h1 className="font-serif text-[24px] font-semibold">{session.kind === "pilot" ? "Thank you for taking part" : "Labelling tasks"}</h1>
         <p className="mt-1 text-[13.5px] text-ink-3">
-          {session.kind === "pilot" ? "Two parts: rate some messages, then try the system yourself. Either order works." : "Do them in any order; your answers are saved as you go."}
+          {session.kind === "pilot" ? "Two parts: rate some messages, then try the system yourself, step by step. Either order works." : "Do them in any order; your answers are saved as you go."}
         </p>
       </div>
       {session.tasks.map((t) => {
@@ -199,31 +205,34 @@ function Home({ session, onTask }: { session: StudySession; onTask: (t: StudyTas
           </Card>
         );
       })}
-      {session.kind === "pilot" && session.persona && <LiveSession session={session} />}
+      {session.kind === "pilot" && session.persona && <LiveSession session={session} onSaved={onSaved} />}
     </div>
   );
 }
 
-function LiveSession({ session }: { session: StudySession }) {
+function LiveSession({ session, onSaved }: { session: StudySession; onSaved: () => void }) {
   const { signIn } = useAuth();
   const navigate = useNavigate();
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [survey, setSurvey] = useState(false);
+  const done = new Set(session.steps_done);
 
-  const run = async (what: "preference" | "practice") => {
-    setBusy(what);
+  const go = async (step: LiveStep) => {
+    if (step.step === "survey") return setSurvey(true);
+    setBusy(step.step);
     setError(null);
     try {
       setCurrentWorld("demo"); // pilot personas and the practice clash live in the demo department
       await signIn(session.persona!);
-      if (what === "practice") {
+      setStudyStep(step.step);
+      if (step.step === "practice") {
         const p = await study.practice();
         setStudyTask(p.task);
-        navigate("/new");
       } else {
-        setStudyTask("Tell the timetable office one teaching preference of your own (for example, times you would rather not teach), in your own words.");
-        navigate("/new");
+        setStudyTask(`${step.title}. ${step.text}`);
       }
+      navigate("/new");
     } catch (e) {
       setError((e as Error).message);
     } finally {
@@ -231,32 +240,157 @@ function LiveSession({ session }: { session: StudySession }) {
     }
   };
 
+  const n = session.live_steps.length;
+  const finished = session.live_steps.filter((s) => done.has(s.step)).length;
   return (
     <Card className="p-5">
       <div className="flex items-start gap-4">
         <Play size={18} className="mt-0.5 shrink-0 text-ink-3" />
         <div className="min-w-0 flex-1">
-          <p className="text-[14.5px] font-semibold">Try it yourself</p>
+          <p className="text-[14.5px] font-semibold">Try the system yourself</p>
           <p className="mt-0.5 text-[13.5px] text-ink-3">
-            You use the real portal as <span className="font-medium text-ink-2">{session.persona_name}</span>, a demo faculty member. Write in your own words: the system reads what you type.
+            You use the real portal as <span className="font-medium text-ink-2">{session.persona_name}</span>, a demo faculty member, and
+            write in your own words. Each step takes a minute or two; after each, a small box asks whether the system got it right.
           </p>
-          <ol className="mt-3 list-decimal space-y-1.5 pl-5 text-[13.5px] text-ink-2">
-            <li>Send a preference. Afterwards, say whether the system understood it.</li>
-            <li>The practice clash: a colleague has claimed a lab you need. Ask for it, then answer the office's message in your own words and confirm how it read your reply.</li>
-            <li>Rate the message you received (a box appears under it).</li>
-          </ol>
-          {error && <p className="mt-3 text-[13px] text-bad">{error}</p>}
-          <div className="mt-4 flex flex-wrap gap-2">
-            <Button onClick={() => run("preference")} loading={busy === "preference"}>
-              1 · Send a preference
-            </Button>
-            <Button variant="primary" onClick={() => run("practice")} loading={busy === "practice"}>
-              2 · Start the practice clash
-            </Button>
+          <div className="mt-3 flex items-center gap-3">
+            <Meter value={finished} max={n || 1} tone={finished >= n ? "ok" : "brand"} className="max-w-56 flex-1" />
+            <span className="font-mono text-[12px] text-ink-3">
+              {finished}/{n}
+            </span>
           </div>
+          <ol className="mt-4 space-y-2">
+            {session.live_steps.map((s, i) => {
+              const ok = done.has(s.step);
+              return (
+                <li key={s.step} className={clsx("flex items-start gap-3 rounded-lg border px-3.5 py-3", ok ? "border-ok/30 bg-ok/[0.04]" : "border-line")}>
+                  <span className={clsx("mt-0.5 grid size-6 shrink-0 place-items-center rounded-full text-[12px] font-semibold",
+                    ok ? "bg-ok/15 text-ok" : "bg-panel-2 text-ink-2")}>
+                    {ok ? <Check size={13} /> : i + 1}
+                  </span>
+                  <div className="min-w-0 flex-1">
+                    <p className="text-[13.5px] font-medium">{s.title}</p>
+                    <p className="mt-0.5 text-[12.5px] leading-snug text-ink-3">{s.text}</p>
+                  </div>
+                  <Button size="sm" variant={ok ? "secondary" : "primary"} loading={busy === s.step} onClick={() => void go(s)}>
+                    {ok ? "Again" : "Start"}
+                  </Button>
+                </li>
+              );
+            })}
+          </ol>
+          {survey && <SurveyForm session={session} onDone={() => { setSurvey(false); onSaved(); }} />}
+          {error && <p className="mt-3 text-[13px] text-bad">{error}</p>}
         </div>
       </div>
     </Card>
+  );
+}
+
+/** The closing statements, each 1 (disagree) to 5 (agree), and a comment. */
+function SurveyForm({ session, onDone }: { session: StudySession; onDone: () => void }) {
+  const [v, setV] = useState<Record<string, number>>({});
+  const [comment, setComment] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const complete = session.survey.every((q) => v[q.key]);
+  const save = async () => {
+    setBusy(true);
+    setError(null);
+    try {
+      await study.live({ kind: "survey", step: "survey", value: v, ...(comment.trim() ? { comment: comment.trim() } : {}) });
+      onDone();
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
+    <div className="mt-4 space-y-3 rounded-lg border border-brand/30 bg-brand/[0.03] p-4">
+      <p className="text-[13.5px] font-medium">How much do you agree? 1 = not at all, 5 = completely.</p>
+      {session.survey.map((q) => (
+        <div key={q.key} className="flex flex-wrap items-center justify-between gap-2">
+          <span className="text-[13.5px] text-ink-2">{q.text}</span>
+          <span className="flex gap-1">
+            {[1, 2, 3, 4, 5].map((k) => (
+              <button
+                key={k}
+                onClick={() => setV((x) => ({ ...x, [q.key]: k }))}
+                className={clsx("grid size-8 place-items-center rounded-md border text-[13px] font-medium",
+                  v[q.key] === k ? "border-brand bg-brand text-white" : "border-line hover:border-brand/60")}
+              >
+                {k}
+              </button>
+            ))}
+          </span>
+        </div>
+      ))}
+      <textarea
+        value={comment}
+        onChange={(e) => setComment(e.target.value)}
+        rows={2}
+        maxLength={1000}
+        placeholder="Anything else? What worked, what didn't (optional)"
+        className="w-full rounded-md border border-line bg-panel px-3 py-2 text-[13.5px] outline-none focus:border-brand/60"
+      />
+      <Button variant="primary" disabled={!complete} loading={busy} onClick={() => void save()}>
+        Save my answers
+      </Button>
+      {error && <p className="text-[13px] text-bad">{error}</p>}
+    </div>
+  );
+}
+
+const RULE_TEXT: Record<string, string> = {
+  declines: "Declines: says no rule covers it, or it doesn't know",
+  consistent: "Answers, and agrees with the rule",
+  not_consistent: "Answers, but the rule doesn't back it (or there is no rule)",
+};
+
+function RuleItem({ item, labels, busy, onSave }: {
+  item: { query: string; answer: string; rules: { id: string; title: string; text: string }[] };
+  labels: string[];
+  busy: boolean;
+  onSave: (v: Record<string, unknown>) => void;
+}) {
+  return (
+    <div className="space-y-5">
+      <div>
+        <Label>A faculty member asked</Label>
+        <Quote>{item.query}</Quote>
+      </div>
+      <div>
+        <Label>The assistant answered</Label>
+        <div className="rounded-lg border border-brand/25 bg-brand/5 px-4 py-3 text-[14.5px] leading-relaxed">{item.answer}</div>
+      </div>
+      <div>
+        <Label>The official rule</Label>
+        {item.rules.length ? (
+          <div className="space-y-2">
+            {item.rules.map((r) => (
+              <div key={r.id} className="rounded-md border border-line bg-panel-2 p-3 text-[13.5px] leading-relaxed">
+                <p className="mb-1 text-[12px] font-semibold text-ink-2">
+                  <span className="font-mono">{r.id}</span> · {r.title}
+                </p>
+                <p className="whitespace-pre-line">{r.text}</p>
+              </div>
+            ))}
+          </div>
+        ) : (
+          <p className="rounded-md border border-dashed border-line px-3 py-2 text-[13.5px] text-ink-3">No rule in the handbook covers this question.</p>
+        )}
+      </div>
+      <Card className="space-y-3 p-5">
+        <p className="text-[13.5px] font-medium">What does the answer do?</p>
+        <div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap">
+          {labels.map((l) => (
+            <Button key={l} variant="secondary" disabled={busy} onClick={() => onSave({ label: l })}>
+              {RULE_TEXT[l] ?? l}
+            </Button>
+          ))}
+        </div>
+      </Card>
+    </div>
   );
 }
 
@@ -308,6 +442,8 @@ function Labeler({ task, session, onBack }: { task: StudyTask; session: StudySes
         </Card>
       ) : "claim" in next.item ? (
         <ClaimItem key={next.item.id} item={next.item} busy={busy} onSave={save} />
+      ) : "query" in next.item ? (
+        <RuleItem key={next.item.id} item={next.item} labels={session.rule_labels} busy={busy} onSave={save} />
       ) : "reply" in next.item ? (
         <ReplyItem key={next.item.id} item={next.item} labels={session.reply_labels} busy={busy} onSave={save} />
       ) : (

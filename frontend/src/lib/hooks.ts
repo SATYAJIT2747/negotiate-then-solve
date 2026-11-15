@@ -27,7 +27,17 @@ export function useApi<T>(load: () => Promise<T>, deps: unknown[] = [], interval
     const id = window.setInterval(() => {
       if (document.visibilityState === "visible") void refresh();
     }, interval);
-    return () => window.clearInterval(id);
+    // a background tab does not poll; catch up at once when it is shown again (another tab may have acted)
+    const shown = () => {
+      if (document.visibilityState === "visible") void refresh();
+    };
+    document.addEventListener("visibilitychange", shown);
+    window.addEventListener("focus", shown);
+    return () => {
+      window.clearInterval(id);
+      document.removeEventListener("visibilitychange", shown);
+      window.removeEventListener("focus", shown);
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [...deps, interval]);
 

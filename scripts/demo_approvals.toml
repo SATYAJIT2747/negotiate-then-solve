@@ -1,0 +1,30 @@
+# The timetable office's decisions for the demo, played by scripts/demo_approvals.py against the running app.
+# Steps run in this order. `match` is a request id ("R-00003") or a few words of the request's text (case does
+# not matter); `do` is "approve" or "reject"; a rejection's `reason` is what the sender is told.
+# Requests waiting for approval that no step matches are left alone (or see --rest).
+
+[[step]]
+match = "Computer Architecture practical"
+do = "approve"
+say = "Dr. Rao's lab needs the routers: a teaching need, approved."
+
+[[step]]
+match = "Compiler Design practical"
+do = "approve"
+say = "Dr. Iyer's practical moves to Wednesday 2 pm: approved."
+
+[[step]]
+match = "Information Security practical"
+do = "approve"
+say = "Dr. Menon's practical on Thursday 2 pm: approved."
+
+[[step]]
+match = "Digital Logic practical"
+do = "reject"
+reason = "Friday afternoons are kept free for the department seminar this term; please suggest another slot."
+say = "Dr. Das asked for Friday afternoon, which the office keeps free: rejected, with the reason sent to them."
+
+[[step]]
+match = "Operating Systems lecture"
+do = "approve"
+say = "Dr. Pillai's lecture on Monday 11 am: approved."

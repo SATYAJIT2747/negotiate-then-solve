@@ -1,8 +1,9 @@
 import clsx from "clsx";
-import { FileUp, Search } from "lucide-react";
+import { Search } from "lucide-react";
 import { useState } from "react";
-import { Link } from "react-router-dom";
-import { Button, Card, CardHeader, Label, PageHeader, Skeleton } from "../components/ui";
+import { useSearchParams } from "react-router-dom";
+import { Card, CardHeader, Label, PageHeader, Skeleton, Tabs } from "../components/ui";
+import PolicyDocuments from "./PolicyDocuments";
 import { api } from "../lib/api";
 import { useAuth } from "../lib/auth";
 import { useApi, useDebounced } from "../lib/hooks";
@@ -17,8 +18,7 @@ function where(r: Rule): string {
   return `${r.source}${pages} · ${how(r.method)}`;
 }
 
-export default function Policy() {
-  const { sees } = useAuth();
+function Rules() {
   const { data: rules } = useApi(() => api.handbook(), []);
   const [q, setQ] = useState("Move my lecture to week 8");
   const dq = useDebounced(q, 220);
@@ -31,18 +31,6 @@ export default function Policy() {
 
   return (
     <>
-      <PageHeader
-        title="Handbook & policies"
-        subtitle="Every rule the policy agent can cite, with the document and page it comes from."
-        actions={
-          sees("documents") && (
-            <Link to="/documents">
-              <Button icon={FileUp}>Manage documents</Button>
-            </Link>
-          )
-        }
-      />
-
       <Card className="mb-6">
         <div className="p-5">
           <div className="flex items-center gap-3 rounded-md border border-line bg-panel px-3.5 focus-within:border-brand/60">
@@ -137,6 +125,40 @@ export default function Policy() {
           <Skeleton className="m-5 h-48" />
         )}
       </Card>
+    </>
+  );
+}
+
+/** The handbook and its documents in one place: every rule the policy agent can cite, for everyone; and, for
+ * the timetable office, the documents those rules are read from (added and removed in the Documents tab). */
+export default function Policy() {
+  const { sees } = useAuth();
+  const [params, setParams] = useSearchParams();
+  const manage = sees("documents");
+  const tab = manage && params.get("tab") === "documents" ? "documents" : "rules";
+  return (
+    <>
+      <PageHeader
+        title="Handbook & policies"
+        subtitle={
+          tab === "documents"
+            ? "The institute's regulations, circulars and notices. The policy agent retrieves and cites their rules."
+            : "Every rule the policy agent can cite, with the document and page it comes from."
+        }
+      />
+      {manage && (
+        <div className="mb-5">
+          <Tabs
+            tabs={[
+              { id: "rules", label: "Rules" },
+              { id: "documents", label: "Documents" },
+            ]}
+            value={tab}
+            onChange={(t) => setParams(t === "rules" ? {} : { tab: t }, { replace: true })}
+          />
+        </div>
+      )}
+      {tab === "documents" ? <PolicyDocuments embedded /> : <Rules />}
     </>
   );
 }

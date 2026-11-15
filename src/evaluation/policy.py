@@ -25,6 +25,7 @@ from pathlib import Path
 
 from agents.policy import RETRIEVERS, PolicyAgent, load_handbook
 from core.instance import Instance
+from language.adapters import add_args
 from language.corpus import CorpusExample, ExpectedAction, Variant, load_jsonl
 from language.llm import DailyQuotaReached, GeminiClient, LLMError, default_model
 from language.parsing import SystemTwoParser
@@ -124,29 +125,34 @@ def main() -> None:
     ap.add_argument("--workers", type=int, default=4)
     ap.add_argument("--parser-model", default=None, help="default: the agent model")
     ap.add_argument("--policy-model", default=None, help="default: the agent model")
-    ap.add_argument("--k", type=int, default=5, help="rules retrieved per request")
+    ap.add_argument("--k", type=int, default=8, help="rules retrieved per request (8 since 2026-11-14; the earlier recorded runs used 5)")
     ap.add_argument("--retriever", default="bm25", choices=RETRIEVERS,
                     help="bm25 (the recorded runs), dense, or hybrid (BM25 + embeddings, reciprocal rank fusion)")
     ap.add_argument("--local", action="store_true",
                     help="the fine-tuned local model parses (compiler prompt) and reviews (policy prompt)")
     ap.add_argument("--local-url", default="http://localhost:8080/v1")
     ap.add_argument("--local-model", default=None, help="model to run on a router-mode server (default NTS_LOCAL_MODEL)")
+    add_args(ap)
     ap.add_argument("--out", type=Path, default=None)
     args = ap.parse_args()
 
     instance = Instance.model_validate_json(args.instance.read_text(encoding="utf-8"))
     corpus = load_jsonl(args.corpus, instance)
     if args.local:
-        from language.compiler import CompilerParser
-        from language.local import LocalClient
+        from language.adapters import local_client, registry, request_reader
 
-        local = LocalClient(base_url=args.local_url, timeout=600, server_model=args.local_model)
-        parser, policy_client = CompilerParser(instance, local), local
+        reg = registry(args.adapters)
+        policy_client = local_client("policy", base_url=args.local_url, timeout=600, server_model=args.local_model,
+                                     adapter=args.adapter, reg=reg)
+        reader = local_client("compile", base_url=args.local_url, timeout=600, server_model=args.local_model,
+                              reg=reg, schema=args.schema) if reg else policy_client
+        parser = request_reader(instance, reader, reg)  # as the web app reads requests
     else:
         parser = SystemTwoParser(instance, GeminiClient(args.parser_model or default_model()))
         policy_client = GeminiClient(args.policy_model or default_model())
     agent = PolicyAgent(load_handbook(args.handbook), policy_client, instance, k=args.k, retriever=args.retriever)
     report = eval_policy(corpus, instance, parser, agent, split=args.split, limit=args.limit, workers=args.workers)
+    report["reader"] = type(parser).__name__  # which pipeline the score is of
     print("Policy:", json.dumps({k: v for k, v in report.items() if k != "rows"}, indent=1))
     out = args.out or Path("runs") / f"policy-{datetime.now():%Y%m%d-%H%M%S}.json"
     out.parent.mkdir(parents=True, exist_ok=True)

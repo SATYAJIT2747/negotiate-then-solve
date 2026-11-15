@@ -1,0 +1,28 @@
+# The tasks on LoRA adapters of one base model (llama-server -m <base> --lora a.gguf --lora b.gguf,
+# all at scale 0 until a request switches one on; language.local finds them at /lora-adapters).
+# Used by scripts/host.ps1 (-Adapters adapters-lora.toml) and the evaluations (--adapters adapters-lora.toml).
+# The intents adapter (v12, its final epoch: 96.4% outcome match on the test split, 95.9% with typos or noise,
+# 97.5-100% on the relation, limit-firmness and out-for-me suites v11 missed) is trained on reading
+# requests only; the multi-task adapter (Read100) keeps the policy agent, reading replies and explanations.
+
+base = "Qwen3.5-4B-Base-Q8_0"
+
+[adapters]
+nts-intents-v12-read-100 = ["compile"]
+nts-read100 = ["policy", "reply", "explain"]
+nts-lookup-v3 = ["lookup"]       # timetable questions: which lookups to do, 1 to 5 a message, every tool
+                                 # (notebooks/train_lookup_v3_kaggle.ipynb, session 1). Against v2 (PROGRESS.md):
+                                 # old 362: 330 vs 336; v2's new kinds: 79 vs 80; v3's new tools: 51/52 (v2: none).
+                                 # Session 2 (nts-lookup-v3_1): 329, 78, 51, no better. Back to v2: nts-lookup-v2
+                                 # here (one per task; v2 reads one lookup, ToolAgent's multi=False for it)
+nts-memory-v1 = ["memory"]       # a follow-up made to stand on its own from the chat's last 4 messages, before it
+                                 # is read (agents.memory; notebooks/train_memory_kaggle.ipynb). Not on the server
+                                 # yet: messages are read as typed (the chat works as before). Off: NTS_MEMORY=off
+
+[schemas]                       # the intent vocabulary an adapter was trained on, when not the current one
+nts-intents-v4 = 3              # IDs and the directory in the prompt (language.intent_compiler.INTENT_PROMPT_V3)
+nts-intents-v5 = 3
+nts-intents-v6-read100 = 4         # schema 4: the same short prompt; 5 only added period fields
+nts-intents-v8-read-100 = 4
+nts-intents-v8-read-067 = 4
+nts-intents-v9-read-100 = 4

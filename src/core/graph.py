@@ -38,7 +38,7 @@ def build_graph(instance: Instance, constraints: Iterable[Constraint] = (),
             g.add_edge("S-LAB", r.id, rel="has_authority_over")
     hods = [f.id for f in instance.faculty if f.role == Role.HOD]
     for s in instance.sessions:
-        g.add_node(s.id, kind="resource", type="session")
+        g.add_node(s.id, kind="resource", type="session", teacher=s.faculty)
         g.add_edge(s.faculty, s.id, rel="has_authority_over")
         for h in hods:
             g.add_edge(h, s.id, rel="has_authority_over")
@@ -108,10 +108,12 @@ def conflicts(g: nx.MultiDiGraph, cid: str) -> list[str]:
 
 
 def affected_stakeholders(g: nx.MultiDiGraph, change_id: str) -> set[str]:
-    """Who to notify: faculty teaching the moved sessions and their sections."""
+    """Who to notify: whoever teaches the moved sessions (faculty, HoD or guest) and their sections; not
+    the HoDs who only have authority over them."""
     people: set[str] = set()
     for sid in _out(g, change_id, "affects"):
-        people |= {u for u in _in(g, sid, "has_authority_over") if g.nodes[u].get("role") == Role.FACULTY.value}
+        if teacher := g.nodes[sid].get("teacher"):
+            people.add(teacher)
         for grp in _out(g, sid, "attended_by"):
             people |= set(_in(g, grp, "member_of"))
     return people

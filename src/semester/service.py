@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import threading
 import time
+from collections.abc import Callable
 from datetime import date, datetime
 from pathlib import Path
 
@@ -24,6 +25,8 @@ from .solver import (
     SemesterCalendar,
     SemesterSolver,
     Timetable,
+    _applies,
+    _pref_violated,
     Window,
     cohort_size,
     components,
@@ -60,9 +63,11 @@ class SemesterState(BaseModel):
 
 class SemesterPlanner:
     def __init__(self, folder: Path, sample: Path | None = None, time_limit: float = 60.0,
-                 demo: OfferingDoc | None = None, rooms: list[Room] | None = None) -> None:
+                 demo: OfferingDoc | None = None, rooms: list[Room] | None = None,
+                 preferences: list[tuple[str, str]] | None = None) -> None:
         """``demo``: the web app's demo department as an offering document (``semester.demo``),
-        used as the sample instead of the PDF and loaded at start when nothing else is."""
+        used as the sample instead of the PDF and loaded at start when nothing else is. ``preferences``:
+        (sender, text) added before the start-up build (``bootstrap_demo``); the demo department's when None."""
         self.folder = Path(folder)
         self.folder.mkdir(parents=True, exist_ok=True)
         self.path = self.folder / "state.json"
@@ -71,11 +76,13 @@ class SemesterPlanner:
         self.time_limit = time_limit
         self.calendar = SemesterCalendar()
         self.demo_rooms = rooms
+        self.demo_preferences = preferences
         self.rooms: list[Room] = default_rooms()  # follows the document: see _rooms_for
         self.state = SemesterState.model_validate_json(self.path.read_text(encoding="utf-8")) \
             if self.path.exists() else SemesterState()
         self.lock = threading.Lock()
         self.job: dict = {"running": False}
+        self.clock: Callable[[], date] | None = None  # the day it is (a demo's fixed day); the real date when None
         if demo is not None and self._is_demo(self.state.doc):  # a demo PDF saved before ids were matched
             before = [c.id for c in self.state.doc.cohorts]
             self._demo_ids(self.state.doc)
@@ -128,6 +135,12 @@ class SemesterPlanner:
         doc = self.state.doc
         if self.demo is None or doc is None or doc.source != self.demo.source or self.state.versions or self.job["running"]:
             return
+
+        if not self.state.preferences:  # what the demo's teachers asked for, so the build has wishes to weigh
+            from .demo import PREFERENCES
+
+            for source, text in self.demo_preferences if self.demo_preferences is not None else PREFERENCES:
+                self.add(text, source)
 
         def run() -> None:
             self._run("build", "demo department, built at start-up", None)
@@ -241,7 +254,9 @@ class SemesterPlanner:
         try:
             tt = self._solver().solve(base.timetable if base else None)
             if not tt.meetings:
-                self.job.update(running=False, error=f"no timetable: {tt.report.status}", report=tt.report.model_dump())
+                why = self.why_infeasible() if tt.report.status == "infeasible" else []
+                self.job.update(running=False, error=f"no timetable: {tt.report.status}"
+                                + (". " + " ".join(why) if why else ""), report=tt.report.model_dump(), causes=why)
                 return
             v = Version(version=len(self.state.versions) + 1, created=datetime.now().isoformat(timespec="seconds"),
                         kind=kind, note=note, based_on=base.version if base else None, timetable=tt,
@@ -251,6 +266,37 @@ class SemesterPlanner:
             self.job.update(running=False, version=v.version)
         except Exception as e:  # noqa: BLE001 - surfaced in the UI
             self.job.update(running=False, error=f"{type(e).__name__}: {e}")
+
+    def why_infeasible(self, quick: float = 10.0, most: int = 12) -> list[str]:
+        """Why a build found no timetable, in words the office can act on: first the hard preferences that
+        leave some class no time at all (read off the options, no solving); else each hard preference tried
+        on its own with the closures (a short solve each, at most ``most``); else the closures alone."""
+        solver = self._solver()
+        hard = [p for p in self.state.preferences if p.hard]
+        out = []
+        for p in hard:
+            for c in solver.comps:
+                if c.options and _applies(p, c) and all(_pref_violated(p, o) for o in c.options):
+                    out.append(f"“{p.text or p.who}” leaves no time for {c.course} {c.label}; "
+                               f"remove it or make it a preference.")
+                    break
+        if out:
+            return out
+
+        def feasible(prefs: list[Preference]) -> bool:
+            s = SemesterSolver(self.state.doc, rooms=self.rooms, sizes=self.state.sizes, calendar=self.calendar,
+                               preferences=prefs, room_closures=[(c.room, c.window) for c in self.state.closures],
+                               time_limit=quick)
+            return s.solve().report.status != "infeasible"
+
+        soft = [p for p in self.state.preferences if not p.hard]
+        if not feasible(soft):
+            return ["Even without the hard preferences there is no timetable: check the room closures and the "
+                    "programme sizes against the rooms."]
+        for p in hard[:most]:
+            if not feasible(soft + [p]):
+                out.append(f"“{p.text or p.who}” cannot be met; remove it or make it a preference.")
+        return out or [f"The hard preferences ({len(hard)}) cannot all be met together; make some of them preferences."]
 
     def status(self) -> dict:
         j = dict(self.job)
@@ -278,6 +324,7 @@ class SemesterPlanner:
         v = self.published()
         if v is None:
             raise ValueError("there is no published semester timetable yet")
+        today = today or (self.clock() if self.clock else None)
         d = self.desk().check(req, v.timetable.meetings, self.state.bookings, today, rules)
         if submit:
             self.state.bookings.append(d)

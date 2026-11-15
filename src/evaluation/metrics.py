@@ -61,6 +61,16 @@ def meaning(c: Constraint, instance: Instance) -> tuple:
     elif c.type == ConstraintType.REQUIRE_ROOM:
         assert c.room is not None
         excluded = frozenset(r.id for r in instance.rooms if not room_satisfies(c.room, r))
+    elif c.type == ConstraintType.LOAD:
+        excluded = frozenset({("load", c.measure, c.limit)})
+    elif c.type == ConstraintType.RELATE:
+        excluded = frozenset({("relate", c.relation, tuple(sorted(c.sessions or ())),
+                               tuple(sorted(c.others)) if c.others is not None else None, c.amount, c.any_other,
+                               c.negate)})
+    elif c.type == ConstraintType.ANY_OF:  # one of them, in any order
+        excluded = frozenset({("any_of", frozenset(meaning(m, instance) for m in c.members or ()))})
+    elif c.type == ConstraintType.RANKED:  # the order is the meaning
+        excluded = frozenset({("ranked", tuple(meaning(m, instance) for m in c.members or ()))})
     else:
         excluded = frozenset({("limit", c.limit)})
     scope = next(((k, v) for k, v in c.scope.model_dump().items() if v is not None), ("global", None))

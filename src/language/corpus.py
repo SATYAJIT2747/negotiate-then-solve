@@ -77,6 +77,15 @@ class RequestType(str, Enum):
     CLASH_REPORT = "clash_report"
     POLICY_QUESTION = "policy_question"
     OUT_OF_SCOPE = "out_of_scope"
+    # no corpus request has these: System One learns them from the intent data (system_one.INTENT_TYPES)
+    MOVE = "move"
+    CANCEL = "cancel"
+    EXTRA_CLASS = "extra_class"
+    CLUB_BOOKING = "club_booking"
+    WITHDRAW = "withdraw"
+    AVOID_BETWEEN = "avoid_between"
+    LOAD_LIMIT = "load_limit"
+    UNAVAILABLE_RELATIVE = "unavailable_relative"
 
 
 class ExpectedAction(str, Enum):
@@ -131,6 +140,16 @@ class Paraphraser(Protocol):
 def hour(slot: int) -> str:
     h = FIRST_SLOT_HOUR + slot
     return f"{h if h <= 12 else h - 12} {'am' if h < 12 else 'pm'}"
+
+
+def hour_range(slot: int, duration: int = 1, sep: str = "–") -> str:
+    """When a class runs: "2–4 pm", "11 am–1 pm"; a one-hour class is its start ("2 pm")."""
+    if duration <= 1:
+        return hour(slot)
+    start, end = hour(slot), hour(slot + duration)
+    if start.split()[1] == end.split()[1]:
+        start = start.split()[0]
+    return f"{start}{sep}{end}"
 
 
 def day_list(days: list[str]) -> str:
@@ -566,7 +585,7 @@ _CONSECUTIVE = [  # {n} hours from 9 am, ending at {end}, {d} day
     "I'd like to teach {n} hours straight on {d} morning, no breaks.",
     "Can {n} of my {d} classes run as one block from 9 am to {end}?",
     "Schedule my {d} teaching as {n} consecutive hours starting at 9, please.",
-    "I'd rather get my {d} classes done in one go: {n} hours in a row from 9.",
+    "I want my {d} classes done in one go: {n} hours in a row from 9.",  # a requirement, as labelled
 ]
 
 

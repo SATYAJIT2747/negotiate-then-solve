@@ -18,7 +18,8 @@ function readFile(f: File): Promise<string> {
   });
 }
 
-export default function PolicyDocuments() {
+/** ``embedded``: inside the Handbook page (its header and tabs above), so the add button sits in a row here. */
+export default function PolicyDocuments({ embedded = false }: { embedded?: boolean }) {
   const { data: docs, refresh: refreshDocs } = useApi(() => api.documents(), []);
   const { data: rules, refresh: refreshRules } = useApi(() => api.handbook(), []);
   const [busy, setBusy] = useState<string | null>(null);
@@ -51,15 +52,23 @@ export default function PolicyDocuments() {
 
   return (
     <>
-      <PageHeader
-        title="Policy documents"
-        subtitle="Add the institute's regulations, circulars and notices. The policy agent retrieves and cites their rules."
-        actions={
+      {embedded ? (
+        <div className="mb-4 flex justify-end">
           <Button variant="primary" icon={Upload} loading={!!busy} onClick={() => file.current?.click()}>
             Add document
           </Button>
-        }
-      />
+        </div>
+      ) : (
+        <PageHeader
+          title="Policy documents"
+          subtitle="Add the institute's regulations, circulars and notices. The policy agent retrieves and cites their rules."
+          actions={
+            <Button variant="primary" icon={Upload} loading={!!busy} onClick={() => file.current?.click()}>
+              Add document
+            </Button>
+          }
+        />
+      )}
       <input ref={file} type="file" className="hidden" accept={docs?.accepts.join(",")} onChange={(e) => e.target.files?.[0] && upload(e.target.files[0])} />
 
       <button

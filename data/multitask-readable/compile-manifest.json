@@ -1,0 +1,1041 @@
+{
+ "schema": 6,
+ "recipe": "intents-v13",
+ "recipe_sha": "d3159a4525cb932f",
+ "code": "40ad4b0+dirty",
+ "sources": {
+  "base": {
+   "test": 417,
+   "train": 1087,
+   "val": 149
+  },
+  "generators": {
+   "answered": 40,
+   "choices": 40,
+   "clubs": 40,
+   "compound": 40,
+   "dated": 40,
+   "difficulty": 40,
+   "exceptions": 40,
+   "firmness": 80,
+   "limit_firmness": 40,
+   "limits": 40,
+   "move_pairs": 40,
+   "moves": 40,
+   "multi": 40,
+   "only_times": 40,
+   "out_for_me": 40,
+   "periods": 40,
+   "reasons": 40,
+   "relation_pairs": 40,
+   "relations": 40,
+   "same_day_part": 40,
+   "terms": 40,
+   "train": 2168,
+   "vague": 40,
+   "val": 212,
+   "week_patterns": 40
+  },
+  "mined": {
+   "train": 122
+  },
+  "authored": {
+   "train": 100
+  },
+  "human": {},
+  "balance": {
+   "train": 78,
+   "val": 14
+  },
+  "augment": {
+   "train": 1070,
+   "changed meaning": 10,
+   "unchanged": 55
+  }
+ },
+ "fingerprints": {
+  "train": "1bac6a9106f776b0",
+  "val": "e38d1665c0464533",
+  "test": "0fb72ff322ff89a9",
+  "firmness": "4e2251768d1f7a3a",
+  "moves": "b314e127d2d7ace4",
+  "periods": "66226086b8350925",
+  "multi": "b07aea3306e8558e",
+  "clubs": "47c103b0c75a579c",
+  "vague": "1981eced8b92b1a2",
+  "reasons": "827c4dbbb4dbfcfd",
+  "terms": "8bc3f84c7df8802b",
+  "difficulty": "dac2935d3411b39f",
+  "dated": "cd33a518e57a70a9",
+  "exceptions": "0ccfe9a2db4db29c",
+  "only_times": "caf3c0df4b815cb3",
+  "compound": "67c77a475c2e043f",
+  "week_patterns": "3a162f732c3f786b",
+  "limits": "8e6dd8462280be12",
+  "relations": "1cb117ca96ea08ea",
+  "choices": "cfe9e9d1989d26fb",
+  "move_pairs": "88c251874259bf67",
+  "limit_firmness": "470a62b70f1d32ad",
+  "relation_pairs": "bbfd25742d331337",
+  "out_for_me": "030d372d0b8b324f",
+  "same_day_part": "e2697681848565b3",
+  "answered": "081482283c509079",
+  "test-typo": "710c97ca9762bc39",
+  "test-noisy": "c7fdcc1547db8aa9"
+ },
+ "gates": {
+  "schema": 0,
+  "resolves": 0,
+  "rubric": 0,
+  "leak": 0
+ },
+ "dropped": {
+  "resolves": [
+   "train:M7-I-extra_class-017",
+   "train:M7-I-extra_class-029"
+  ],
+  "leak": [
+   "val:R-0259",
+   "val:R-0300"
+  ]
+ },
+ "report": {
+  "train": {
+   "rows": 4623,
+   "origin": {
+    "augment": 1070,
+    "authored": 100,
+    "balance": 78,
+    "base": 1087,
+    "generators": 2168,
+    "mined": 120
+   },
+   "kind": {
+    "alternate_weeks": 1,
+    "answered": 284,
+    "any_of": 4,
+    "avoid_at": 1,
+    "avoid_at_days": 1,
+    "avoid_between": 197,
+    "cancel": 170,
+    "cancel_all": 1,
+    "cancel_extra": 2,
+    "cancel_relative": 1,
+    "choices": 117,
+    "clash_report": 139,
+    "club_booking": 103,
+    "club_more": 104,
+    "compound": 113,
+    "conditional": 2,
+    "dated": 102,
+    "difficulty": 112,
+    "except_weeks": 3,
+    "exception": 115,
+    "extra_class": 85,
+    "fallback": 4,
+    "firmness": 107,
+    "from_week": 2,
+    "gap": 3,
+    "limit_days_per_week": 2,
+    "limit_firmness": 99,
+    "limit_hours_per_day": 1,
+    "limit_hours_per_week": 2,
+    "limit_per_day": 4,
+    "limits": 114,
+    "load_limit": 65,
+    "mixed_unsupported": 2,
+    "move": 112,
+    "move_at": 2,
+    "move_other_day": 1,
+    "move_pairs": 111,
+    "multi": 114,
+    "multi_firmness": 1,
+    "multi_weeks": 2,
+    "needs_room": 1,
+    "needs_room_room": 1,
+    "needs_room_two": 1,
+    "only": 2,
+    "only_between": 1,
+    "only_firmness": 105,
+    "only_from_week": 1,
+    "only_times": 107,
+    "only_weeks": 2,
+    "or_over_windows": 3,
+    "out_for_me": 104,
+    "out_of_scope": 58,
+    "paired_weeks": 4,
+    "policy_question": 61,
+    "preference": 226,
+    "ranked": 5,
+    "reason_firmness": 105,
+    "relation_after": 2,
+    "relation_after_practical": 1,
+    "relation_conditional_day": 1,
+    "relation_cross_course": 1,
+    "relation_different_day": 2,
+    "relation_pairs": 106,
+    "relation_same_day": 1,
+    "relation_same_time": 1,
+    "relation_spread": 2,
+    "relations": 112,
+    "relative": 2,
+    "relative_span": 118,
+    "room_closed": 1,
+    "room_issue": 100,
+    "same_day_part": 205,
+    "same_room": 1,
+    "swap": 75,
+    "term_span": 101,
+    "unavailability": 149,
+    "unavailable_relative": 66,
+    "union_same_part": 1,
+    "vague": 104,
+    "week_patterns": 115,
+    "weeks_pattern": 1,
+    "which_to": 97,
+    "whole_week": 1,
+    "withdraw": 65
+   },
+   "action": {
+    "answer": 61,
+    "clarify": 181,
+    "compile": 4097,
+    "investigate": 139,
+    "out_of_scope": 80,
+    "withdraw": 65
+   },
+   "firmness": {
+    "hard": 633,
+    "mixed": 4,
+    "none": 2031,
+    "soft": 1955
+   },
+   "augment": {
+    "casual": 277,
+    "noisy": 278,
+    "none": 3553,
+    "shorthand": 229,
+    "typo": 286
+   },
+   "off_rule": {
+    "avoid_between: avoid hard": 25,
+    "preference: only hard": 42
+   }
+  },
+  "val": {
+   "rows": 373,
+   "origin": {
+    "balance": 14,
+    "base": 147,
+    "generators": 212
+   },
+   "kind": {
+    "answered": 17,
+    "avoid_between": 9,
+    "cancel": 21,
+    "choices": 6,
+    "clash_report": 11,
+    "club_booking": 9,
+    "club_more": 9,
+    "compound": 8,
+    "dated": 15,
+    "difficulty": 6,
+    "exception": 6,
+    "extra_class": 2,
+    "firmness": 8,
+    "limit_firmness": 10,
+    "limits": 3,
+    "load_limit": 6,
+    "move": 7,
+    "move_pairs": 4,
+    "multi": 9,
+    "only_firmness": 11,
+    "only_times": 6,
+    "out_for_me": 7,
+    "out_of_scope": 2,
+    "policy_question": 3,
+    "preference": 28,
+    "reason_firmness": 9,
+    "relation_pairs": 9,
+    "relations": 5,
+    "relative_span": 5,
+    "room_issue": 14,
+    "same_day_part": 21,
+    "swap": 5,
+    "term_span": 7,
+    "unavailability": 27,
+    "unavailable_relative": 9,
+    "vague": 7,
+    "week_patterns": 10,
+    "which_to": 14,
+    "withdraw": 8
+   },
+   "action": {
+    "answer": 3,
+    "clarify": 12,
+    "compile": 337,
+    "investigate": 11,
+    "out_of_scope": 2,
+    "withdraw": 8
+   },
+   "firmness": {
+    "hard": 39,
+    "none": 179,
+    "soft": 155
+   },
+   "augment": {
+    "none": 373
+   },
+   "off_rule": {
+    "avoid_between: avoid hard": 2,
+    "preference: only hard": 1
+   }
+  },
+  "test": {
+   "rows": 417,
+   "origin": {
+    "base": 417
+   },
+   "kind": {
+    "avoid_between": 14,
+    "cancel": 14,
+    "clash_report": 34,
+    "club_booking": 18,
+    "extra_class": 14,
+    "load_limit": 14,
+    "move": 14,
+    "out_of_scope": 12,
+    "policy_question": 14,
+    "preference": 89,
+    "room_issue": 46,
+    "swap": 14,
+    "unavailability": 92,
+    "unavailable_relative": 14,
+    "withdraw": 14
+   },
+   "action": {
+    "answer": 14,
+    "clarify": 24,
+    "compile": 319,
+    "investigate": 34,
+    "out_of_scope": 12,
+    "withdraw": 14
+   },
+   "firmness": {
+    "hard": 30,
+    "none": 310,
+    "soft": 77
+   },
+   "augment": {
+    "none": 417
+   },
+   "off_rule": {
+    "preference: only hard": 10
+   }
+  },
+  "firmness": {
+   "rows": 80,
+   "origin": {
+    "generators": 80
+   },
+   "kind": {
+    "firmness": 40,
+    "only_firmness": 40
+   },
+   "action": {
+    "compile": 80
+   },
+   "firmness": {
+    "hard": 40,
+    "soft": 40
+   },
+   "augment": {
+    "none": 80
+   },
+   "off_rule": {}
+  },
+  "moves": {
+   "rows": 40,
+   "origin": {
+    "generators": 40
+   },
+   "kind": {
+    "which_to": 40
+   },
+   "action": {
+    "compile": 40
+   },
+   "firmness": {
+    "hard": 20,
+    "soft": 20
+   },
+   "augment": {
+    "none": 40
+   },
+   "off_rule": {}
+  },
+  "periods": {
+   "rows": 40,
+   "origin": {
+    "generators": 40
+   },
+   "kind": {
+    "relative_span": 40
+   },
+   "action": {
+    "compile": 40
+   },
+   "firmness": {
+    "none": 40
+   },
+   "augment": {
+    "none": 40
+   },
+   "off_rule": {}
+  },
+  "multi": {
+   "rows": 40,
+   "origin": {
+    "generators": 40
+   },
+   "kind": {
+    "multi": 40
+   },
+   "action": {
+    "compile": 40
+   },
+   "firmness": {
+    "hard": 11,
+    "soft": 29
+   },
+   "augment": {
+    "none": 40
+   },
+   "off_rule": {}
+  },
+  "clubs": {
+   "rows": 40,
+   "origin": {
+    "generators": 40
+   },
+   "kind": {
+    "club_more": 40
+   },
+   "action": {
+    "compile": 40
+   },
+   "firmness": {
+    "none": 40
+   },
+   "augment": {
+    "none": 40
+   },
+   "off_rule": {}
+  },
+  "vague": {
+   "rows": 40,
+   "origin": {
+    "generators": 40
+   },
+   "kind": {
+    "vague": 40
+   },
+   "action": {
+    "clarify": 40
+   },
+   "firmness": {
+    "none": 40
+   },
+   "augment": {
+    "none": 40
+   },
+   "off_rule": {}
+  },
+  "reasons": {
+   "rows": 40,
+   "origin": {
+    "generators": 40
+   },
+   "kind": {
+    "reason_firmness": 40
+   },
+   "action": {
+    "compile": 40
+   },
+   "firmness": {
+    "hard": 20,
+    "soft": 20
+   },
+   "augment": {
+    "none": 40
+   },
+   "off_rule": {}
+  },
+  "terms": {
+   "rows": 40,
+   "origin": {
+    "generators": 40
+   },
+   "kind": {
+    "term_span": 40
+   },
+   "action": {
+    "compile": 40
+   },
+   "firmness": {
+    "none": 20,
+    "soft": 20
+   },
+   "augment": {
+    "none": 40
+   },
+   "off_rule": {}
+  },
+  "difficulty": {
+   "rows": 40,
+   "origin": {
+    "generators": 40
+   },
+   "kind": {
+    "difficulty": 40
+   },
+   "action": {
+    "compile": 40
+   },
+   "firmness": {
+    "hard": 20,
+    "soft": 20
+   },
+   "augment": {
+    "none": 40
+   },
+   "off_rule": {}
+  },
+  "dated": {
+   "rows": 40,
+   "origin": {
+    "generators": 40
+   },
+   "kind": {
+    "dated": 40
+   },
+   "action": {
+    "compile": 40
+   },
+   "firmness": {
+    "none": 40
+   },
+   "augment": {
+    "none": 40
+   },
+   "off_rule": {}
+  },
+  "exceptions": {
+   "rows": 40,
+   "origin": {
+    "generators": 40
+   },
+   "kind": {
+    "exception": 40
+   },
+   "action": {
+    "compile": 40
+   },
+   "firmness": {
+    "soft": 40
+   },
+   "augment": {
+    "none": 40
+   },
+   "off_rule": {}
+  },
+  "only_times": {
+   "rows": 40,
+   "origin": {
+    "generators": 40
+   },
+   "kind": {
+    "only_times": 40
+   },
+   "action": {
+    "compile": 40
+   },
+   "firmness": {
+    "hard": 20,
+    "soft": 20
+   },
+   "augment": {
+    "none": 40
+   },
+   "off_rule": {}
+  },
+  "compound": {
+   "rows": 40,
+   "origin": {
+    "generators": 40
+   },
+   "kind": {
+    "compound": 40
+   },
+   "action": {
+    "compile": 40
+   },
+   "firmness": {
+    "soft": 40
+   },
+   "augment": {
+    "none": 40
+   },
+   "off_rule": {}
+  },
+  "week_patterns": {
+   "rows": 40,
+   "origin": {
+    "generators": 40
+   },
+   "kind": {
+    "week_patterns": 40
+   },
+   "action": {
+    "compile": 40
+   },
+   "firmness": {
+    "none": 40
+   },
+   "augment": {
+    "none": 40
+   },
+   "off_rule": {}
+  },
+  "limits": {
+   "rows": 40,
+   "origin": {
+    "generators": 40
+   },
+   "kind": {
+    "limits": 40
+   },
+   "action": {
+    "compile": 40
+   },
+   "firmness": {
+    "hard": 20,
+    "soft": 20
+   },
+   "augment": {
+    "none": 40
+   },
+   "off_rule": {}
+  },
+  "relations": {
+   "rows": 40,
+   "origin": {
+    "generators": 40
+   },
+   "kind": {
+    "relations": 40
+   },
+   "action": {
+    "compile": 40
+   },
+   "firmness": {
+    "soft": 40
+   },
+   "augment": {
+    "none": 40
+   },
+   "off_rule": {}
+  },
+  "choices": {
+   "rows": 40,
+   "origin": {
+    "generators": 40
+   },
+   "kind": {
+    "choices": 40
+   },
+   "action": {
+    "compile": 40
+   },
+   "firmness": {
+    "soft": 40
+   },
+   "augment": {
+    "none": 40
+   },
+   "off_rule": {}
+  },
+  "move_pairs": {
+   "rows": 40,
+   "origin": {
+    "generators": 40
+   },
+   "kind": {
+    "move_pairs": 40
+   },
+   "action": {
+    "compile": 40
+   },
+   "firmness": {
+    "hard": 20,
+    "soft": 20
+   },
+   "augment": {
+    "none": 40
+   },
+   "off_rule": {}
+  },
+  "limit_firmness": {
+   "rows": 40,
+   "origin": {
+    "generators": 40
+   },
+   "kind": {
+    "limit_firmness": 40
+   },
+   "action": {
+    "compile": 40
+   },
+   "firmness": {
+    "hard": 20,
+    "soft": 20
+   },
+   "augment": {
+    "none": 40
+   },
+   "off_rule": {}
+  },
+  "relation_pairs": {
+   "rows": 40,
+   "origin": {
+    "generators": 40
+   },
+   "kind": {
+    "relation_pairs": 40
+   },
+   "action": {
+    "compile": 40
+   },
+   "firmness": {
+    "hard": 20,
+    "soft": 20
+   },
+   "augment": {
+    "none": 40
+   },
+   "off_rule": {}
+  },
+  "out_for_me": {
+   "rows": 40,
+   "origin": {
+    "generators": 40
+   },
+   "kind": {
+    "out_for_me": 40
+   },
+   "action": {
+    "compile": 40
+   },
+   "firmness": {
+    "none": 20,
+    "soft": 20
+   },
+   "augment": {
+    "none": 40
+   },
+   "off_rule": {}
+  },
+  "same_day_part": {
+   "rows": 40,
+   "origin": {
+    "generators": 40
+   },
+   "kind": {
+    "same_day_part": 40
+   },
+   "action": {
+    "compile": 40
+   },
+   "firmness": {
+    "soft": 40
+   },
+   "augment": {
+    "none": 40
+   },
+   "off_rule": {}
+  },
+  "answered": {
+   "rows": 40,
+   "origin": {
+    "generators": 40
+   },
+   "kind": {
+    "answered": 40
+   },
+   "action": {
+    "compile": 40
+   },
+   "firmness": {
+    "none": 20,
+    "soft": 20
+   },
+   "augment": {
+    "none": 40
+   },
+   "off_rule": {}
+  },
+  "test-typo": {
+   "rows": 417,
+   "origin": {
+    "suite": 417
+   },
+   "kind": {
+    "avoid_between": 14,
+    "cancel": 14,
+    "clash_report": 34,
+    "club_booking": 18,
+    "extra_class": 14,
+    "load_limit": 14,
+    "move": 14,
+    "out_of_scope": 12,
+    "policy_question": 14,
+    "preference": 89,
+    "room_issue": 46,
+    "swap": 14,
+    "unavailability": 92,
+    "unavailable_relative": 14,
+    "withdraw": 14
+   },
+   "action": {
+    "answer": 14,
+    "clarify": 24,
+    "compile": 319,
+    "investigate": 34,
+    "out_of_scope": 12,
+    "withdraw": 14
+   },
+   "firmness": {
+    "hard": 30,
+    "none": 310,
+    "soft": 77
+   },
+   "augment": {
+    "typo": 417
+   },
+   "off_rule": {
+    "preference: only hard": 10
+   }
+  },
+  "test-noisy": {
+   "rows": 417,
+   "origin": {
+    "suite": 417
+   },
+   "kind": {
+    "avoid_between": 14,
+    "cancel": 14,
+    "clash_report": 34,
+    "club_booking": 18,
+    "extra_class": 14,
+    "load_limit": 14,
+    "move": 14,
+    "out_of_scope": 12,
+    "policy_question": 14,
+    "preference": 89,
+    "room_issue": 46,
+    "swap": 14,
+    "unavailability": 92,
+    "unavailable_relative": 14,
+    "withdraw": 14
+   },
+   "action": {
+    "answer": 14,
+    "clarify": 24,
+    "compile": 319,
+    "investigate": 34,
+    "out_of_scope": 12,
+    "withdraw": 14
+   },
+   "firmness": {
+    "hard": 30,
+    "none": 310,
+    "soft": 77
+   },
+   "augment": {
+    "noisy": 417
+   },
+   "off_rule": {
+    "preference: only hard": 10
+   }
+  }
+ },
+ "balance": {
+  "short": {
+   "cancel": 77
+  },
+  "kinds": {
+   "move": {
+    "alone": 748,
+    "part": 296,
+    "parts_per_alone": 0.4,
+    "top": {
+     "same_day_part": 0.2,
+     "choices": 0.19,
+     "answered": 0.14
+    }
+   },
+   "avoid": {
+    "alone": 646,
+    "part": 245,
+    "parts_per_alone": 0.38,
+    "top": {
+     "avoid_between": 0.22,
+     "multi": 0.13,
+     "difficulty": 0.13
+    }
+   },
+   "unavailable": {
+    "alone": 690,
+    "part": 124,
+    "parts_per_alone": 0.18,
+    "top": {
+     "unavailability": 0.13,
+     "dated": 0.13,
+     "answered": 0.12
+    }
+   },
+   "only": {
+    "alone": 411,
+    "part": 0,
+    "parts_per_alone": 0.0,
+    "top": {
+     "only_times": 0.26,
+     "reason_firmness": 0.26,
+     "only_firmness": 0.26
+    }
+   },
+   "cancel": {
+    "alone": 216,
+    "part": 106,
+    "parts_per_alone": 0.49,
+    "top": {
+     "cancel": 0.53,
+     "compound": 0.25,
+     "answered": 0.14
+    }
+   },
+   "relate": {
+    "alone": 225,
+    "part": 24,
+    "parts_per_alone": 0.11,
+    "top": {
+     "relations": 0.45,
+     "relation_pairs": 0.43,
+     "choices": 0.08
+    }
+   },
+   "club_booking": {
+    "alone": 207,
+    "part": 0,
+    "parts_per_alone": 0.0,
+    "top": {
+     "club_more": 0.5,
+     "club_booking": 0.5
+    }
+   },
+   "load_limit": {
+    "alone": 118,
+    "part": 60,
+    "parts_per_alone": 0.51,
+    "top": {
+     "load_limit": 0.37,
+     "multi": 0.34,
+     "limit_firmness": 0.19
+    }
+   },
+   "limit": {
+    "alone": 148,
+    "part": 0,
+    "parts_per_alone": 0.0,
+    "top": {
+     "limits": 0.51,
+     "limit_firmness": 0.44,
+     "limit_per_day": 0.02
+    }
+   },
+   "clash_report": {
+    "alone": 139,
+    "part": 0,
+    "parts_per_alone": 0.0,
+    "top": {
+     "clash_report": 1.0
+    }
+   },
+   "extra_class": {
+    "alone": 85,
+    "part": 3,
+    "parts_per_alone": 0.04,
+    "top": {
+     "extra_class": 0.97,
+     "cancel_extra": 0.02,
+     "multi": 0.01
+    }
+   },
+   "swap": {
+    "alone": 75,
+    "part": 0,
+    "parts_per_alone": 0.0,
+    "top": {
+     "swap": 1.0
+    }
+   },
+   "needs_room": {
+    "alone": 64,
+    "part": 4,
+    "parts_per_alone": 0.06,
+    "top": {
+     "room_issue": 0.91,
+     "multi": 0.03,
+     "needs_room_two": 0.03
+    }
+   },
+   "any_of": {
+    "alone": 0,
+    "part": 49,
+    "parts_per_alone": 49.0,
+    "top": {
+     "choices": 0.86,
+     "any_of": 0.08,
+     "or_over_windows": 0.06
+    }
+   },
+   "ranked": {
+    "alone": 0,
+    "part": 42,
+    "parts_per_alone": 42.0,
+    "top": {
+     "choices": 0.88,
+     "ranked": 0.12
+    }
+   },
+   "room_closed": {
+    "alone": 38,
+    "part": 2,
+    "parts_per_alone": 0.05,
+    "top": {
+     "room_issue": 0.95,
+     "room_closed": 0.05
+    }
+   },
+   "fallback": {
+    "alone": 0,
+    "part": 23,
+    "parts_per_alone": 23.0,
+    "top": {
+     "choices": 0.83,
+     "fallback": 0.17
+    }
+   }
+  }
+ }
+}

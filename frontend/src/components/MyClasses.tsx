@@ -10,7 +10,7 @@ import { Card, CardHeader, Skeleton } from "./ui";
  * timetable, so a request can name them the way the timetable does. Clicking one adds it to the text. */
 export function MyClasses({ onPick, text = "" }: { onPick?: (phrase: string) => void; text?: string }) {
   const { user } = useAuth();
-  const { data: tt } = useApi(() => api.timetable(), []);
+  const { data: tt } = useApi(() => api.timetable(), [], 10_000); // approvals elsewhere move classes
   const { data: inst } = useApi(() => api.instance(), []);
   if (!user) return null;
   const teaching = ["faculty", "hod", "guest_faculty"].includes(user.role);

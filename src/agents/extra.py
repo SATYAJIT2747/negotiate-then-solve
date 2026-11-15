@@ -25,7 +25,7 @@ from dataclasses import dataclass, field
 
 from core.instance import ExtraClass, Instance, Session, SessionKind
 from core.schemas import Constraint, ConstraintType, Placement, Role, Scope, Source, Tier, When
-from core.semantics import consecutive_entities, occupied, room_compatible, violates
+from core.semantics import PLACEMENT_TYPES, consecutive_entities, occupied, room_compatible, violates
 from language.corpus import FULL_DAY, hour
 from language.rule_parser import EXTRA, RuleParser
 
@@ -145,7 +145,7 @@ def free_placements(instance: Instance, session: Session, week: int, assignment:
                        for c in hard):
                     continue
                 kept = sum(violates(inst, c, session, d, slot, room) for c in wishes
-                           if c.type != ConstraintType.MAX_CONSECUTIVE)
+                           if c.type in PLACEMENT_TYPES)  # a wish about a placement, not a limit or a relation
                 out.append(((kept, usual is None or room.id != usual.room, d, slot), Placement(day=day, slot=slot, room=room.id)))
                 break  # the best room for this time
     return [p for _, p in sorted(out, key=lambda x: x[0])]

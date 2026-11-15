@@ -266,16 +266,23 @@ def consent_message(instance: Instance, plan: SwapPlan, rule: str | None) -> Mes
     mine_to = _target(instance, plan.mine, plan.theirs_at, plan.mine_at.room)
     theirs_to = _target(instance, plan.theirs, plan.mine_at, plan.theirs_at.room)
     who = instance.faculty_by_id[plan.requester].name
-    text = (f"{who} asks to swap teaching slots with you {weeks_text(plan.weeks)}: "
-            f"{session_name(instance, plan.theirs)} would move from "
-            f"{placement_text(instance, plan.theirs_at)} to {placement_text(instance, theirs_to)}, and "
-            f"{session_name(instance, plan.mine)} would take its place. A swap needs the consent of both "
-            f"of you{f' ({rule})' if rule else ''}; the timetable coordinator approves it before it is "
-            "published, and rooms may change if the solver needs them to.\n\nOptions:\n"
+
+    def title(sid: str) -> str:
+        s = instance.session_by_id[sid]
+        return f"{instance.course_title(s.course)} {s.kind.value}"
+
+    # short lines a teacher can take in at a glance; the card in the web app shows the same as before -> after
+    text = (f"{who} would like to swap classes with you {weeks_text(plan.weeks)}.\n\n"
+            f"Your {title(plan.theirs)} would move from {placement_text(instance, plan.theirs_at, plan.theirs)} "
+            f"to {placement_text(instance, theirs_to, plan.theirs)}.\n"
+            f"Their {title(plan.mine)} would take your old slot.\n\n"
+            f"The swap only happens if you agree{f' ({rule})' if rule else ''}. The timetable coordinator "
+            "approves it before it is published.\n\nOptions:\n"
             f"A) Agree to the swap\nReply A to agree, or decline.")
     offer = Offer(key="A", drop=[], placements={plan.theirs: theirs_to, plan.mine: mine_to})
+    # "swap": the web app shows a yes/no card instead of the options card of a negotiation
     return Message(round=1, to=plan.counterpart, mus=[], offers=[offer], text=text,
-                   explanation_mode="template", faithfulness=1.0)
+                   explanation_mode="swap", faithfulness=1.0)
 
 
 def swap_constraints(instance: Instance, plan: SwapPlan, request: Request) -> list[Constraint]:

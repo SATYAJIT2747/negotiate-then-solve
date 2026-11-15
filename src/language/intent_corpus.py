@@ -12,8 +12,9 @@ classes it was written about, or (for the requests that leave something
 out) ask a question. Each generator's last wording is kept for the test
 split, so the test measures wordings the model has not seen; val is a
 random tenth of the rest. Where that wording is also the only one with its
-meaning (a move that is a wish, a club that asks for a kind of room), the
-``TRAIN_ONLY`` generators say the same meaning in other words.
+meaning (a move that is a wish, a club that asks for a kind of room, times
+kept free as a must), the ``TRAIN_ONLY`` generators say the same meaning in
+other words.
 """
 
 from __future__ import annotations
@@ -151,7 +152,9 @@ def move(ctx: _Ctx, t: int):
              f"Is it possible to move the {title} {k} I teach on {D} at {h} to {to_words}?",
              f"My {D} {h} {k} clashes with a committee meeting; could it go to {to_words} instead?",
              f"If possible, I'd like my {h} {D} {k} moved to {to_words}."]
-    intent = Move(which=_ref(s, ctx, k, course=named), to=to, hard=t != 4,
+    # the labelling rule (``lexicon.placement_is_hard``): a plain request for a time is a wish; the committee
+    # meeting rules out the time the class is at, so that one must be met
+    intent = Move(which=_ref(s, ctx, k, course=named), to=to, hard=t == 3,
                   justification="stated" if t == 3 else "none")
     return texts[t], IntentOutput(action="compile", intents=[intent]), {"move": s.id}, False
 
@@ -387,6 +390,23 @@ def move_wish(ctx: _Ctx, t: int):
     return texts[t], IntentOutput(action="compile", intents=[intent]), {"move": s.id}, False
 
 
+def avoid_firm(ctx: _Ctx, t: int):
+    """``avoid_between`` said as a must (its test wording is the only hard one without a reason), and once as a
+    plain wish beside them."""
+    day = ctx.rng.choice(ctx.instance.calendar.days)
+    a, b = sorted(ctx.rng.sample(range(1, ctx.instance.calendar.slots_per_day), 2))
+    D, ha, hb = FULL_DAY[day], hour(a), hour(b)
+    texts = [(f"I must not have classes on {D} between {ha} and {hb}; I have a fixed commitment then.", True),
+             (f"{D} from {ha} to {hb} has to stay free for me.", True),
+             (f"Do not schedule me on {D} between {ha} and {hb} under any circumstances.", True),
+             (f"If you can, leave {D} between {ha} and {hb} free for me; it is not essential.", False),
+             (f"Nothing of mine may be placed on {D} from {ha} to {hb}.", True)]
+    text, hard = texts[t]
+    gold = Avoid(time=TimeSpec(days=[day], after=clock(a), before=clock(b)), hard=hard,
+                 justification="stated" if t == 0 else "none")
+    return text, IntentOutput(action="compile", intents=[gold]), {}, False
+
+
 ROOM_KINDS = ["a classroom", "a seminar room", "a tutorial room", "a hall", "a large room", "any free classroom"]
 
 
@@ -423,7 +443,8 @@ SENDERS = {"club_booking": "student_or_teacher", "clash_report": "student"}
 TEST_TEMPLATE = 4  # each generator's last wording is held out for test
 # more wordings of a generator, for train and val only: the meaning only its test wording has
 TRAIN_ONLY: dict[str, tuple[str, Gen]] = {"move-wish": ("move", move_wish),
-                                          "club_booking-room-kind": ("club_booking", club_room_kind)}
+                                          "club_booking-room-kind": ("club_booking", club_room_kind),
+                                          "avoid_between-firm": ("avoid_between", avoid_firm)}
 
 
 def _resolves(ex: IntentExample, instance: Instance) -> bool:
@@ -434,7 +455,7 @@ def _resolves(ex: IntentExample, instance: Instance) -> bool:
         return False
     w = ex.want
     if "move" in w:
-        return [c.scope.session for c in got.result.constraints] == [w["move"]]
+        return {c.scope.session for c in got.result.constraints} == {w["move"]}  # a must to leave adds one
     if "swap" in w:
         return [(r.mine, r.theirs) for r in got.swaps] == [w["swap"]]
     if "extra" in w:
@@ -459,7 +480,7 @@ def train_only_examples(instance: Instance, per_generator: int = 30, seed: int =
 
 
 def _examples(instance: Instance, rng: random.Random, generators: dict[str, tuple[str, Gen]], per_generator: int,
-              test_template: int | None) -> list[IntentExample]:
+              test_template: int | None, templates: tuple[int, ...] = (0, 1, 2, 3, 4)) -> list[IntentExample]:
     teachers = [f.id for f in instance.faculty if any(s.faculty == f.id for s in instance.sessions)]
     out: list[IntentExample] = []
     seen: set[str] = set()
@@ -473,7 +494,7 @@ def _examples(instance: Instance, rng: random.Random, generators: dict[str, tupl
             mine = [s.id for s in instance.sessions if s.faculty == sender]
             ctx = _Ctx(instance, rng, sender, random_timetable(instance, rng, mine), rng.randint(1, instance.calendar.weeks),
                        random_today(rng))
-            t = made % 5
+            t = templates[made % len(templates)]
             got = gen(ctx, t)
             if got is None:
                 continue

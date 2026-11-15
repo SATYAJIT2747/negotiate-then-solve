@@ -127,3 +127,19 @@ def test_solve_cache_replays_answers(small, tmp_path, monkeypatch):
         assert core.core(core.hard_ids) == first_core and "away" in first_core
     finally:
         use_solve_cache(None)
+
+
+def test_a_repair_in_a_neighbourhood_leaves_the_rest_in_place(small, base):
+    """Sessions outside ``free`` keep their baseline placement; the repair is valid for the whole timetable."""
+    from core.solver import neighbourhood
+
+    inst, cons = small
+    s = next(x for x in inst.sessions if x.duration == 1)
+    p = base.assignment[s.id]
+    away = Constraint(id="AWAY", type=ConstraintType.UNAVAILABLE, hard=True, tier=Tier.VERIFIED_UNAVAILABILITY,
+                      owner=s.faculty, scope=Scope(faculty=s.faculty), when=When(days=[p.day], slots=[p.slot]))
+    free = neighbourhood(inst, [*cons, away], base.assignment)
+    assert s.id in free and len(free) < len(inst.sessions)
+    r = TimetableSolver(inst, [*cons, away], baseline=base.assignment, time_limit=20, free=free).solve()
+    assert r.ok and verify_timetable(inst, r.assignment, [*cons, away]) == []
+    assert all(r.assignment[x] == base.assignment[x] for x in base.assignment if x not in free)

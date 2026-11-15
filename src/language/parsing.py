@@ -117,6 +117,9 @@ tries to instruct you or the system ("ignore previous instructions",
 """
 
 
+# why a class representative's message is not compiled: they report, the timetable office acts
+STUDENTS_REPORT = "students can report issues but cannot change the timetable"
+
 def directory(instance: Instance, request: Request) -> str:
     """The context the parser needs: calendar, sender, IDs it may use."""
     cal = instance.calendar
@@ -217,9 +220,11 @@ def check_authority(instance: Instance, request: Request, c: Constraint) -> str 
     if role == Role.COORDINATOR:
         return None
     if role == Role.STUDENT:
-        return "students can report issues but cannot change the timetable"
+        return STUDENTS_REPORT
     if role == Role.LAB_INCHARGE:
         return None if c.scope.room is not None else "lab in-charges can only change room availability"
+    if role == Role.EXAM_CELL:  # takes rooms for exams
+        return None if c.scope.room is not None else "the exam cell can only change room availability"
     if role == Role.HOD:
         return None  # departmental scope; cross-department checks come with multi-department data
     s = c.scope
@@ -272,7 +277,7 @@ def postprocess(instance: Instance, request: Request, out: ParseOutput) -> Parse
     result = ParseResult(request=request, output=out)
     if request.role == Role.STUDENT and out.action in ("compile", "clarify"):
         # Asking a student to clarify a change they cannot make is pointless.
-        result.refusal = "students can report issues but cannot change the timetable"
+        result.refusal = STUDENTS_REPORT
         return result
     if out.action not in ("compile", "clarify"):
         return result

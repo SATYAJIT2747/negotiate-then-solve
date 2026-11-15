@@ -1,0 +1,64 @@
+# The intent reader's training data (python -m training.dataset build --recipe data/recipes/intents-v10.toml):
+# intents-v9's rows and the first data in schema 5, which adds weeks left out of a period (except_weeks) and odd
+# or even weeks (parity): the reader says them and intents.weeks counts them. The v8 reader did that arithmetic
+# itself and got it wrong ("from now on, except week 16" read as every week left; "even weeks" as the next eight
+# weeks). The week_patterns generator teaches the two fields, its held-out wordings going to the week_patterns
+# suite; the authored rows and the compositional suite say them too. Train from the base on all of it.
+name = "intents-v10"
+instance = "data/synthetic-cse-s0.json"
+
+[output]
+dir = "data/compiler-intents"   # train, val, test and manifest.json
+suites = "data/suites"          # held-out wordings and the noisy test split, for evaluation only
+
+[frozen]
+# the test split every model has been scored on since evaluation.intents began (messages, gold and what it
+# resolves against; not the system prompt). The build refuses to change it without --refreeze.
+# Refrozen for v6 (was e402d9c4724c5843, v5's): the same 417 requests and gold, in schema 4's format (the
+# message without the directory, the gold with names for IDs). Every gold reading compiles to the same outcome
+# with names as with IDs, and models trained on schema 3 are read with their own prompt (format_row), so their
+# scores on this split are the ones they had on v5's.
+test = "0fb72ff322ff89a9"
+
+[base]                          # intent_compiler.base_rows: the corpus and intent_corpus's generators
+corpus = ["data/requests.jsonl", "data/requests-para.jsonl"]
+extra_denials = 150
+min_per_action = 50
+per_generator = 70
+max_per_kind = 78
+train_only = 30
+
+[generators]                    # intent_generators.REGISTRY; held-out wordings go to their suites
+per_generator = 90
+held_per_generator = 40
+seed = 200
+# the generators this recipe was built with; later ones in REGISTRY belong to later recipes
+names = ["firmness", "only_firmness", "which_to", "relative_span", "multi", "club_more", "vague",
+         "reason_firmness", "term_span", "difficulty", "dated",
+         "exception", "only_times", "compound", "week_patterns"]
+
+[stored.mined]                  # training.mine: the model's mistakes, with gold from the generators
+paths = ["data/compiler-intents/mined.jsonl"]
+split = "train"
+relabel = true                  # made by code under the old rule for moves: relabel by the current one
+
+[stored.authored]               # training.human's format; source "authored", annotator "llm-authored"
+kind = "authored"
+paths = ["data/authored/*.jsonl"]
+
+[stored.human]                  # training.human: messages people labelled (reviewed only)
+kind = "human"
+paths = ["data/human/*.jsonl"]
+
+[balance]                       # training.balance: no kind taught mostly by messages of several requests
+max_parts = 0.5                 # rows where a kind is one part of several, per row where it is the whole request
+seed = "v8"
+
+[augment]                       # noisy twins of training rows, kept only if they mean the same
+fraction = 0.35
+levels = ["typo", "shorthand", "casual", "noisy"]
+seed = "v3"
+origins = ["base", "generators", "balance"]
+
+[suites]
+noisy_levels = ["typo", "noisy"]

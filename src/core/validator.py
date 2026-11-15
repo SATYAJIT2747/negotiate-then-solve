@@ -19,6 +19,7 @@ from .semantics import (
     consecutive_entities,
     occupied,
     room_compatible,
+    satisfied,
     sessions_in_scope,
     violates,
 )
@@ -49,6 +50,11 @@ def validate_constraint(c: Constraint, instance: Instance) -> list[str]:
     for w in weeks:
         if not 1 <= w <= cal.weeks:
             errors.append(f"week {w} outside 1..{cal.weeks}")
+    for sid in (c.sessions or []) + (c.others or []):
+        if sid not in instance.session_by_id:
+            errors.append(f"unknown session {sid!r}")
+    for m in c.members or []:
+        errors.extend(f"{m.id}: {e}" for e in validate_constraint(m, instance))
     if c.room is not None:
         for r in c.room.rooms or []:
             if r not in instance.room_by_id:
@@ -126,4 +132,6 @@ def verify_timetable(
                         run = run + 1 if use.get((eid, d, q)) else 0
                         if run == c.limit + 1:
                             out.append(f"{c.id} violated by {kind} {eid} on {cal.days[d]}")
+        elif not satisfied(instance, c, placed, week):  # a load limit, a relation, a choice
+            out.append(f"{c.id} violated")
     return out

@@ -1,14 +1,14 @@
 import clsx from "clsx";
-import { Check, CircleSlash, Gavel, History, ListX, MessagesSquare, TriangleAlert, Undo2, X } from "lucide-react";
+import { BookOpen, Bot, Check, CircleSlash, Gavel, History, ListX, MessageSquareQuote, MessagesSquare, TriangleAlert, Undo2, X } from "lucide-react";
 import { useState } from "react";
 import { api } from "../lib/api";
 import type { CaseDetail } from "../lib/types";
 import { ConstraintCard } from "./Negotiation";
 import { Badge, Button, Card, Collapse, Label } from "./ui";
 
-/** Who an escalation names, in words: "coordinator", "dean", "hod" or the heads' names. */
+/** Who an escalation names, in words: "coordinator", "dean", "hod", "exam_cell" or the heads' names. */
 export function decider(to: string, toName: string): string {
-  return { coordinator: "the timetable office", dean: "the dean", hod: "the head of department" }[to] ?? toName;
+  return { coordinator: "the timetable office", dean: "the dean", hod: "the head of department", exam_cell: "the examination cell" }[to] ?? toName;
 }
 
 const sentence = (s: string) => (s ? s.charAt(0).toUpperCase() + s.slice(1).replace(/\.?$/, ".") : "");
@@ -43,11 +43,16 @@ export function EscalationPanel({ c, onDecided }: { c: CaseDetail; onDecided?: (
             </h3>
             {d && <Badge tone={d.granted ? "ok" : "bad"}>{d.granted ? "granted" : "declined"} by {d.by_name}</Badge>}
           </div>
-          <p className="mt-1 max-w-3xl text-[13.5px] leading-relaxed text-ink-2">{sentence(e.reason)}</p>
+          <p className="mt-1 max-w-3xl text-[13.5px] leading-relaxed text-ink-2">
+            {e.rule ? `${c.sender_name} asks for a class ${e.reason}${e.asked ? ` (${e.asked})` : ""}, which only ${who} can allow.` : sentence(e.reason)}
+          </p>
           {d?.note && <p className="mt-2 text-[13px] text-ink-2">“{d.note}”</p>}
         </div>
       </div>
 
+      {e.rule ? (
+        <RuleException c={c} rule={e.rule} brief={e.text} />
+      ) : (
       <div className="grid gap-0 lg:grid-cols-[minmax(0,1.4fr)_minmax(0,1fr)]">
         <div className="space-y-3 border-b border-line p-5 lg:border-b-0 lg:border-r">
           <Label className="flex items-center gap-1.5">
@@ -91,9 +96,77 @@ export function EscalationPanel({ c, onDecided }: { c: CaseDetail; onDecided?: (
           </Collapse>
         </div>
       </div>
+      )}
 
+      {c.can_simulate && <SimulateReply c={c} who={who} onDecided={onDecided} />}
       {c.can_decide && <Decide c={c} onDecided={onDecided} />}
     </Card>
+  );
+}
+
+/** An exception to a rule (a class outside teaching hours): what was asked, in the sender's words and as
+ * read, beside the rule that needs the decider's approval. Nothing was solved, so there is no conflict to show. */
+function RuleException({ c, rule, brief }: { c: CaseDetail; rule: { id: string; number: string; title: string; text: string }; brief: string }) {
+  return (
+    <div className="grid gap-0 lg:grid-cols-2">
+      <div className="space-y-3 border-b border-line p-5 lg:border-b-0 lg:border-r">
+        <Label className="flex items-center gap-1.5">
+          <MessageSquareQuote size={13} /> The request
+        </Label>
+        <blockquote className="border-l-2 border-line pl-3 text-[13.5px] leading-relaxed text-ink">“{c.text.trim()}”</blockquote>
+        <p className="text-[12.5px] text-ink-3">{c.sender_name}</p>
+        {!!c.understood?.length && (
+          <div>
+            <p className="text-[12px] font-medium text-ink-3">Read as</p>
+            <ul className="mt-1 list-disc space-y-0.5 pl-5 text-[13px] text-ink-2">
+              {c.understood.map((u) => (
+                <li key={u}>{u}</li>
+              ))}
+            </ul>
+          </div>
+        )}
+      </div>
+      <div className="space-y-3 p-5">
+        <Label className="flex items-center gap-1.5">
+          <BookOpen size={13} /> The rule
+        </Label>
+        <p className="text-[13.5px] font-medium">
+          §{rule.number} {rule.title} <span className="font-mono text-[11.5px] font-normal text-ink-3">{rule.id}</span>
+        </p>
+        <p className="text-[13px] leading-relaxed text-ink-2">{rule.text}</p>
+        <Collapse title="Brief as written">
+          <pre className="whitespace-pre-wrap font-sans text-[12.5px] leading-relaxed text-ink-3">{brief}</pre>
+        </Collapse>
+      </div>
+    </div>
+  );
+}
+
+/** The demo's stand-in for the person deciding (the examination cell), as the inbox simulates a teacher's
+ * reply: it answers as the cell would, and the request goes on like any granted one. */
+function SimulateReply({ c, who, onDecided }: { c: CaseDetail; who: string; onDecided?: (msg: string) => void }) {
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const go = async () => {
+    setBusy(true);
+    setError(null);
+    try {
+      await api.simulateDecision(c.id);
+      onDecided?.(`${who.charAt(0).toUpperCase() + who.slice(1)} answered (simulated): granted, re-solving it now, then it comes to Approvals.`);
+    } catch (err) {
+      setError((err as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
+    <div className="flex flex-wrap items-center gap-3 border-t border-line px-5 py-3">
+      <p className="text-[13px] text-ink-3">Demo: have {who} answer, as a simulated stakeholder.</p>
+      <Button variant="ghost" icon={Bot} loading={busy} className="ml-auto" onClick={go}>
+        Simulate reply
+      </Button>
+      {error && <p className="w-full text-[13px] text-bad">{error}</p>}
+    </div>
   );
 }
 
@@ -108,7 +181,11 @@ function Decide({ c, onDecided }: { c: CaseDetail; onDecided?: (msg: string) => 
     setError(null);
     try {
       await api.decide(c.id, grant, note);
-      onDecided?.(grant ? "Granted: re-solving it now, then it comes to Approvals." : `Declined; ${c.sender_name} has been told.`);
+      onDecided?.(
+        grant
+          ? e.rule?.id === "P-HOURS" ? `Granted; ${c.sender_name} has been told and the timetable office books the room.` : "Granted: re-solving it now, then it comes to Approvals."
+          : `Declined; ${c.sender_name} has been told.`,
+      );
     } catch (err) {
       setError((err as Error).message);
     } finally {
@@ -123,7 +200,9 @@ function Decide({ c, onDecided }: { c: CaseDetail; onDecided?: (msg: string) => 
           <p className="flex items-center gap-2 text-[13.5px] font-semibold">
             <Check size={15} className="text-ok" /> Grant
           </p>
-          {e.cannot_grant ? (
+          {e.rule ? (
+            <p className="mt-1.5 text-[13px] leading-relaxed text-ink-2">{e.grant}</p>
+          ) : e.cannot_grant ? (
             <p className="mt-1.5 text-[13px] text-ink-3">Not possible: {e.cannot_grant}.</p>
           ) : (
             <>
@@ -150,7 +229,9 @@ function Decide({ c, onDecided }: { c: CaseDetail; onDecided?: (msg: string) => 
             <X size={15} className="text-bad" /> Decline
           </p>
           <p className="mt-1.5 text-[13px] leading-relaxed text-ink-2">
-            The timetable stays as it is and {c.sender_name} is told, with your note below.
+            {e.rule
+              ? `The class stays where it is in the timetable and ${c.sender_name} is told, with your note below.`
+              : `The timetable stays as it is and ${c.sender_name} is told, with your note below.`}
           </p>
         </div>
       </div>

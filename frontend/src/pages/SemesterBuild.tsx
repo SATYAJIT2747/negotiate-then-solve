@@ -339,6 +339,52 @@ const prefExamples = (ov: SemesterOverview) => {
   ];
 };
 
+/** Who has sent semester preferences, and which teachers in the offerings the office has not heard from
+ * yet: names are compared without "Dr."/"Prof." and case. */
+function HeardFrom({ ov }: { ov: SemesterOverview }) {
+  const key = (n: string) => n.replace(/^(dr|prof)\.?\s+/i, "").trim().toLowerCase();
+  const teachers = [...new Set((ov.catalog ?? []).flatMap((c) => c.faculty))].sort();
+  const sent = new Set((ov.preferences ?? []).map((p) => key(p.source)));
+  const heard = teachers.filter((t) => sent.has(key(t)));
+  const waiting = teachers.filter((t) => !sent.has(key(t)));
+  const others = [...new Set((ov.preferences ?? []).map((p) => p.source))].filter((s) => s && !teachers.some((t) => key(t) === key(s)));
+  if (!teachers.length) return null;
+  return (
+    <Card className="p-5">
+      <div className="flex items-baseline justify-between gap-3">
+        <Label>Heard from</Label>
+        <span className="text-[12px] text-ink-3">
+          {heard.length} of {teachers.length} teachers
+        </span>
+      </div>
+      <div className="mt-1 h-1.5 overflow-hidden rounded-full bg-panel-2">
+        <div className="h-full rounded-full bg-ok" style={{ width: `${(100 * heard.length) / teachers.length}%` }} />
+      </div>
+      {(heard.length > 0 || others.length > 0) && (
+        <p className="mt-3 flex flex-wrap gap-1.5">
+          {[...heard, ...others].map((t) => (
+            <Badge key={t} tone="ok">
+              <CheckCircle2 size={12} /> {t}
+            </Badge>
+          ))}
+        </p>
+      )}
+      {waiting.length > 0 && (
+        <>
+          <p className="mt-3 text-[12px] text-ink-3">Not heard from yet: add theirs here if they tell you in person</p>
+          <p className="mt-1.5 flex flex-wrap gap-1.5">
+            {waiting.map((t) => (
+              <Badge key={t} tone="muted">
+                {t}
+              </Badge>
+            ))}
+          </p>
+        </>
+      )}
+    </Card>
+  );
+}
+
 function Preferences({ ov, refresh }: { ov: SemesterOverview; refresh: () => Promise<void> }) {
   const [text, setText] = useState("");
   const [preview, setPreview] = useState<ParsedInput | null>(null);
@@ -396,17 +442,26 @@ function Preferences({ ov, refresh }: { ov: SemesterOverview; refresh: () => Pro
           send theirs from Semester preferences.
         </p>
       </Card>
+      <div className="min-w-0 space-y-6">
+      <HeardFrom ov={ov} />
       <Card>
-        <CardHeader title={`Preferences (${ov.preferences?.length ?? 0})`} subtitle="Used by the next build or change" />
+        <CardHeader title={`Preferences (${ov.preferences?.length ?? 0})`} subtitle="Used by the next build or change, grouped by who sent them" />
         <ul className="divide-y divide-line">
-          {(ov.preferences ?? []).map((p) => (
+          {[...(ov.preferences ?? [])].sort((a, b) => a.source.localeCompare(b.source)).flatMap((p, i, all) => [
+            ...(i === 0 || all[i - 1].source !== p.source
+              ? [
+                  <li key={`h-${p.source}`} className="bg-panel-2/50 px-5 py-1.5 text-[11.5px] font-medium text-ink-3">
+                    {p.source || "Unknown"} · {all.filter((x) => x.source === p.source).length}
+                  </li>,
+                ]
+              : []),
             <li key={p.id} className="flex items-start gap-3 px-5 py-3">
               <div className="min-w-0 flex-1">
                 <p className="text-[13.5px]">{p.text}</p>
                 <p className="mt-0.5 text-[12px] text-ink-3">
                   {p.target} {p.who.length > 40 ? `${p.who.slice(0, 40)}…` : p.who} · {p.mode}
                   {p.days ? ` · ${p.days.join(", ")}` : ""}
-                  {p.start || p.end ? ` · ${p.start ?? "start"}–${p.end ?? "end"}` : ""} · from {p.source}
+                  {p.start || p.end ? ` · ${p.start ?? "start"}–${p.end ?? "end"}` : ""}
                 </p>
               </div>
               <Badge tone={p.hard ? "bad" : "muted"}>{p.hard ? "required" : "preference"}</Badge>
@@ -420,8 +475,8 @@ function Preferences({ ov, refresh }: { ov: SemesterOverview; refresh: () => Pro
               >
                 <Trash2 size={14} />
               </button>
-            </li>
-          ))}
+            </li>,
+          ])}
           {!ov.preferences?.length && <li className="px-5 py-8 text-center text-[13px] text-ink-3">No preferences yet.</li>}
         </ul>
         {!!ov.closures?.length && (
@@ -435,6 +490,7 @@ function Preferences({ ov, refresh }: { ov: SemesterOverview; refresh: () => Pro
           </div>
         )}
       </Card>
+      </div>
     </div>
   );
 }

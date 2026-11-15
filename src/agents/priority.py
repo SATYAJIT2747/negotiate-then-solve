@@ -89,7 +89,11 @@ class PriorityModel:
         return min(1.0, self.notice_days.get(c.id, 7.0) / 14.0)
 
     def credit(self, c: Constraint) -> float:
-        return min(1.0, self.ledger.credit(c.owner, self.semester)) if c.owner else 0.0
+        """Fairness credit 1 - 0.5^c: 0.5 after one unit of weighted burden, 0.75
+        after two, 0.875 after three, so each further concession still counts.
+        (The earlier ``min(1, c)`` was flat after about one concession; in the
+        fairness stress test this lowers the Gini from 0.18 to 0.13.)"""
+        return 1.0 - 0.5 ** self.ledger.credit(c.owner, self.semester) if c.owner else 0.0
 
     def disrupt(self, c: Constraint) -> float:
         """Share of the constraint's sessions it forces off their current place."""

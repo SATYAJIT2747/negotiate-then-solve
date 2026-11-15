@@ -2,7 +2,8 @@
 ``llama-server``, Ollama, LM Studio). Same interface as ``GeminiClient``,
 so parsers and evaluations take either.
 
-    llama-server -m Qwen3.5-2B.Q5_K_M-mutitask-finetune.gguf --jinja -ngl 99 -c 4096 --cache-ram 1024 --port 8080
+    llama-server -m Qwen3.5-4B-Base-Q8_0.gguf --lora loras/nts-read100.gguf --lora-init-without-apply \
+        --jinja -ngl 99 -c 4096 --cache-ram 1024 --port 8080
 
 * Output is constrained to the Pydantic schema (``response_format`` with a
   JSON schema; llama.cpp turns it into a grammar), so it always parses.
@@ -14,6 +15,15 @@ so parsers and evaluations take either.
   lists every GGUF in the folder and loads the one a request names: choose it
   with ``server_model`` or ``NTS_LOCAL_MODEL`` (the name, the file name or the
   path the server lists).
+* ``adapter``: one LoRA adapter on a shared base model (``language.adapters``
+  says which adapter serves which task). A server started with the adapters
+  (``llama-server -m base.gguf --lora a.gguf,b.gguf --lora-init-without-apply``)
+  lists them at ``/lora-adapters``; each request then switches on its own
+  adapter (``"lora"``: that one at scale 1, the rest at 0). A server that does
+  not list it may serve the adapter as a model of its own name instead (a
+  router preset of the base with the adapter, or the adapter merged): that
+  model is used. The cache key holds the adapter, so each adapter file needs
+  its own name too (a version in the name: ``nts-policy-v2``).
 """
 
 from __future__ import annotations
@@ -31,6 +41,28 @@ from typing import TypeVar
 from pydantic import BaseModel, ValidationError
 
 from .llm import InvalidOutput, LLMError, Usage
+
+# calls in flight to one server from this process, across every client of it (NTS_LOCAL_CONCURRENCY, default 4:
+# the GPU server's slots). Beyond it a call waits here, not in the server's queue, where the wait counted
+# against its timeout and an evaluation's workers or a busy app timed out each other's calls.
+_SLOTS: dict[str, threading.BoundedSemaphore] = {}
+_SLOTS_LOCK = threading.Lock()
+
+
+def _slots(base_url: str) -> threading.BoundedSemaphore:
+    with _SLOTS_LOCK:
+        if base_url not in _SLOTS:
+            _SLOTS[base_url] = threading.BoundedSemaphore(max(1, int(os.environ.get("NTS_LOCAL_CONCURRENCY", "4"))))
+        return _SLOTS[base_url]
+
+_RETRY_WAITS = (2.0, 4.0, 8.0, 16.0)  # seconds before each new try of a dropped connection
+_SHARED_CONTEXT = 8192  # tokens the server's slots share (llama-server -c); a call needing more never fits
+
+
+def _fits_alone(payload: dict) -> bool:
+    """Whether a call could fit the server's context with nothing beside it (about four characters a token)."""
+    chars = sum(len(m.get("content") or "") for m in payload.get("messages", []))
+    return chars // 4 + payload.get("max_tokens", 0) < _SHARED_CONTEXT
 
 T = TypeVar("T", bound=BaseModel)
 
@@ -68,30 +100,49 @@ class LocalClient:
         max_tokens: int = 512,
         thinking: bool = False,
         server_model: str | None = None,
+        adapter: str | None = None,
     ) -> None:
         self.base_url = base_url.rstrip("/")
         self.timeout = timeout
         self.max_tokens = max_tokens
         self.thinking = thinking
         self.server_model = server_model or os.environ.get("NTS_LOCAL_MODEL") or None
-        self.model = model or self._served_model()
+        self.adapter = adapter
+        self.lora: list[dict] | None = None  # the per-request adapter scales, when the server lists adapters
+        self.model = model or (self._with_adapter(adapter) if adapter else self._served_model())
         self.cache_dir = Path(cache_dir)
         self.cache_dir.mkdir(parents=True, exist_ok=True)
         self.usage = Usage()
         self.latencies: list[float] = []
         self._lock = threading.Lock()
 
-    def _request(self, path: str, payload: dict | None = None) -> dict:
+    def _request(self, path: str, payload: dict | None = None, *, root: bool = False) -> dict:
+        """``path`` under the API (``/v1``), or under the server's root with ``root`` (``/lora-adapters``).
+        A dropped or refused connection (the server restarting, a blip on the network) is tried again after
+        2, 4, 8 and 16 s before it fails; a timeout is not, as the server is busy and another call adds to it.
+        Nor is a full context, unless it is the one the server's parallel slots share: calls running beside
+        this one filled it, and it is free again once they end."""
         data = json.dumps(payload).encode() if payload is not None else None
-        req = urllib.request.Request(f"{self.base_url}{path}", data=data,
+        base = self.base_url.removesuffix("/v1") if root else self.base_url
+        req = urllib.request.Request(f"{base}{path}", data=data,
                                      headers={"Content-Type": "application/json"})
-        try:
-            with urllib.request.urlopen(req, timeout=self.timeout) as resp:
-                return json.loads(resp.read())
-        except urllib.error.HTTPError as e:
-            raise LLMError(f"local server {e.code}: {e.read()[:300]!r}") from e
-        except (urllib.error.URLError, TimeoutError) as e:
-            raise LLMError(f"local server not reachable at {self.base_url}: {e}") from e
+        for wait in (*_RETRY_WAITS, None):
+            try:
+                with urllib.request.urlopen(req, timeout=self.timeout) as resp:
+                    return json.loads(resp.read())
+            except urllib.error.HTTPError as e:
+                body = e.read()[:300]
+                if wait is None or not (e.code == 500 and b"Context size has been exceeded" in body
+                                        and payload is not None and _fits_alone(payload)):
+                    raise LLMError(f"local server {e.code}: {body!r}") from e
+                time.sleep(wait)
+            except (urllib.error.URLError, ConnectionError) as e:
+                if wait is None or not isinstance(getattr(e, "reason", e), ConnectionError):
+                    raise LLMError(f"local server not reachable at {self.base_url}: {e}") from e
+                time.sleep(wait)
+            except TimeoutError as e:
+                raise LLMError(f"local server not reachable at {self.base_url}: {e}") from e
+        raise AssertionError("unreachable")
 
     def _served_model(self) -> str:
         ids = [m["id"] for m in self._request("/models").get("data", [])]
@@ -108,6 +159,27 @@ class LocalClient:
             raise LLMError(f"{self.base_url} serves {len(ids)} models (router mode): choose one with "
                            f"NTS_LOCAL_MODEL or --local-model: {ids}")
         return _name(ids[0])
+
+    def _with_adapter(self, adapter: str) -> str:
+        """Finds ``adapter`` among the server's LoRA adapters (by file name, with or without ``.gguf`` and a
+        type suffix such as ``.f16``) or, failing that, among its models; returns the name for reports."""
+        try:
+            loaded = self._request("/lora-adapters", root=True)
+        except LLMError:
+            loaded = []
+        if not isinstance(loaded, list):
+            loaded = []
+        stem = lambda p: Path(p).name.removesuffix(".gguf")  # noqa: E731
+        hits = [a["id"] for a in loaded if adapter in (stem(a["path"]), stem(a["path"]).split(".")[0])]
+        if hits:
+            self.lora = [{"id": a["id"], "scale": 1.0 if a["id"] == hits[0] else 0.0} for a in loaded]
+            return f"{self._served_model().removesuffix('.gguf')}+{adapter}.gguf"
+        ids = [m["id"] for m in self._request("/models").get("data", [])]
+        if any(adapter in (i, Path(i).name, stem(i)) for i in ids):
+            self.server_model = adapter
+            return self._served_model()
+        raise LLMError(f"adapter {adapter!r} is not served at {self.base_url}: adapters "
+                       f"{[stem(a['path']) for a in loaded]}, models {ids}")
 
     def generate(
         self,
@@ -138,9 +210,12 @@ class LocalClient:
         }
         if self.server_model:
             payload["model"] = self.server_model
-        started = time.monotonic()
-        resp = self._request("/chat/completions", payload)
-        latency = time.monotonic() - started
+        if self.lora is not None:
+            payload["lora"] = self.lora
+        with _slots(self.base_url):  # waiting for a slot does not count against the timeout
+            started = time.monotonic()
+            resp = self._request("/chat/completions", payload)
+            latency = time.monotonic() - started
         try:
             text = resp["choices"][0]["message"]["content"]
         except (KeyError, IndexError, TypeError) as e:
@@ -149,7 +224,8 @@ class LocalClient:
             result = schema.model_validate_json(text)
         except ValidationError as e:  # the grammar guarantees valid JSON unless output was cut off
             finish = resp["choices"][0].get("finish_reason")
-            raise InvalidOutput(f"invalid {schema.__name__} (finish_reason={finish}, {len(text)} chars)") from e
+            raise InvalidOutput(f"invalid {schema.__name__} (finish_reason={finish}, {len(text)} chars)",
+                                text) from e
         usage = resp.get("usage") or {}
         with self._lock:
             self.usage.calls += 1

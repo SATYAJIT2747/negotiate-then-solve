@@ -40,8 +40,10 @@ from core.instance import Instance
 from core.schemas import Placement, Request
 from evaluation.metrics import atom_counts, exact_match, prf
 from language.corpus import ExpectedAction
-from language.intent_compiler import INTENT_PROMPT
-from language.intents import Compiled, IntentOutput, compile_intents
+from language.adapters import add_args, local_client, registry
+from language.checks import checked_compile
+from language.intent_compiler import format_row, read_answer
+from language.intents import SCHEMA_VERSION, Compiled, IntentOutput, compile_intents
 from language.llm import LLMError
 
 
@@ -77,6 +79,20 @@ def same(instance: Instance, pred: dict, gold: dict) -> bool:
             and all(pred[k] == gold[k] for k in ("swaps", "extras", "cancels", "clubs", "clashes")))
 
 
+def soften(out: IntentOutput) -> IntentOutput:
+    """``out`` with every requirement read as a wish: what it asks for, apart from how firmly."""
+    return out.model_copy(update={"intents": [i.model_copy(update={"hard": False}) if hasattr(i, "hard") else i
+                                              for i in out.intents]})
+
+
+def dump(out: IntentOutput) -> dict:
+    """``out`` as JSON without its defaults, but with each intent's kind (a default too)."""
+    d = out.model_dump(mode="json", exclude_defaults=True)
+    if "intents" in d:
+        d["intents"] = [{"kind": i.kind, **x} for i, x in zip(out.intents, d["intents"])]
+    return d
+
+
 def _context(row: dict) -> tuple[Request, dict[str, Placement], int | None]:
     request = Request.model_validate(row["request"])
     timetable = {sid: Placement.model_validate(p) for sid, p in row["timetable"].items()}
@@ -94,14 +110,19 @@ class Reader:
             self.rules = RuleParser(instance)
 
     def read(self, row: dict) -> IntentOutput:
+        return self.read_noted(row)[0]
+
+    def read_noted(self, row: dict) -> tuple[IntentOutput, list[str]]:
+        """The reading and what was repaired in the answer (a model's answer that missed the schema)."""
+        if self.kind in ("local", "gemini"):  # the row as the model was trained to read it (its schema's prompt)
+            schema = getattr(self.client, "schema", None) or SCHEMA_VERSION
+            return read_answer(self.client, format_row(self.instance, row, schema)["messages"][1]["content"])
         if self.kind == "gold":
-            return IntentOutput.model_validate_json(row["messages"][2]["content"])
-        if self.kind == "rule":
-            return self.rules.read_intents(_context(row)[0])
-        return self.client.generate(INTENT_PROMPT, row["messages"][1]["content"], IntentOutput)
+            return IntentOutput.model_validate_json(row["messages"][2]["content"]), []
+        return self.rules.read_intents(_context(row)[0]), []
 
 
-def score(rows: list[dict], instance: Instance, reader: Reader, workers: int = 1) -> dict:
+def score(rows: list[dict], instance: Instance, reader: Reader, workers: int = 1, checks: bool = True) -> dict:
     lock = threading.Lock()
     by_kind: dict[str, Counter] = defaultdict(Counter)
     by_source: dict[str, Counter] = defaultdict(Counter)
@@ -115,14 +136,28 @@ def score(rows: list[dict], instance: Instance, reader: Reader, workers: int = 1
         gold = outcome(instance, compile_intents(instance, request, gold_out, timetable=timetable, current_week=week))
         error = None
         try:
-            pred_out = reader.read(row)
-            pred = outcome(instance, compile_intents(instance, request, pred_out, timetable=timetable,
-                                                     current_week=week))
+            # a reader that overrides ``read`` only (a test's) has nothing repaired to report
+            pred_out, notes = (reader.read_noted(row) if type(reader).read is Reader.read else (reader.read(row), []))
+            # as the parser is used: repaired and checked (``language.checks``); the gold as it is
+            compiled = (compile_intents(instance, request, pred_out, timetable=timetable, current_week=week)
+                        if reader.kind == "gold" or not checks else
+                        checked_compile(instance, request, pred_out, timetable=timetable, current_week=week,
+                                        notes=notes, strict=reader.kind == "rule"))
+            notes, read = compiled.notes, compiled.output
+            pred = outcome(instance, compiled)
         except (LLMError, ValueError) as e:  # an invalid or cut-off answer is a wrong answer
-            pred_out, error = None, f"{type(e).__name__}: {str(e)[:120]}"
+            pred_out, read, error, notes = None, None, f"{type(e).__name__}: {str(e)[:120]}", []
             pred = {"action": "invalid", "constraints": [], "swaps": [], "extras": [], "cancels": [], "clubs": [],
                     "clashes": []}
         hit = same(instance, pred, gold)
+        # wrong only in how firm it is: the same request once both readings are wishes
+        firm_only = False
+        if not hit and read is not None and pred["action"] == gold["action"] == "compile":
+            try:
+                firm_only = same(instance, *(outcome(instance, compile_intents(
+                    instance, request, soften(o), timetable=timetable, current_week=week)) for o in (read, gold_out)))
+            except (LLMError, ValueError):
+                pass
         literal = pred_out is not None and json.loads(pred_out.model_dump_json(exclude_defaults=True)) == \
             json.loads(gold_out.model_dump_json(exclude_defaults=True))
         tp, n_pred, n_gold = atom_counts(pred["constraints"], gold["constraints"], instance)
@@ -133,16 +168,22 @@ def score(rows: list[dict], instance: Instance, reader: Reader, workers: int = 1
                 c["match"] += hit
                 c["literal"] += literal
                 c["invalid"] += error is not None
+                # wrong without saying so: acted on (or refused) a reading that does not do what the gold does
+                c["silent_wrong"] += not hit and pred["action"] not in ("clarify", "invalid")
+                c["asked"] += not hit and pred["action"] == "clarify"
+                c["firm_only"] += firm_only
+                c["checked"] += bool(notes)
             atoms[0] += tp
             atoms[1] += n_pred
             atoms[2] += n_gold
             if pred["action"] != gold["action"]:
                 confusion[f"{gold['action']}->{pred['action']}"] += 1
             out_rows.append({"id": row["id"], "kind": row["kind"], "source": row["source"], "match": hit,
-                             "gold_action": gold["action"], "pred_action": pred["action"], "error": error,
+                             "firm_only": firm_only, "gold_action": gold["action"],
+                             "pred_action": pred["action"], "error": error,
                              "text": row["request"]["raw_text"][:200],
-                             "pred": pred_out.model_dump(mode="json", exclude_defaults=True) if pred_out else None,
-                             "gold": gold_out.model_dump(mode="json", exclude_defaults=True)})
+                             "pred": dump(pred_out) if pred_out else None, "gold": dump(gold_out),
+                             "notes": notes})
 
     if workers > 1:
         with ThreadPoolExecutor(workers) as pool:
@@ -154,7 +195,10 @@ def score(rows: list[dict], instance: Instance, reader: Reader, workers: int = 1
     def rates(c: Counter) -> dict:
         n = c["n"]
         return {"n": n, "action_accuracy": round(c["action"] / n, 3), "outcome_match": round(c["match"] / n, 3),
-                "literal_match": round(c["literal"] / n, 3), "invalid": c["invalid"]}
+                "literal_match": round(c["literal"] / n, 3), "invalid": c["invalid"],
+                "silent_wrong": round(c["silent_wrong"] / n, 3), "asked_instead": round(c["asked"] / n, 3),
+                "firmness_only": round(c["firm_only"] / n, 3),
+                "checked": c["checked"]}
 
     total = sum(by_source.values(), Counter())
     p, r, f = prf(*atoms)
@@ -180,6 +224,8 @@ def main() -> None:
     ap.add_argument("--local", metavar="URL", default="http://localhost:8080/v1")
     ap.add_argument("--local-model", default=None, help="model on a router-mode server (default NTS_LOCAL_MODEL)")
     ap.add_argument("--model", default=None, help="Gemini model id (default: the pinned agent model)")
+    add_args(ap)
+    ap.add_argument("--no-checks", action="store_true", help="score the raw reading, without language.checks")
     ap.add_argument("--out", type=Path, default=None)
     args = ap.parse_args()
 
@@ -191,21 +237,22 @@ def main() -> None:
     rows = rows[: args.limit]
     client = None
     if args.parser == "local":
-        from language.local import LocalClient
-
-        client = LocalClient(base_url=args.local, server_model=args.local_model)
+        client = local_client("compile", base_url=args.local, schema=args.schema, server_model=args.local_model, adapter=args.adapter,
+                              reg=registry(args.adapters))
+        client.zero_shot = args.zero_shot
     elif args.parser == "gemini":
         from language.llm import GeminiClient
 
         client = GeminiClient(args.model)
-    report = score(rows, instance, Reader(args.parser, instance, client), args.workers)
+    report = score(rows, instance, Reader(args.parser, instance, client), args.workers, checks=not args.no_checks)
     name = args.parser if client is None else f"{args.parser}-{client.model.split(':')[-1].removesuffix('.gguf')}"
     report = {"parser": name, "split": args.split, "source": args.source, **report}
 
     s = report["summary"]
     print(f"{name} on {args.split} ({s['n']} requests): outcome match {s['outcome_match']:.1%}, action "
           f"{s['action_accuracy']:.1%}, literal {s['literal_match']:.1%}, constraint atom F1 "
-          f"{s['constraint_atom_f1']:.3f}, invalid {s['invalid']}")
+          f"{s['constraint_atom_f1']:.3f}, invalid {s['invalid']}, silently wrong {s['silent_wrong']:.1%}, "
+          f"asked instead {s['asked_instead']:.1%}, changed by checks {s['checked']}")
     print(f"  {'kind':22} {'n':>4} {'match':>7} {'action':>7} {'literal':>8}")
     for group in ("by_source", "by_kind"):
         for k, v in report[group].items():

@@ -40,7 +40,7 @@ export function WeekCalendar({ text, onPick, onRemove }: { text: string; onPick?
   const mentioned = (n: number) => has(text, `in week ${n}`) || cal.days.some((d) => has(text, `on ${cal.day_names[d]} in week ${n}`));
 
   return (
-    <Card className="mt-4 p-4">
+    <Card className="@container mt-4 p-4">
       <div className="mb-3 flex flex-wrap items-baseline justify-between gap-2">
         <p className="flex items-center gap-2 text-[13.5px] font-medium">
           <CalendarDays size={15} className="text-ink-3" /> When is this for?
@@ -48,24 +48,27 @@ export function WeekCalendar({ text, onPick, onRemove }: { text: string; onPick?
         <p className="text-[11.5px] text-ink-3">Pick a week to see your classes in it</p>
       </div>
 
-      <div className="grid grid-cols-4 gap-1.5 sm:grid-cols-8">
+      {/* weeks: numbers in a narrow panel (the date on hover and in the line below), number and date when there is room */}
+      <div className="grid grid-cols-8 gap-1">
         {cal.weeks.map((x) => {
           const past = x.week < cal.current_week;
           return (
             <button
               key={x.week}
               onClick={() => setView(x.week)}
+              title={`Week ${x.week} · from ${fmt(dayOf(x.monday, 0))}`}
               className={clsx(
-                "relative rounded-md border px-2 py-1.5 text-left transition-colors",
+                "relative rounded-md border px-1 py-1 text-center transition-colors @2xl:px-2 @2xl:py-1.5 @2xl:text-left",
                 x.week === view ? "border-brand bg-brand/10" : "border-line hover:bg-panel-2",
                 past && x.week !== view && "opacity-50",
               )}
             >
-              <span className={clsx("block text-[12.5px] font-medium", x.week === cal.current_week && "text-brand")}>
-                Week {x.week}
-                {mentioned(x.week) && <Check size={11} className="ml-1 inline text-brand" />}
+              <span className={clsx("block whitespace-nowrap text-[12.5px] font-medium tabular-nums", x.week === cal.current_week && "text-brand")}>
+                <span className="hidden @2xl:inline">Week </span>
+                {x.week}
+                {mentioned(x.week) && <Check size={10} className="ml-0.5 inline text-brand" />}
               </span>
-              <span className="block text-[11px] text-ink-3">{fmt(dayOf(x.monday, 0))}</span>
+              <span className="hidden text-[11px] text-ink-3 @2xl:block">{fmt(dayOf(x.monday, 0))}</span>
               {x.own_changes && <span title="This week has changes of its own" className="absolute right-1.5 top-1.5 size-1.5 rounded-full bg-warn" />}
             </button>
           );
@@ -95,7 +98,8 @@ export function WeekCalendar({ text, onPick, onRemove }: { text: string; onPick?
         )}
       </div>
 
-      <div className="mt-3 grid grid-cols-1 gap-2 sm:grid-cols-5">
+      {/* days: one row each in a narrow panel, side by side when there is room */}
+      <div className="mt-3 grid grid-cols-1 gap-1.5 @2xl:grid-cols-5 @2xl:gap-2">
         {cal.days.map((d, i) => {
           const phrase = `on ${cal.day_names[d]} in week ${w.week}`;
           const picked = has(text, phrase);
@@ -107,19 +111,19 @@ export function WeekCalendar({ text, onPick, onRemove }: { text: string; onPick?
               disabled={!editable}
               title={editable ? (picked ? "Take this day out of the request" : `Add "${phrase}" to the request`) : undefined}
               className={clsx(
-                "flex min-h-[92px] flex-col rounded-md border p-2 text-left transition-colors",
+                "flex gap-3 rounded-md border px-2.5 py-2 text-left transition-colors @2xl:min-h-[92px] @2xl:flex-col @2xl:gap-0 @2xl:p-2",
                 picked ? "border-brand bg-brand/10" : "border-line",
                 editable && !picked && "hover:bg-panel-2",
               )}
             >
-              <span className="flex items-baseline justify-between">
+              <span className="flex w-20 shrink-0 flex-col @2xl:w-auto @2xl:flex-row @2xl:items-baseline @2xl:justify-between @2xl:gap-1">
                 <span className="text-[12.5px] font-medium">{cal.day_names[d]}</span>
                 <span className="text-[11px] text-ink-3">{fmt(dayOf(w.monday, i))}</span>
               </span>
-              <span className="mt-1.5 space-y-1">
+              <span className="min-w-0 flex-1 space-y-1 @2xl:mt-1.5">
                 {mine.length ? (
                   mine.map((c) => (
-                    <span key={c.session} className={clsx("block text-[11.5px] leading-snug", c.cancelled ? "text-bad line-through" : "text-ink-2")}>
+                    <span key={c.session} className={clsx("block truncate text-[11.5px] leading-snug @2xl:whitespace-normal", c.cancelled ? "text-bad line-through" : "text-ink-2")}>
                       <span className="font-mono text-[10.5px] text-ink-3">{c.time}</span> {c.title}
                       {c.kind === "practical" ? " (lab)" : ""}
                     </span>

@@ -33,15 +33,23 @@ in WSL. WSL forwards `localhost`, so the app reaches `llama-server` at the
 default `http://localhost:8080/v1` without extra setup.
 
 **1. Start the local model in WSL** (skip this for the offline or Gemini
-parser). The fine-tuned weights from the latest training run are in
-`qwen3.5-2b-nts-gguf/` next to this repository (Qwen3.5-2B, Q5_K_M GGUF). From a WSL terminal, with llama.cpp built (adjust the path to your
-`llama-server` binary):
+parser). The main model is **Qwen3.5-4B** (Q8_0 GGUF) with a LoRA adapter
+per task group (`adapters-lora.toml`: intents, policy/replies/explanations,
+lookups, memory). From a WSL terminal, with llama.cpp built (adjust the
+paths to your `llama-server` binary and model folder):
 
 ```sh
 ~/llama-bin/llama.cpp/llama-server \
-  -m "/mnt/c/Users/Shubh/Desktop/LMA Major Project/qwen3.5-2b-nts-gguf/Qwen3.5-2B.Q5_K_M-mutitask-finetune.gguf" \
+  -m Qwen3.5-4B-Base-Q8_0.gguf \
+  --lora loras/nts-intents-v12-read-100.gguf --lora loras/nts-read100.gguf \
+  --lora loras/nts-lookup-v3.gguf --lora-init-without-apply \
   --jinja -ngl 99 -c 4096 --cache-ram 1024 --host 0.0.0.0 --port 8080
 ```
+
+then start the app with `--adapters adapters-lora.toml` (or
+`scripts/host.ps1`, which does this). The older single-file Qwen3.5-2B
+fine-tune (`qwen3.5-2b-nts-gguf/`, Q5_K_M) still works with `-m` alone and is
+kept as a smaller comparison point.
 
 `--cache-ram 1024` caps llama.cpp's prompt cache in RAM (default 8 GB); without
 it the server grows past WSL's memory during long evaluations and is killed.
@@ -147,7 +155,8 @@ and a run stopped by the daily budget resumes the next day where it stopped.
 |---|---|---|
 | `src/language/llm.py` | §14 | Gemini client: structured output, cache, RPM limiter, daily budget, 429 backoff |
 | `src/language/parsing.py` | §8.2 | System Two parser. The LLM drafts; tiers (Table 5), authority and validation are deterministic |
-| `src/language/system_one.py` | §8.2 | Calibrated TF-IDF + logistic regression: request type, action, confidence, fast-path routing with τ |
+| `src/language/system_one.py` | §8.2 | Calibrated classifier (TF-IDF + linear SVM by default; logistic regression, embeddings, hybrid): request type, action, confidence, fast-path routing with τ |
+| `src/evaluation/system_one.py` | §8.2 | `uv run python -m evaluation.system_one`: every System One model on unseen, typo and noisy wording |
 | `src/evaluation/metrics.py` | Table 11 | ECE, constraint exact match, atom-level P/R/F1 |
 | `src/evaluation/parsing.py` | §12 | `uv run python -m evaluation.parsing --limit 40` |
 | `src/language/paraphrase.py` | §12.1 | Rewrites the corpus in varied registers with the simulator model; a rule-based check rejects paraphrases that change days, numbers or names |
@@ -168,7 +177,8 @@ train System One on templates and test it on paraphrases.
 (`data/handbook.md`, **a synthetic stand-in**: replace it with the
 institute's handbook, one `## <number> <title> [RULE-ID]` heading per rule).
 
-1. Retrieval returns the top 5 rules. The query is extended with what the
+1. Retrieval returns the top 8 rules (5 until 2026-11-14: at 8 the hybrid retriever finds the rule for 95% of
+   paraphrased questions against 85%, with every verdict on the policy test unchanged; docs/remaining-runs-2026-11-14.md). The query is extended with what the
    parse implies (a one-off absence adds "make-up", a run of more hours than
    the limit adds "consecutive"). Three retrievers (`--retriever`, or
    `NTS_RETRIEVER` in the web app):
@@ -339,11 +349,55 @@ message describes them) instead of slot numbers and IDs, and explanations are
 written from the readable facts.
 
 ```sh
-uv run python -m language.intent_compiler                 # data/compiler-intents/: corpus gold as intents + new intents
+uv run python -m training.dataset build                    # data/compiler-intents/ + data/suites/ from data/recipes/intents.toml
 uv run python -m training.distill messages --messages messages-readable   # facts with their plain text; no API
 uv run python -m training.distill explain --readable --messages messages-readable --sample 600
-uv run python -m training.distill export --readable --compiler-dir data/compiler-intents --out data/multitask-readable --max-per-task 1100   # keeps all 1062 intent examples
+uv run python -m training.distill export --readable --compiler-dir data/compiler-intents --out data/multitask-readable --max-per-task 1100 --cap compile=4000
+uv run python -m evaluation.suites --parser local --local URL --local-model <model>   # every suite, onto runs/leaderboard.jsonl
 ```
+
+**Intent data that later runs build on** (`training.dataset`). A recipe
+(`data/recipes/*.toml`) names the sources: the first data
+(`intent_compiler.base_rows`, which `python -m language.intent_compiler` still
+writes alone), the registered generators (`language.intent_generators`, each
+with wordings held out for an evaluation suite), stored rows (mined failures,
+messages people labelled in `data/human/` by `docs/labelling.md`), and noisy
+twins of training rows. Every row records its origin and the vocabulary
+version it was written in (`intents.SCHEMA_VERSION`); stored rows are brought
+up to date by `language.migrations`, so old labels keep their meaning when a
+default changes. Every row passes `training.quality`'s gates (canonical
+target, resolves, follows the labelling rule, no copy of a held-out request),
+and the test split is frozen by fingerprint in the recipe. `manifest.json`
+beside the data records the recipe, code version and fingerprints; the
+export and the 4B notebook carry it into the adapter's manifest. To extend:
+copy the recipe, add a generator to `REGISTRY` or rows to `data/human/`, build,
+and update the adapter with `INIT_FROM` (it reads only rows it hasn't seen).
+`evaluation.robustness` and the `test-typo`/`test-noisy` suites measure noisy
+English; `--no-checks` scores the raw reading without `language.checks`.
+
+**What the model does and what the code does.** Since schema 4 (`intents-v6`)
+the model only reads: it writes courses, colleagues, sections and rooms as the
+message names them, and `language.names` finds their IDs, so the prompt carries
+no directory (the calendar, the week and the sender: a median prompt of 300
+characters instead of 1,800). Every reading is then checked against the message
+(`language.checks`, `intents.ground_references`): an ID must exist and name
+what the message names, a period the message does not give is every week
+("this week" on a booking that names no week, "the rest of the semester" for
+"the whole semester"), and a reading that leaves out the class the message is
+about is asked about rather than acted on. A rule belongs there, not in more
+training rows, when it holds for every gold reading (check it on all of
+`data/compiler-intents` and `data/suites` first). Models trained on schema 3
+keep their prompt: name them in the registry's `[schemas]`
+(`adapters-lora.toml`), or pass `--schema 3` with `--local-model`.
+
+The fine-tuned reader's system prompt only names the task (43 tokens); the
+whole vocabulary (`INTENT_INSTRUCTIONS`) goes to readers not trained on it:
+Gemini, or a base model with `--zero-shot`. A training row is now ~210 tokens
+(1,445 in schema 3) for a ~35-token answer, so an epoch of the intents data is
+0.57M tokens instead of 3.9M. With that and `PRECISION = "fp16"` (fp32 on a T4
+runs at a fraction of its fp16 speed, and was most of the 22-hour runs), the 4B
+notebook trains `nts-intents-v6` from the base with `CURVE = [1/3, 2/3, 1.0]`:
+an adapter after each epoch, so one run says how many epochs are needed.
 
 A model trained on it is used with `NTS_INTENTS=1` beside `--parser local`; the
 orchestrator then routes swaps, extra classes, cancellations and withdrawals by
@@ -394,6 +448,49 @@ across both GPUs (`device_map="auto"`). Only one GPU computes at a time, so expe
 limit, and training checkpoints and resumes across sessions. It exports GGUF with
 llama.cpp's converter (Q5_K_M and Q4_K_M).
 
+### One base, an adapter per task
+
+Retraining one model on every task for each change takes 14+ hours, and the
+learning curve showed it is not needed: the policy and reply scores at half the
+reading equal those at all of it, and only reading requests (`compile`, half
+the training tokens) gains from the rest. So the local model can be the base
+Qwen3.5-4B with a LoRA adapter per group of tasks, named in `adapters.toml`:
+
+```toml
+base = "Qwen3.5-4B-Base-Q8_0"
+[adapters]
+nts-intents = ["compile"]
+nts-policy = ["policy"]
+nts-negotiation = ["reply", "explain"]
+[domains.iitx]          # another institute: its own policy adapter, the rest shared
+policy = "iitx-policy"
+```
+
+- **Train one adapter.** `train_multigpu_kaggle.ipynb` takes `ADAPTER` and
+  `TASKS`, keeps only those rows of the uploaded multitask data and exports
+  the adapter as a LoRA GGUF (tens of MB, minutes), not a merged model.
+- **Update instead of retrain.** `INIT_FROM` (the earlier version's output)
+  starts from its weights and reads only the rows it has not seen
+  (`trained.json` holds a hash of each row read, so a changed row is new) and
+  `REPLAY` times as many it has. Mined rows (`training.mine`) or a new intent
+  cost minutes of training, not a full run.
+- **Serve them together**, none applied until a request asks:
+
+  ```sh
+  llama-server -m Qwen3.5-4B-Base-Q8_0.gguf --lora nts-intents.gguf,nts-policy.gguf,nts-negotiation.gguf \
+    --lora-init-without-apply --jinja -ngl 99 -c 8192 --port 8080
+  ```
+
+  The client finds each adapter in the server's `/lora-adapters` and switches
+  it on per request (`"lora"`). A server that serves an adapter as a model of
+  its own name (a router preset of the base with the adapter, or the
+  notebook's `MERGE` GGUF) works too.
+- **Use them:** `NTS_ADAPTERS=adapters.toml` (and `NTS_DOMAIN=<name>`) for the
+  web app; `--adapters adapters.toml` or `--adapter <name>` for the `--local`
+  evaluations and `training.mine`. Answers are cached per adapter, so an
+  unchanged adapter's evaluations rerun from the cache; put a version in each
+  adapter's name (`nts-policy-v2`).
+
 ## Data
 
 `uv run python -m language.corpus` regenerates `data/requests.jsonl` (600 requests,
@@ -438,17 +535,21 @@ stability are not modelled.
 | `src/agents/priority.py` | §8.4 | π_k = auth + impact + justification + lead + credit − disruption (higher = dearer to relax); option cost = Σπ + λ1·moved + λ2·ΔGini over weighted burden; `flat=True` for ablation A1 |
 | `src/agents/ledger.py` | §8.6 | Concession ledger with semester decay; each concession weighs importance (tier × justification) × magnitude (1 dropped, 0.5 counter-offer); burden dispersion: Gini, max, CV |
 | `src/agents/explainer.py` | §8.7 | Conflict → numbered facts (MUS constraints, rules, rooms, options, ledger). Template, grounded (claims cite facts; a checker drops claims whose days, numbers or names are not in the cited facts) and free (A2) modes; private-reason leak check |
-| `src/agents/negotiation.py` | §8.6 | Resolution ladder: auto-substitute → auto-relax (notices) → negotiate over MCS options (2–3 solver-verified alternatives per message, cheapest owner first, lowest credit on ties, one extra probe after a refusal) → escalate with a brief. Each reply becomes one typed tool call: accept, apply_reply, counter_propose (offered onward only if CP-SAT verifies it), ask_clarification (one follow-up per round), decline, escalate; a bad call gets its typed error back, and after two retries the reply goes to the coordinator. `RuleReplyParser` is the regex handler of ablation A3. Option sources: MCS (ours), LLM-invented unchecked (B3), LLM-invented filtered by CP-SAT with up to 3 regenerations (B4) |
-| `src/agents/simulators.py` | §12.1 | Stakeholders with hidden flexibility (acceptable windows, room flexibility, whether they volunteer it, whether they reply); four policy families (strict, flexible, cost-sensitive, history-sensitive) with seeded random refusals and silences; scripted or LLM-voiced replies |
-| `src/evaluation/benchmark.py` | §12.1 | 60 scenarios: contention, substitute, deadlock, Tier 3 vs 4 squeeze, capacity shortfall, preference trade-off, policy; families cycle within each kind. The oracle tries every hidden-flexibility combination and minimises the negotiator's own objective (tiers given up, then option cost); `objective()` scores any outcome the same way |
-| `src/evaluation/negotiation.py` | brief §5 | Runs ours / B1–B4 / oracle / A1–A3 (B2 = same objective, cheapest correction imposed; B4 = primary baseline). `--plan` runs the reduced plan: ours-llm, B3, B4 on all 60 × 3 seeds; ablations on a stratified 30 and B1 on a stratified 20, seed 0 (650 LLM runs); invalid candidates, invention calls and filtered inventions (H1), tool calls, retries; validity, correct outcome, resolution rate, rounds per resolved conflict, distance to the oracle objective, escalation P/R and reasons, weighted burden (Gini, max, CV), faithfulness, leaks; pooled and per family; McNemar, Wilcoxon, bootstrap CIs |
+| `src/agents/negotiation.py` | §8.6 | Resolution ladder: auto-substitute → auto-relax (notices) → negotiate over MCS options (2–3 solver-verified alternatives per message, cheapest option first, lowest credit on ties, one extra probe after a refusal; a correction set with several owners is agreed one owner at a time, each offered their own part of the same verified repair, and what one agrees to is held while the next is asked; a declined option rules out its day and part of the day for that class, and each option in a message is in a different one, nearest to what was asked first). Options are judged and costed against the published timetable; only the final repair is built on changes still waiting for approval → escalate with a brief. Each reply becomes one typed tool call: accept, apply_reply, counter_propose (offered onward only if CP-SAT verifies it), ask_clarification (one follow-up per round), decline, escalate; a bad call gets its typed error back, and after two retries the reply goes to the coordinator. `RuleReplyParser` is the regex handler of ablation A3. Option sources: MCS (ours), LLM-invented unchecked (B3), LLM-invented filtered by CP-SAT with up to 3 regenerations (B4) |
+| `src/agents/simulators.py` | §12.1 | Stakeholders with hidden flexibility (acceptable windows, room flexibility, whether they volunteer it, whether they reply); four policy families (strict, flexible, cost-sensitive, history-sensitive) with seeded random refusals and silences, plus `unusual` in the hard tier (only another time of day works, never volunteered); scripted or LLM-voiced replies |
+| `src/evaluation/benchmark.py` | §12.1 | 60 scenarios: contention, substitute, deadlock, Tier 3 vs 4 squeeze, capacity shortfall, preference trade-off, policy; families cycle within each kind. `--hard`: 30 more (`data/scenarios-hard.jsonl`, IDs `H-…`), reported separately: three stakeholders for two labs (`multi`), conflicts only two concessions together end (`joint`: every MCS has two owners), contention with the `unusual` family, and contention in an 80-session generated department (`scale`); built on one CP-SAT worker, so they regenerate exactly. The oracle tries every hidden-flexibility combination and minimises the negotiator's own objective (tiers given up, then option cost); `objective()` scores any outcome the same way |
+| `src/evaluation/negotiation.py` | brief §5 | Runs ours / B1–B4 / oracle / A1–A3 (B2 = same objective, cheapest correction imposed; B4 = primary baseline). `--plan` runs the reduced plan: ours-llm, B3, B4 on all 60 × 3 seeds; ablations on a stratified 30 and B1 on a stratified 20, seed 0 (650 LLM runs); invalid candidates, invention calls and filtered inventions (H1), tool calls, retries; validity, correct outcome, resolution rate, rounds per resolved conflict, distance to the oracle objective, escalation P/R and reasons, weighted burden (Gini, max, CV), faithfulness, leaks; pooled and per family; McNemar, Wilcoxon, bootstrap CIs. `--pipeline` runs the negotiating configurations through the request pipeline the app runs (`Orchestrator`: each request submitted in turn with its constraints as read, then approved), so the scores are of what the app publishes |
 | `src/evaluation/replies.py` | brief §5.1 D | 100 replies to a real UC3 message with gold tool calls (accept, partial, counter-proposal, vague, refusal, injected); tool and argument accuracy, valid first calls, recovery, unsafe-action rate; `--parser llm` or `rule` (A3) |
 | `src/evaluation/judge.py`, `src/evaluation/stats.py` | §12.5 | Batched LLM judge (clarity, acceptability) and quadratic-weighted Cohen's κ against human raters |
 | `src/evaluation/study.py`, `src/web/study.py` | §12.5 | Human data collected in the web app (`/study`): team labels for judge validation (100 claims vs the faithfulness verifier, 100 replies vs the recorded call, 110 messages rated for clarity and acceptability) and the anonymised faculty pilot (24 paired grounded/free messages for H3, plus a live session in the portal); Cohen's κ, H3 Wilcoxon, `human_ratings.csv` for the judge |
 
 ```sh
 uv run python -m evaluation.benchmark                                  # data/scenarios.jsonl (about 30 s)
+uv run python -m evaluation.benchmark --hard                           # data/scenarios-hard.jsonl (about 5 min)
+uv run python -m evaluation.negotiation --offline --scenarios data/scenarios-hard.jsonl --seeds 0   # hard tier, no API calls
 uv run python -m evaluation.negotiation --offline                 # ours, A1-offline, B2, oracle: no API calls
+uv run python -m evaluation.negotiation --offline --pipeline      # the same through the app's request pipeline
+uv run python -m evaluation.negotiation --configs B3,B4 --seeds 0,1,2 --out runs/x.json --resume   # after the daily quota: continues from runs/x.rows.jsonl
 uv run python -m evaluation.negotiation --plan --local --sim-local   # the reduced plan on the local model
 uv run python -m evaluation.negotiation --configs ours-llm,B4 --subset 20   # Gemini check of the main comparison
 uv run python -m evaluation.replies --parser llm --local           # reply tool calls (Benchmark D); --parser rule is A3

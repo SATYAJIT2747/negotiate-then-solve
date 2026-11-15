@@ -92,7 +92,7 @@ def create_app(orchestrator: Orchestrator, intake: Intake) -> FastAPI:
             raise HTTPException(403, str(e)) from None
         except (KeyError, ValueError) as e:
             raise HTTPException(409, str(e)) from None
-        return {"published": v.version, "notified": o.cases[case_id].notices}
+        return {"published": v.version if v else None, "notified": o.cases[case_id].notices}
 
     @app.post("/approvals/{case_id}/reject")
     def reject(case_id: str, reason: str = "", x_user: str = Header(...)) -> dict:

@@ -90,11 +90,11 @@ class Intake:
         self._threads: dict[str, str] = {}  # message-id -> thread id
 
     def _make(self, channel: Channel, ident: Identity, text: str, when: datetime,
-              thread: str | None) -> Request | None:
+              thread: str | None, makeup: bool | None = None) -> Request | None:
         text = normalise(text)
         r = self.store.add_new_request(
             lambda rid: Request(id=rid, channel=channel, sender_id=ident.person, role=ident.role, raw_text=text,
-                                thread_id=thread or rid, received_at=when),
+                                thread_id=thread or rid, received_at=when, makeup=makeup),
             dedupe_key(ident.person, text))
         if r is None:
             self.store.log(None, "duplicate_dropped", sender=ident.person, channel=channel.value)
@@ -136,12 +136,13 @@ class Intake:
             self._threads[str(payload["ts"])] = r.thread_id
         return r
 
-    def from_portal(self, person: str, text: str) -> Request | None:
-        """``person`` comes from the authenticated session, not from the form."""
+    def from_portal(self, person: str, text: str, makeup: bool | None = False) -> Request | None:
+        """``person`` comes from the authenticated session, not from the form; ``makeup``, the form's
+        "hold make-up classes" box (off: classes missed in an absence are cancelled)."""
         ident = next((i for i in self.directory.by_email.values() if i.person == person), None)
         if ident is None:
             raise UnknownSender(person)
-        return self._make(Channel.PORTAL, ident, text, datetime.now(UTC), None)
+        return self._make(Channel.PORTAL, ident, text, datetime.now(UTC), None, makeup)
 
 
 def poll_imap(host: str, user: str, password: str, mailbox: str = "INBOX") -> Iterator[bytes]:

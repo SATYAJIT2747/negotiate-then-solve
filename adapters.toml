@@ -1,0 +1,16 @@
+# The local model as one base and a LoRA adapter per group of tasks (src/language/adapters.py).
+# Used when NTS_ADAPTERS=adapters.toml (web app) or --adapters adapters.toml (evaluations).
+# Each name is the adapter's GGUF file name without .gguf; put a version in it (nts-policy-v2)
+# so that answers cached for an earlier version are not reused.
+
+base = "Qwen3.5-4B-Base-Q8_0"
+
+[adapters]
+nts-intents = ["compile"]           # reading requests (language.intent_compiler)
+nts-policy = ["policy"]             # the policy agent
+nts-negotiation = ["reply", "explain"]  # reading replies and grounded explanations
+
+# A domain (another institute, another handbook) overrides some tasks with its own adapters;
+# the others stay shared. Choose it with NTS_DOMAIN=<name>.
+# [domains.iitx]
+# policy = "iitx-policy"

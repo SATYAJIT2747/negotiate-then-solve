@@ -1,0 +1,251 @@
+{
+  "recipe": "encoder-intents-v1",
+  "made": {
+    "train": {
+      "non_compile": 509,
+      "multi": 1585,
+      "nested": 672,
+      "linked": 400
+    },
+    "val": {
+      "non_compile": 37,
+      "multi": 166,
+      "nested": 82,
+      "linked": 44
+    }
+  },
+  "leaks": 0,
+  "gates": {
+    "schema": 0,
+    "resolves": 0,
+    "rubric": 25,
+    "leak": 0
+  },
+  "dropped": {
+    "train:multi": 14,
+    "train:linked": 4,
+    "val:multi": 1,
+    "composed:multi": 1,
+    "composed:nested": 5
+  },
+  "before": {
+    "train": {
+      "rows": 4623,
+      "repeats": 0,
+      "tiers": {
+        "non_compile": "526 (11%)",
+        "single": "3446 (75%)",
+        "multi": "290 (6%)",
+        "nested": "114 (2%)",
+        "linked": "247 (5%)"
+      },
+      "actions": {
+        "compile": 4097,
+        "clarify": 181,
+        "investigate": 139,
+        "out_of_scope": 80,
+        "withdraw": 65,
+        "answer": 61
+      },
+      "intents_per_message": {
+        "1": 3671,
+        "2": 309,
+        "3": 114,
+        "6": 3
+      },
+      "intent_kinds": {
+        "move": 1044,
+        "avoid": 891,
+        "unavailable": 814,
+        "only": 411,
+        "cancel": 322,
+        "relate": 249,
+        "club_booking": 207,
+        "load_limit": 178,
+        "limit": 148,
+        "clash_report": 139,
+        "extra_class": 88,
+        "swap": 75,
+        "needs_room": 68,
+        "any_of": 49,
+        "ranked": 42,
+        "room_closed": 40,
+        "fallback": 23
+      },
+      "sources": {
+        "answered": 284,
+        "preference": 226,
+        "same_day_part": 205,
+        "avoid_between": 197,
+        "cancel": 170,
+        "unavailability": 149,
+        "clash_report": 139,
+        "relative_span": 118,
+        "choices": 117,
+        "exception": 115,
+        "week_patterns": 115,
+        "multi": 114
+      }
+    }
+  },
+  "after": {
+    "train": {
+      "rows": 7482,
+      "repeats": 1000,
+      "tiers": {
+        "non_compile": "1125 (15%)",
+        "single": "3000 (40%)",
+        "multi": "1861 (25%)",
+        "nested": "881 (12%)",
+        "linked": "615 (8%)"
+      },
+      "actions": {
+        "compile": 6357,
+        "clarify": 281,
+        "investigate": 281,
+        "withdraw": 281,
+        "out_of_scope": 160,
+        "answer": 122
+      },
+      "intents_per_message": {
+        "1": 3183,
+        "2": 1755,
+        "3": 744,
+        "4": 485,
+        "5": 187,
+        "6": 3
+      },
+      "intent_kinds": {
+        "move": 2577,
+        "cancel": 1336,
+        "unavailable": 1016,
+        "extra_class": 938,
+        "avoid": 923,
+        "only": 894,
+        "limit": 732,
+        "swap": 708,
+        "load_limit": 663,
+        "relate": 616,
+        "any_of": 351,
+        "ranked": 343,
+        "club_booking": 324,
+        "clash_report": 281,
+        "fallback": 187,
+        "needs_room": 132,
+        "room_closed": 78
+      },
+      "sources": {
+        "enc-composed_multi": 1571,
+        "enc-composed_nested": 672,
+        "enc-composed_linked": 396,
+        "clash_report": 281,
+        "withdraw": 281,
+        "cancel": 232,
+        "limits": 227,
+        "choices": 227,
+        "vague": 214,
+        "room_issue": 200,
+        "limit_firmness": 198,
+        "preference": 180
+      }
+    },
+    "val": {
+      "rows": 749,
+      "repeats": 128,
+      "tiers": {
+        "non_compile": "112 (15%)",
+        "single": "300 (40%)",
+        "multi": "187 (25%)",
+        "nested": "89 (12%)",
+        "linked": "61 (8%)"
+      },
+      "actions": {
+        "compile": 637,
+        "investigate": 40,
+        "clarify": 34,
+        "withdraw": 28,
+        "answer": 6,
+        "out_of_scope": 4
+      },
+      "intents_per_message": {
+        "1": 314,
+        "2": 173,
+        "3": 68,
+        "4": 56,
+        "5": 26
+      },
+      "intent_kinds": {
+        "move": 279,
+        "cancel": 140,
+        "unavailable": 112,
+        "only": 98,
+        "extra_class": 92,
+        "avoid": 80,
+        "swap": 79,
+        "limit": 70,
+        "relate": 61,
+        "load_limit": 54,
+        "clash_report": 40,
+        "ranked": 37,
+        "club_booking": 36,
+        "any_of": 31,
+        "fallback": 21,
+        "room_closed": 16,
+        "needs_room": 12
+      },
+      "sources": {
+        "encval-composed_multi": 165,
+        "encval-composed_nested": 82,
+        "encval-composed_linked": 44,
+        "clash_report": 40,
+        "cancel": 31,
+        "withdraw": 28,
+        "room_issue": 28,
+        "vague": 24,
+        "limit_firmness": 20,
+        "preference": 19,
+        "club_more": 18,
+        "club_booking": 18
+      }
+    },
+    "composed": {
+      "rows": 294,
+      "repeats": 0,
+      "tiers": {
+        "non_compile": "0 (0%)",
+        "single": "0 (0%)",
+        "multi": "149 (51%)",
+        "nested": "95 (32%)",
+        "linked": "50 (17%)"
+      },
+      "actions": {
+        "compile": 294
+      },
+      "intents_per_message": {
+        "2": 139,
+        "3": 60,
+        "4": 62,
+        "5": 33
+      },
+      "intent_kinds": {
+        "move": 191,
+        "cancel": 123,
+        "limit": 88,
+        "extra_class": 75,
+        "only": 71,
+        "swap": 61,
+        "unavailable": 51,
+        "fallback": 50,
+        "relate": 50,
+        "ranked": 45,
+        "avoid": 40,
+        "load_limit": 26
+      },
+      "sources": {
+        "suite-composed_multi": 149,
+        "suite-composed_nested": 95,
+        "suite-composed_linked": 50
+      }
+    }
+  }
+}

@@ -7,6 +7,7 @@ import { Button, Card, CardHeader, LiveDot, Meter, PageHeader, Skeleton, Stat, S
 import { api } from "../lib/api";
 import { useAuth } from "../lib/auth";
 import { useApi } from "../lib/hooks";
+import { decidesOn } from "../lib/requests";
 import { ago, ROLE_LABEL } from "../lib/meta";
 import type { CaseSummary, EventRow, Ledger, Status, TestRun } from "../lib/types";
 
@@ -53,14 +54,6 @@ export default function Dashboard() {
   const dean = user?.role === "dean";
   const hod = user?.role === "hod";
   const { data: ledger } = useApi(() => (hod ? api.ledger() : Promise.resolve(null)), [hod], hod ? 10_000 : undefined);
-  /** An escalation addressed to this person: the brief names "coordinator", "dean", "hod" or the heads by id. */
-  const escalatedToMe = (c: CaseSummary) => {
-    const to = c.escalated_to ?? "";
-    if (office) return to === "coordinator";
-    if (dean) return to === "dean";
-    if (hod) return to === "hod" || to.split(", ").includes(user!.id);
-    return false;
-  };
   const ownClasses = !oversight && ["faculty", "guest_faculty", "student"].includes(user?.role ?? "");
   const { data: ov } = useApi(() => api.overview(), [], 3000);
   const { data: cases } = useApi(() => api.cases(can("see_all") ? "all" : "mine"), [], 3000);
@@ -72,16 +65,17 @@ export default function Dashboard() {
   const own = mine ?? (can("see_all") ? [] : cases) ?? [];
   const todos: Todo[] = [];
   if (can("approve") && ov?.pending_approvals)
-    todos.push({ key: "approve", icon: BadgeCheck, text: `${ov.pending_approvals} change${ov.pending_approvals > 1 ? "s" : ""} waiting for your approval`, to: "/approvals", action: "Review" });
+    todos.push({ key: "approve", icon: BadgeCheck, text: `${ov.pending_approvals} change${ov.pending_approvals > 1 ? "s" : ""} waiting for your approval`, to: "/inbox?view=needs", action: "Review" });
   if (ov?.my_forwarded)
-    todos.push({ key: "forwarded", icon: Mail, text: `${ov.my_forwarded} message${ov.my_forwarded > 1 ? "s" : ""} passed to you for a reply`, to: "/approvals", action: "Reply" });
-  if (sees("inbox") && ov?.my_inbox)
-    todos.push({ key: "inbox", icon: Inbox, text: `${ov.my_inbox} new message${ov.my_inbox > 1 ? "s" : ""} in your inbox`, to: "/inbox", action: "Open" });
+    todos.push({ key: "forwarded", icon: Mail, text: `${ov.my_forwarded} message${ov.my_forwarded > 1 ? "s" : ""} passed to you for a reply`, to: "/inbox?view=needs", action: "Reply" });
+  // only what is not already listed above (approvals, decisions, messages passed to them are inbox items too)
+  if (sees("inbox") && ov?.my_unread)
+    todos.push({ key: "inbox", icon: Inbox, text: `${ov.my_unread} other new message${ov.my_unread > 1 ? "s" : ""} in your inbox`, to: "/inbox?view=unread", action: "Open" });
   for (const c of own.filter((c) => c.status === "clarification_requested").slice(0, 3))
     todos.push({ key: c.id, icon: HelpCircle, text: `We need more detail on “${c.text}”`, to: sees("inbox") ? "/inbox" : `/requests/${c.id}`, action: "Answer" });
-  const mineToDecide = (cases ?? []).filter((c) => c.status === "escalated" && escalatedToMe(c));
+  const mineToDecide = (cases ?? []).filter((c) => decidesOn(c, user));
   for (const c of mineToDecide.slice(0, 3))
-    todos.push({ key: c.id, icon: TriangleAlert, text: `Escalated to you for a decision: “${c.text}”`, to: `/requests/${c.id}`, action: "Decide" });
+    todos.push({ key: c.id, icon: TriangleAlert, text: `Escalated to you for a decision: “${c.text}”`, to: `/requests/${c.id}?details=1`, action: "Decide" });
   for (const c of own.filter((c) => c.status === "negotiating").slice(0, 3))
     todos.push({ key: c.id, icon: MessagesSquare, text: `“${c.text}” is being negotiated with a colleague`, to: `/requests/${c.id}`, action: "Follow" });
 
@@ -258,6 +252,7 @@ function GivingWay({ ledger }: { ledger: Ledger | null }) {
 const DECIDED: Status[] = ["published", "awaiting_approval", "escalated", "denied", "refused", "answered"];
 
 function CaseList({ title, cases, loading, showSender, empty }: { title: string; cases: CaseSummary[]; loading: boolean; showSender?: boolean; empty: React.ReactNode }) {
+  const { can } = useAuth();
   return (
     <Card>
       <CardHeader
@@ -279,7 +274,7 @@ function CaseList({ title, cases, loading, showSender, empty }: { title: string;
                   {ago(c.received_at)}
                 </p>
               </div>
-              <StatusBadge status={c.status} live={c.running} />
+              <StatusBadge status={c.status} live={c.running} plain={!can("approve")} />
             </Link>
           </li>
         ))}

@@ -71,6 +71,22 @@ def rooms_from_instance(instance: Instance) -> list[Room]:
 # The same offerings as a PDF, laid out like the institute's document
 # ---------------------------------------------------------------------------
 
+# what the demo department's teachers and class representatives told the office before the semester was
+# built (sender, as they said it): hard and soft, one course only, "only after", a programme's own wish.
+# Dr. Gupta has not sent one, so the "not heard from" list has someone in it.
+PREFERENCES = [
+    ("Dr. Menon", "Dr. Menon prefers not to teach before 10 am."),
+    ("Dr. Rao", "Dr. Rao is unavailable on Fridays because of HoD meetings."),
+    ("Dr. Iyer", "Dr. Iyer can teach Compiler Design only after 11:30 on Mondays."),
+    ("Dr. Khan", "Dr. Khan would like Saturdays off."),
+    ("Dr. Das", "Digital Logic should be in the morning."),
+    ("Dr. Pillai", "Dr. Pillai has a research group meeting every Thursday 2-4 pm."),
+    ("Dr. Sharma", "Dr. Sharma: Mondays are bad for me."),
+    ("Class rep, Section 1", "Section 1 students would like no classes after 4 pm on Friday."),
+    ("Class rep, Section 3", "Section 3 wants Tuesday afternoons free."),
+    ("Class rep, Section 4", "Section 4 would rather not have classes at 8:30 on Monday."),
+]
+
 YEAR_HEADING = "B.Tech II year I Semester - CSE"
 
 

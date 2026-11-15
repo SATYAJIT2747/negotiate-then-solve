@@ -1,0 +1,68 @@
+# The intent reader's training data (python -m training.dataset build --recipe data/recipes/intents-v9.toml):
+# intents-v8's rows, every one kept as it was, and 100 authored requests (data/authored: written by a model,
+# not by people, so kept apart from data/human). The data so far never says "this asks for something the
+# vocabulary cannot say": every compile row maps cleanly onto it, so the model learned that every request does,
+# and squeezes the ones that do not ("two classes a day" read as two hours in a row: the compositional suite,
+# silently wrong 71% for v8). The authored rows are 44 such requests, each answered with a question that names
+# what cannot be done yet (limits per day or week, gaps, relations between classes, ranked choices, fallbacks,
+# "any one of"), beside 56 hard requests it can say (exceptions and alternate weeks as explicit weeks, mixed
+# windows as separate intents, several requests at once). Train from the base on all of it, as v8 was: an update
+# on the new rows alone taught v7 one habit per generator and lost readings it had.
+name = "intents-v9"
+instance = "data/synthetic-cse-s0.json"
+
+[output]
+dir = "data/compiler-intents"   # train, val, test and manifest.json
+suites = "data/suites"          # held-out wordings and the noisy test split, for evaluation only
+
+[frozen]
+# the test split every model has been scored on since evaluation.intents began (messages, gold and what it
+# resolves against; not the system prompt). The build refuses to change it without --refreeze.
+# Refrozen for v6 (was e402d9c4724c5843, v5's): the same 417 requests and gold, in schema 4's format (the
+# message without the directory, the gold with names for IDs). Every gold reading compiles to the same outcome
+# with names as with IDs, and models trained on schema 3 are read with their own prompt (format_row), so their
+# scores on this split are the ones they had on v5's.
+test = "0fb72ff322ff89a9"
+
+[base]                          # intent_compiler.base_rows: the corpus and intent_corpus's generators
+corpus = ["data/requests.jsonl", "data/requests-para.jsonl"]
+extra_denials = 150
+min_per_action = 50
+per_generator = 70
+max_per_kind = 78
+train_only = 30
+
+[generators]                    # intent_generators.REGISTRY; held-out wordings go to their suites
+per_generator = 90
+held_per_generator = 40
+seed = 200
+# the generators this recipe was built with; later ones in REGISTRY belong to later recipes
+names = ["firmness", "only_firmness", "which_to", "relative_span", "multi", "club_more", "vague",
+         "reason_firmness", "term_span", "difficulty", "dated",
+         "exception", "only_times", "compound"]
+
+[stored.mined]                  # training.mine: the model's mistakes, with gold from the generators
+paths = ["data/compiler-intents/mined.jsonl"]
+split = "train"
+relabel = true                  # made by code under the old rule for moves: relabel by the current one
+
+[stored.authored]               # training.human's format; source "authored", annotator "llm-authored"
+kind = "authored"
+paths = ["data/authored/*.jsonl"]
+
+[stored.human]                  # training.human: messages people labelled (reviewed only)
+kind = "human"
+paths = ["data/human/*.jsonl"]
+
+[balance]                       # training.balance: no kind taught mostly by messages of several requests
+max_parts = 0.5                 # rows where a kind is one part of several, per row where it is the whole request
+seed = "v8"
+
+[augment]                       # noisy twins of training rows, kept only if they mean the same
+fraction = 0.35
+levels = ["typo", "shorthand", "casual", "noisy"]
+seed = "v3"
+origins = ["base", "generators", "balance"]
+
+[suites]
+noisy_levels = ["typo", "noisy"]

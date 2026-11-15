@@ -24,7 +24,9 @@ export function Lifecycle({ events, status, live }: { events: EventRow[]; status
   const reached = MAIN.map((m) => seen.has(m.status) || (m.status === "received" && events.length > 0));
   const skippedNegotiation = seen.has("fairness_audited") && !seen.has("negotiating");
   const last = MAIN.reduce((acc, _m, i) => (reached[i] ? i : acc), 0);
-  const exit = EXITS.find((x) => seen.has(x));
+  // only while the request is still stopped there: an escalation that was granted, or a question that was
+  // answered, goes on through the pipeline and must not keep saying "nothing reached the timetable"
+  const exit = EXITS.includes(status) ? status : null;
   const exitMeta = exit ? STATUS[exit] : null;
 
   return (

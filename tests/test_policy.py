@@ -8,6 +8,7 @@ import pytest
 from agents.policy import (
     BM25,
     PolicyAgent,
+    PolicyDecision,
     PolicyOutput,
     Verdict,
     load_handbook,
@@ -80,6 +81,19 @@ def test_citations_must_be_retrieved_and_denials_cited(rules, instance):
     assert d.verdict == Verdict.NEEDS_APPROVAL and d.uncited_escalation  # never deny without a shown rule
 
 
+def test_an_answer_that_cites_no_rule_is_not_passed_on(rules):
+    """KNOWN_BUGS.md B7: the adapter answered "what courses does Dr. Iyer take?" with a sentence about its task."""
+    from agents.policy import NO_RULE
+
+    shown = [r for r in rules if r.id in ("P-LUNCH", "P-PREFS")]
+    task = "This is a policy question about course scheduling, which is answered by citing the relevant rules."
+    d = PolicyAgent.check(PolicyOutput(verdict="allowed", explanation="x", answer=task), shown)
+    assert d.answer == NO_RULE
+    d = PolicyAgent.check(PolicyOutput(verdict="allowed", cited_rules=["P-LUNCH"], explanation="x",
+                                       answer="No classes at 1 pm."), shown)
+    assert d.answer == "No classes at 1 pm."
+
+
 def test_hints_name_what_the_parse_implies(instance):
     req = request("I have a hospital visit on Tuesday of week 5.")
     absence = DraftConstraint(type="unavailable", hard=True, scope_kind="faculty", scope_id="F-105",
@@ -137,3 +151,58 @@ def test_unknown_retriever_is_an_error(rules):
 
     with pytest.raises(ValueError, match="unknown retriever"):
         make_retriever(rules, "faiss")
+
+
+def _parse(instance, text, *constraints):
+    return postprocess(instance, request(text), ParseOutput(request_type="preference", action="compile",
+                                                            constraints=list(constraints)))
+
+
+def test_code_decides_the_slot_rules_where_the_parse_is_plain(rules, instance):
+    lunch = instance.calendar.lunch_slot
+    deny = PolicyOutput(verdict="forbidden", cited_rules=["P-LUNCH"], explanation="Lunch.")
+    # issue #4: "before lunch" denied under the lunch rule, though no slot asked for is the lunch hour
+    text = "On Thursday in week 14, move my machine learning class before lunch"
+    before = DraftConstraint(type="prefer", hard=True, scope_kind="faculty", scope_id="F-105", days=["Thu"],
+                             slots=list(range(lunch)))
+    d = PolicyAgent(rules, StubClient(deny), instance).review(text, _parse(instance, text, before))
+    assert d.verdict == Verdict.ALLOWED and not d.cited and "no requested slot" in d.overruled
+    # the lunch hour itself: the model's denial stands
+    at = before.model_copy(update={"slots": [lunch]})
+    d = PolicyAgent(rules, StubClient(deny), instance).review("At 1 pm on Thursday.", _parse(instance, "x", at))
+    assert d.verdict == Verdict.FORBIDDEN and d.overruled is None
+    # no parse: nothing to go by but the message, the model decides
+    assert PolicyAgent(rules, StubClient(deny), instance).review(text, None).verdict == Verdict.FORBIDDEN
+    # allowed by the model, but the parse asks for the lunch hour as a must: denied
+    allow = PolicyOutput(verdict="allowed", explanation="Fine.")
+    d = PolicyAgent(rules, StubClient(allow), instance).review("I must teach at 1 pm on Thursday.",
+                                                               _parse(instance, "x", at))
+    assert d.verdict == Verdict.FORBIDDEN and d.cited == ["P-LUNCH"] and d.overruled
+    # a wish for the lunch hour, or other rules cited, are left to the model
+    wish = at.model_copy(update={"hard": False})
+    d = PolicyAgent(rules, StubClient(allow), instance).review("1 pm would be nice.", _parse(instance, "x", wish))
+    assert d.verdict == Verdict.ALLOWED
+    both = PolicyDecision(verdict=Verdict.FORBIDDEN, cited=["P-LUNCH", "P-HOURS"])
+    agent = PolicyAgent(rules, StubClient(deny), instance)
+    assert agent.slot_rules(both, text, _parse(instance, text, before)) is both
+
+
+def test_a_run_stated_in_words_breaks_the_hours_in_a_row(rules, instance):
+    # smoke S-10: "4 of my lectures back-to-back" read as "only Thursday before 12": three slots, no slot breaks
+    # the limit, but the message says how long the run is
+    text = "Please put 4 of my lectures back-to-back on Thursday from 9, so the rest of my week is free."
+    morning = DraftConstraint(type="prefer", hard=True, scope_kind="faculty", scope_id="F-105", days=["Thu"],
+                              slots=[0, 1, 2])
+    deny = PolicyOutput(verdict="forbidden", cited_rules=["P-MAXCONSEC"], explanation="Too many in a row.")
+    d = PolicyAgent(rules, StubClient(deny), instance).review(text, _parse(instance, text, morning))
+    assert d.verdict == Verdict.FORBIDDEN and d.cited == ["P-MAXCONSEC"] and d.overruled is None
+    allow = PolicyOutput(verdict="allowed", explanation="Fine.")
+    d = PolicyAgent(rules, StubClient(allow), instance).review(text, _parse(instance, text, morning))
+    assert d.verdict == Verdict.FORBIDDEN and d.cited == ["P-MAXCONSEC"]
+    # a run within the limit is still overruled, and a number that is not a run is no denial
+    ok = "Please put 2 of my lectures back-to-back on Thursday from 9."
+    d = PolicyAgent(rules, StubClient(deny), instance).review(ok, _parse(instance, ok, morning))
+    assert d.verdict == Verdict.ALLOWED and d.overruled
+    ok = "I want 4 lectures on Thursday."
+    d = PolicyAgent(rules, StubClient(deny), instance).review(ok, _parse(instance, ok, morning))
+    assert d.verdict != Verdict.FORBIDDEN

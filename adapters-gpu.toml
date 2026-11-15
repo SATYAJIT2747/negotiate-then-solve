@@ -1,0 +1,13 @@
+# The friend's GPU server (llama-server at http://10.1.25.191:8080/v1, base Qwen3.5-4B-Base-Q8_0): the same
+# tasks as adapters-lora.toml, with the adapters that server has loaded (GET /lora-adapters).
+#   NTS_PARSER=local NTS_INTENTS=1 NTS_ADAPTERS=adapters-gpu.toml NTS_LOCAL_URL=http://10.1.25.191:8080/v1 uv run nts-web
+
+base = "Qwen3.5-4B-Base-Q8_0"
+
+[adapters]
+nts-intents-v12-read-100 = ["compile"]  # newest intents adapter (runs/suites-nts-intents-v12-read-100*.log)
+nts-read100 = ["policy", "reply", "explain"]
+nts-lookup-v4 = ["lookup"]  # mixed messages and memory v2 (before_after/README.md, Phase 5: chat 26/26, memory v2
+                            # 7/8, whole mixed message 140/200 vs v3 111/200); v3 is ~2-3% better on single questions
+                            # (test sets A/C/D) as v4 forgets "in week N". v3 cannot split a message, so memory v2 is off
+nts-memory-v1 = ["memory"]

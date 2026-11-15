@@ -1,0 +1,62 @@
+{
+ "task": "lookup",
+ "version": 3.2,
+ "schema": 3,
+ "seed": 0,
+ "fills": 8,
+ "mixed": 420,
+ "long": 320,
+ "replay": 1700,
+ "files": {
+  "train": {
+   "rows": 2354,
+   "kinds": {
+    "replay multi": 624,
+    "replay replay": 568,
+    "replay new": 508,
+    "slip": 240,
+    "mixed": 238,
+    "long": 176
+   }
+  },
+  "val": {
+   "rows": 768,
+   "kinds": {
+    "replay multi": 278,
+    "mixed": 170,
+    "long": 123,
+    "replay replay": 97,
+    "replay new": 84,
+    "slip": 16
+   }
+  },
+  "distilled": {
+   "rows": 571,
+   "kinds": {
+    "replay replay": 227,
+    "replay new": 193,
+    "replay multi": 151
+   }
+  }
+ },
+ "new rows left out": 11,
+ "left out of both formats": {
+  "v4: different lookups:": 4
+ },
+ "cover": {
+  "kind long": 301,
+  "kind mixed": 410,
+  "kind slip": 256,
+  "part other": 66,
+  "part request": 806,
+  "part rule": 145,
+  "parts 1": 256,
+  "parts 2": 48,
+  "parts 3": 90,
+  "parts 4": 195,
+  "parts 5": 192,
+  "parts 6": 115,
+  "parts 7": 43,
+  "parts 8": 28
+ }
+}

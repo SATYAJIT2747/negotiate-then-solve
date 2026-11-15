@@ -3,10 +3,20 @@
 #
 #   powershell -ExecutionPolicy Bypass -File scripts\host.ps1
 #   powershell -ExecutionPolicy Bypass -File scripts\host.ps1 -Offline     # never use the GPU
+#   powershell -ExecutionPolicy Bypass -File scripts\host.ps1 -Adapters "" # every task on -Model, as before
+#
+#   powershell -ExecutionPolicy Bypass -File scripts\host.ps1 -Adapters adapters-router.toml  # a router server
+#   powershell -ExecutionPolicy Bypass -File scripts\host.ps1 -DemoWeek 9  # the demo department's and campus' "today" is in week 9
+#
+# By default each task goes to its own LoRA adapter on the GPU server's base model (adapters-lora.toml, what
+# the server at 10.1.25.191 runs): requests are read by nts-intents-v12-read-100, which the app then asks for
+# intents (NTS_INTENTS); policy, replies and explanations by nts-read100; timetable questions by nts-lookup-v1.
 param(
-    [string]$GpuUrl = "http://10.1.25.94:8080/v1",
-    [string]$Model = "Qwen3.5-4B-Finetune-NTS-Q8_0",
+    [string]$GpuUrl = "http://10.1.25.191:8080/v1",
+    [string]$Adapters = "adapters-lora.toml",
+    [string]$Model = "Qwen3.5-4B-Finetune-NTS-Read100-Q8_0",
     [int]$Port = 8000,
+    [int]$DemoWeek = 0,  # >0: the demo department and demo campus stay on Monday of this week; 0: week 5 (set NTS_DEMO_WEEK=0 for the real date)
     [switch]$Offline
 )
 
@@ -16,6 +26,20 @@ $env:NTS_HOST = "0.0.0.0"  # reachable from other machines, not only this one
 $env:NTS_PORT = "$Port"
 $env:NTS_LOCAL_URL = $GpuUrl
 $env:NTS_LOCAL_MODEL = $Model
+if ($DemoWeek -gt 0) { $env:NTS_DEMO_WEEK = "$DemoWeek" } else { Remove-Item Env:NTS_DEMO_WEEK -ErrorAction SilentlyContinue }
+$needed = @($Model)
+if ($Adapters) {
+    $env:NTS_ADAPTERS = $Adapters
+    $env:NTS_INTENTS = "1"
+    # the names under [adapters], quoted ("Qwen3.5-...") or bare (nts-read100)
+    $section = ""
+    $needed = foreach ($line in Get-Content $Adapters) {
+        if ($line -match '^\s*\[([^\]]+)\]') { $section = $Matches[1]; continue }
+        if ($section -eq "adapters" -and $line -match '^\s*"?([^"=\s]+)"?\s*=') { $Matches[1] }
+    }
+} else {
+    Remove-Item Env:NTS_ADAPTERS, Env:NTS_INTENTS -ErrorAction SilentlyContinue
+}
 
 # The app uses the model whenever it answers and the rule-based stand-ins whenever it does not, switching
 # back by itself (src/web/fallback.py), so it starts on the model even when the GPU is down right now.
@@ -23,8 +47,17 @@ $parser = if ($Offline) { "offline" } else { "local" }
 if (-not $Offline) {
     try {
         $models = Invoke-RestMethod -Uri "$GpuUrl/models" -TimeoutSec 5
-        if (-not ($models.data.id -contains $Model)) {
-            Write-Host "GPU server is up but does not serve $Model; it serves: $($models.data.id -join ', ')"
+        # what the server serves: its models (router mode) and its LoRA adapters, by file name without .gguf
+        $served = @($models.data.id | ForEach-Object { [IO.Path]::GetFileNameWithoutExtension($_) })
+        try {
+            $root = $GpuUrl -replace '/v1/?$', ''
+            $loras = Invoke-RestMethod -Uri "$root/lora-adapters" -TimeoutSec 5
+            $served += @($loras | ForEach-Object { [IO.Path]::GetFileNameWithoutExtension($_.path) })
+        } catch {}
+        foreach ($m in $needed) {
+            if (-not ($served -contains $m)) {
+                Write-Host "GPU server is up but does not serve $m; it serves: $($served -join ', ')"
+            }
         }
     } catch {
         Write-Host "GPU server not reachable at $GpuUrl right now; the rule-based stand-ins answer until it is back."

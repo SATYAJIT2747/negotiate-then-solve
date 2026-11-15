@@ -1,5 +1,7 @@
 import clsx from "clsx";
-import { AlertTriangle, ArrowLeft, Cpu, Undo2 } from "lucide-react";
+import { changedWeeks, groupWeeks, versionsLabel, weeksLabel } from "../lib/weeks";
+import { AlertTriangle, ArrowLeft, BadgeCheck, Cpu, Undo2, XCircle } from "lucide-react";
+import { useApprovalActions } from "./Approvals";
 import { useState } from "react";
 import { Link, useParams, useSearchParams } from "react-router-dom";
 import { EventTimeline, Lifecycle } from "../components/Lifecycle";
@@ -9,21 +11,28 @@ import { decider, EscalationPanel } from "../components/Escalation";
 import { ForwardedPanel } from "../components/Forwarded";
 import { Avatar, Badge, Button, Card, CardHeader, Collapse, EmptyState, Json, Label, Meter, Skeleton, StatusBadge, Tabs, Toast } from "../components/ui";
 import { api } from "../lib/api";
+import { useAuth } from "../lib/auth";
 import { useApi } from "../lib/hooks";
 import { ago, num, pct, ROLE_LABEL, secs } from "../lib/meta";
-import { study } from "../lib/study";
+import { study, studyStep } from "../lib/study";
 import type { CaseDetail as Detail } from "../lib/types";
+import { ReplyText } from "../components/thread/ReplyText";
 import { useStudySession } from "../components/StudyBanner";
 
 type Tab = "summary" | "negotiation" | "details";
 const OLD_TABS: Record<string, Tab> = { overview: "summary", change: "summary", parse: "details", policy: "details", trace: "details" };
 
-export default function CaseDetail() {
-  const { id = "" } = useParams();
+/** A request in full: lifecycle, reply, negotiation, parse, policy and solver. ``embedded``: shown in a
+ * panel beside its conversation (the requests chat), so without the back link and the title block, and
+ * with the tab kept locally instead of in the address. */
+export default function CaseDetail({ id: given, embedded = false }: { id?: string; embedded?: boolean } = {}) {
+  const { id: routed = "" } = useParams();
+  const id = given ?? routed;
   const [params, setParams] = useSearchParams();
-  const raw = params.get("tab") ?? "summary";
+  const [localTab, setLocalTab] = useState<Tab>("summary");
+  const raw = embedded ? localTab : (params.get("tab") ?? "summary");
   const tab: Tab = OLD_TABS[raw] ?? (raw as Tab);
-  const setTab = (t: Tab) => setParams(t === "summary" ? {} : { tab: t }, { replace: true });
+  const setTab = (t: Tab) => (embedded ? setLocalTab(t) : setParams(t === "summary" ? {} : { tab: t }, { replace: true }));
   const { data: c, error, refresh } = useApi(() => api.case(id), [id], 1500);
   const [toast, setToast] = useState<string | null>(null);
 
@@ -39,6 +48,8 @@ export default function CaseDetail() {
   const msgs = c.outcome?.messages ?? [];
   return (
     <>
+      {!embedded && (
+      <>
       <Link to="/requests" className="mb-4 inline-flex items-center gap-1.5 text-[13px] text-ink-3 hover:text-ink">
         <ArrowLeft size={14} /> Requests
       </Link>
@@ -68,10 +79,24 @@ export default function CaseDetail() {
           <StatusBadge status={c.status} live={c.running} />
         </div>
       </div>
+      </>
+      )}
 
       <Card className="mb-6 px-5 py-4">
         <Lifecycle events={c.events} status={c.status} live={c.running} />
       </Card>
+
+      {c.status === "awaiting_approval" && (
+        <div className="mb-6">
+          <ApprovalPanel
+            c={c}
+            onDone={(msg) => {
+              setToast(msg);
+              void refresh();
+            }}
+          />
+        </div>
+      )}
 
       {c.outcome?.escalation && (
         <div className="mb-6">
@@ -85,7 +110,7 @@ export default function CaseDetail() {
         </div>
       )}
 
-      {c.forwarded_to === "coordinator" && (
+      {(c.forwarded_to === "coordinator" || (c.status === "refused" && (c.can_handle || c.answer))) && (
         <div className="mb-6">
           <ForwardedPanel
             c={c}
@@ -114,6 +139,69 @@ export default function CaseDetail() {
       {tab === "details" && <Details c={c} />}
       <Toast message={toast} onDone={() => setToast(null)} />
     </>
+  );
+}
+
+/** A change waiting for the office: approve or reject it here, with the change itself shown in the summary
+ * below. Everyone else sees who it waits on. */
+function ApprovalPanel({ c, onDone }: { c: Detail; onDone: (msg: string) => void }) {
+  const { can } = useAuth();
+  const { busy, approve, reject, confirmOnly } = useApprovalActions(c, onDone);
+  const [rejecting, setRejecting] = useState(false);
+  const [reason, setReason] = useState("");
+  const office = can("approve");
+  const blockedBy = c.proposal?.builds_on;
+  const weeks = changedWeeks(c.proposal);
+  const what = confirmOnly
+    ? "It already fits the timetable: confirming keeps the requirement it adds in force."
+    : `Approving publishes ${versionsLabel(weeks.map((w) => w.version))}${weeks.some((w) => w.week != null) ? ` for ${weeksLabel(weeks.map((w) => w.week))}` : ""} and tells everyone affected.`;
+
+  return (
+    <Card className="overflow-hidden">
+      <div className="flex flex-wrap items-start gap-4 bg-brand/[0.05] px-5 py-4">
+        <span className="grid size-10 shrink-0 place-items-center rounded-full bg-brand/12 text-brand">
+          <BadgeCheck size={19} />
+        </span>
+        <div className="min-w-0 flex-1">
+          <h3 className="text-[15px] font-semibold">{office ? "Waiting for your approval" : "Waiting for the timetable office to approve"}</h3>
+          <p className="mt-1 max-w-3xl text-[13.5px] leading-relaxed text-ink-2">{what}</p>
+          {office && blockedBy && (
+            <p className="mt-1 text-[12.5px] text-ink-2">
+              Builds on{" "}
+              <Link to={`/requests/${blockedBy}`} className="font-mono text-brand hover:underline">{blockedBy}</Link>
+              , which is still waiting: approve or reject that first.
+            </p>
+          )}
+          {office && c.stand_in && (
+            <p className="mt-1 text-[12.5px] text-warn">Read by the rule-based stand-in, not the model: check what it understood (Details) before approving.</p>
+          )}
+          {office && !!c.unused?.length && (
+            <p className="mt-1 text-[12.5px] text-warn">Part of the message was not used: check Details before approving.</p>
+          )}
+        </div>
+        {office && (
+          <div className="flex gap-2">
+            <Button icon={XCircle} onClick={() => setRejecting(!rejecting)} disabled={!!busy}>Reject</Button>
+            <Button variant="primary" icon={BadgeCheck} loading={busy === "approve"} onClick={approve} disabled={!!blockedBy || !!busy}>
+              {confirmOnly ? "Confirm" : "Approve and publish"}
+            </Button>
+          </div>
+        )}
+      </div>
+      {office && rejecting && (
+        <div className="flex flex-wrap items-center gap-3 border-t border-line bg-panel-2 p-4">
+          <input
+            autoFocus
+            value={reason}
+            onChange={(e) => setReason(e.target.value)}
+            onKeyDown={(e) => e.key === "Enter" && !busy && void reject(reason)}
+            placeholder={confirmOnly ? "Why? The sender sees your note; the requirement is dropped." : "Why? The case goes back to negotiation with your note."}
+            className="h-10 flex-1 rounded-md border border-line bg-panel px-3 text-sm outline-none focus:border-bad/50"
+          />
+          <Button variant="danger" loading={busy === "reject"} onClick={() => reject(reason)}>Confirm rejection</Button>
+        </div>
+      )}
+    </Card>
   );
 }
 
@@ -154,10 +242,19 @@ function Withdraw({ c, onDone }: { c: Detail; onDone: (msg: string) => void }) {
   );
 }
 
+/** "weeks 10–12, versions 35–37": what a change covers, every week of the request. */
+function changeSpan(c: Detail): string {
+  const ws = changedWeeks(c.proposal);
+  const weeks = ws.some((w) => w.week != null) ? `${weeksLabel(ws.map((w) => w.week))}, ` : "";
+  return `${weeks}${versionsLabel(ws.map((w) => w.version))}`;
+}
+
 function outcomeText(c: Detail): string | null {
   if (c.extra?.placement)
     return `An extra ${c.extra.label} class fits on ${c.extra.placement.text}, week ${c.extra.week}. It was placed in a free hour, so no other class moves.`;
   const o = c.outcome;
+  if (!o && c.events.some((e) => e.kind === "solved" && e.already_met))
+    return "The timetable already meets it, so nothing had to move and there was nothing to approve. It stays recorded, and later changes keep to it.";
   if (!o) return null;
   if (o.status === "agreed") {
     const who = o.concessions.map((x) => x.name).join(", ");
@@ -165,33 +262,73 @@ function outcomeText(c: Detail): string | null {
   }
   if (o.status === "escalated") return `Escalated to ${o.escalation ? decider(o.escalation.to, o.escalation.to_name) : "someone with authority"}: ${o.escalation?.reason ?? "no agreement"}.`;
   if (o.step === 2) return "Fitted into the timetable directly; some preferences could not be kept and their owners were told.";
+  const dropped = (c.proposal?.diff ?? []).filter((d) => d.faculty === c.sender && !d.after).length;
+  if (c.makeup === false && dropped)
+    return `Your ${dropped === 1 ? "class" : `${dropped} classes`} while you are away ${dropped === 1 ? "is" : "are"} cancelled in ${weeksLabel(changedWeeks(c.proposal).map((w) => w.week))}: no make-up class was asked for.`;
+  // classes of other teachers the solver moved to make room: no constraint given up, but not "nobody"
+  const others = [...new Set((c.proposal?.diff ?? []).filter((d) => d.faculty && d.faculty !== c.sender).map((d) => d.faculty_name ?? d.faculty))];
+  if (others.length)
+    return `Fitted into the timetable directly; to make room, ${others.join(", ")}'s ${others.length === 1 ? "class was" : "classes were"} moved (no constraint was given up, and they were told).`;
   return "Fitted into the timetable directly; nobody had to give anything up.";
+}
+
+/** How the negotiation ended: what each person who gave way ended up with (after the last reply, which
+ * otherwise leaves the thread on a counter-offer). */
+function AgreedNote({ c }: { c: Detail }) {
+  const o = c.outcome!;
+  const gave = new Set(o.concessions.map((x) => x.stakeholder));
+  const placed = (c.proposal?.diff ?? []).filter((d) => d.faculty && gave.has(d.faculty) && d.after);
+  return (
+    <div className="rounded-lg border border-ok/30 bg-ok/5 px-4 py-3 text-[13.5px]">
+      <p className="font-medium">
+        Agreed in {o.rounds} round{o.rounds === 1 ? "" : "s"}
+        {o.concessions.length ? `: ${[...new Set(o.concessions.map((x) => x.name))].join(", ")} gave way` : ""}.
+      </p>
+      {placed.length > 0 && (
+        <ul className="mt-1 space-y-0.5 text-ink-2">
+          {placed.map((d) => (
+            <li key={d.session}>
+              {d.session_name}: {d.after!.text}
+            </li>
+          ))}
+        </ul>
+      )}
+      <p className="mt-1 text-[12.5px] text-ink-3">The solver checked the result; it went to the coordinator for approval.</p>
+    </div>
+  );
 }
 
 function Summary({ c }: { c: Detail }) {
   const f = c.fairness;
   const outcome = outcomeText(c);
+  // the people a change reached; the sender has the reply itself
+  const told = Object.entries(c.notices).filter(([who]) => who !== c.sender);
+  const { user } = useAuth();
+  // the sender answers the question in the form (which shows it); everyone else just reads it
+  const answering = c.status === "clarification_requested" && user?.id === c.sender;
   return (
     <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]">
       <UnderstoodCheck c={c} />
       <Card>
         <CardHeader title={`Reply to ${c.sender_name}`} />
         <div className="p-5">
-          {c.status === "clarification_requested" ? (
+          {answering ? (
             <ClarifyForm caseId={c.id} sender={c.sender} question={c.reply || "Could you give more detail?"} />
           ) : null}
-          {c.status === "clarification_requested" && c.reply ? null : c.reply ? (
-            <p className="text-[14.5px] leading-relaxed">{c.reply}</p>
+          {answering ? null : c.reply ? (
+            <ReplyText text={c.reply} className="text-[14.5px] leading-relaxed" />
           ) : (
             <p className="text-[13.5px] text-ink-3">Still working on it…</p>
           )}
-          {Object.keys(c.notices).length > 0 && (
+          {told.length > 0 && (
             <div className="mt-5">
-              <Label>Also told (only people affected)</Label>
-              <ul className="space-y-1.5">
-                {Object.entries(c.notices).map(([who, text]) => (
-                  <li key={who} className="text-[13px] text-ink-2">
-                    <span className="font-mono text-[12px] text-ink-3">{who}</span> {text}
+              <Label>Also told</Label>
+              <ul className="space-y-2">
+                {told.map(([who, text]) => (
+                  <li key={who} className="text-[13px] leading-relaxed text-ink-2">
+                    <span className="font-medium text-ink">{c.notice_names?.[who] ?? who}</span>
+                    <span className="text-ink-3"> · </span>
+                    {text}
                   </li>
                 ))}
               </ul>
@@ -208,7 +345,11 @@ function Summary({ c }: { c: Detail }) {
             <p className="text-ink-2">
               Policy check: <span className="font-medium text-ink">{c.policy.verdict.replace("_", " ")}</span>
               {c.policy.cited.length ? ` under ${c.policy.cited.map((x) => x.cite).join(", ")}` : ""}.
-              {c.policy.obligations.length ? " A make-up class is required." : ""}
+              {c.policy.obligations.length
+                ? c.makeup === false
+                  ? " The rules ask for a make-up class; none was asked for, so the classes missed are cancelled."
+                  : " A make-up class is required."
+                : ""}
             </p>
           )}
           {f.gini_after !== undefined && (
@@ -222,10 +363,26 @@ function Summary({ c }: { c: Detail }) {
 
       <Card className="lg:col-span-2">
         <CardHeader
-          title={c.proposal ? `Change to the timetable (version ${c.proposal.version}${c.proposal.week ? `, week ${c.proposal.week}` : ""})` : "Change to the timetable"}
-          subtitle={c.proposal ? "Classes that move, compared with the version it builds on" : undefined}
+          title={c.proposal ? `Change to the timetable (${changeSpan(c)})` : "Change to the timetable"}
+          subtitle={c.proposal ? "Classes that move, compared with each week's timetable it builds on" : undefined}
         />
-        <div className="px-5 pb-4 pt-2">{c.proposal ? <DiffTable rows={c.proposal.diff} /> : <p className="py-2 text-[13.5px] text-ink-3">No change to the timetable.</p>}</div>
+        <div className="space-y-4 px-5 pb-4 pt-2">
+          {c.proposal ? (
+            groupWeeks(changedWeeks(c.proposal)).map((g, i, all) => (
+              <div key={g.versions.join()}>
+                {all.length > 1 && (
+                  <p className="pt-2 text-[12px] font-medium uppercase tracking-wide text-ink-3">
+                    {weeksLabel(g.weeks)} · {versionsLabel(g.versions)}
+                  </p>
+                )}
+                <DiffTable rows={g.diff} weeks={g.weeks.some((w) => w != null) ? weeksLabel(g.weeks) : undefined} />
+                {i < all.length - 1 && <div className="mt-2 border-t border-line" />}
+              </div>
+            ))
+          ) : (
+            <p className="py-2 text-[13.5px] text-ink-3">No change to the timetable.</p>
+          )}
+        </div>
       </Card>
     </div>
   );
@@ -282,6 +439,7 @@ function Negotiation({ c }: { c: Detail }) {
             {o.messages.map((m, i) => (
               <MessageBubble key={i} m={m} reply={o.replies[i] ? { ...o.replies[i], decision: o.replies[i].decision ?? null } : undefined} />
             ))}
+            {o.status === "agreed" && <AgreedNote c={c} />}
           </div>
         </Card>
       )}
@@ -453,7 +611,7 @@ function UnderstoodCheck({ c }: { c: Detail }) {
   const understood = c.parse.constraints.map((k) => k.text);
   const save = async (value: string) => {
     setAnswer(value);
-    await study.live({ kind: "understood", case: c.id, text: c.text, reading: understood.join(" ") || c.parse?.action, value,
+    await study.live({ kind: "understood", step: studyStep() ?? "preference", case: c.id, text: c.text, reading: understood.join(" ") || c.parse?.action, value,
                        ...(comment.trim() ? { comment: comment.trim() } : {}) });
   };
   return (

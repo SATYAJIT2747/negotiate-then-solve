@@ -1,0 +1,34 @@
+# Training data for the encoder intent reader (docs/encoder-intents.md), built by
+#   python -m training.encoder_data --recipe data/recipes/encoder-intents-v1.toml
+# The intents rows (data/compiler-intents, intents-v13) rebalanced over how complex a message is: the v13 train
+# split is 79% one intent and 2.5% choices, so a reader trained on it rarely sees a message of several requests.
+# Messages of several requests are made by joining the single-intent generators' own wordings (training.balance:
+# parts from a few combining generators teach their habits as the kind's reading), each part checked alone and
+# the whole message compiled. Held-out wordings and connectors make the "composed" suite; test is not touched.
+name = "encoder-intents-v1"
+instance = "data/synthetic-cse-s0.json"
+source = "data/compiler-intents"     # train.jsonl, val.jsonl: the rows the singles come from
+out = "data/encoder-intents"
+seed = 11
+
+[mix]                                # share of the train split per tier
+non_compile = 0.15
+single = 0.40
+multi = 0.25
+nested = 0.12
+linked = 0.08
+
+[single]
+total = 3000                         # rows of one intent; the split's size follows from mix.single
+max_up = 2.0                         # a rare kind or generator is repeated at most this many times
+
+[multi]
+three_parts = 0.3                    # share of composed messages with three requests, the rest two
+
+[val]
+fraction = 0.1                       # val is built the same way, this share of train's size
+
+[suite]                              # held-out wordings of every part and held-out connectors
+multi = 150
+nested = 100
+linked = 50

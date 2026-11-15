@@ -1,0 +1,41 @@
+{
+ "task": "memory",
+ "version": 1.1,
+ "start": "nts-memory-v1",
+ "seed": 0,
+ "train": 1850,
+ "val": 380,
+ "distilled": 400,
+ "test-plural": 64,
+ "new": 1000,
+ "new_kinds": {
+  "plural": 512,
+  "same": 223,
+  "two_back": 67,
+  "ask": 63,
+  "list": 135
+ },
+ "replayed": 950,
+ "test_kinds": {
+  "plural": 64
+ },
+ "train_kinds": {
+  "plural": 458,
+  "same": 441,
+  "change": 207,
+  "list": 154,
+  "ask": 108,
+  "refer": 108,
+  "two_back": 83,
+  "request": 52,
+  "reply": 37,
+  "mixed": 36,
+  "whatif": 32,
+  "both": 25,
+  "two": 24,
+  "relative": 23,
+  "each": 23,
+  "chain": 22,
+  "yes": 17
+ }
+}

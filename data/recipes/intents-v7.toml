@@ -1,0 +1,57 @@
+# The intent reader's training data (python -m training.dataset build --recipe data/recipes/intents-v7.toml):
+# intents-v6's rows, every one kept as it was, plus three generators for what the full pipeline's reading
+# missed in the request battery of 2026-10-26 (intent_generators: exception, only_times, compound):
+# "..., but not on Friday" after a request (a reading of its own, not dropped), "I can only teach in the
+# afternoons" from a week on (a must), and two different requests in one message (a cancellation beside a
+# move or a wish, an absence beside a move), the class named by what the message says and no more.
+# Meant as an update of nts-intents-v6 (INIT_FROM): it reads the new rows and REPLAY times as many old ones.
+name = "intents-v7"
+instance = "data/synthetic-cse-s0.json"
+
+[output]
+dir = "data/compiler-intents"   # train, val, test and manifest.json
+suites = "data/suites"          # held-out wordings and the noisy test split, for evaluation only
+
+[frozen]
+# the test split every model has been scored on since evaluation.intents began (messages, gold and what it
+# resolves against; not the system prompt). The build refuses to change it without --refreeze.
+# Refrozen for v6 (was e402d9c4724c5843, v5's): the same 417 requests and gold, in schema 4's format (the
+# message without the directory, the gold with names for IDs). Every gold reading compiles to the same outcome
+# with names as with IDs, and models trained on schema 3 are read with their own prompt (format_row), so their
+# scores on this split are the ones they had on v5's.
+test = "0fb72ff322ff89a9"
+
+[base]                          # intent_compiler.base_rows: the corpus and intent_corpus's generators
+corpus = ["data/requests.jsonl", "data/requests-para.jsonl"]
+extra_denials = 150
+min_per_action = 50
+per_generator = 70
+max_per_kind = 78
+train_only = 30
+
+[generators]                    # intent_generators.REGISTRY; held-out wordings go to their suites
+per_generator = 90
+held_per_generator = 40
+seed = 200
+# the generators this recipe was built with; later ones in REGISTRY belong to later recipes
+names = ["firmness", "only_firmness", "which_to", "relative_span", "multi", "club_more", "vague",
+         "reason_firmness", "term_span", "difficulty", "dated",
+         "exception", "only_times", "compound"]
+
+[stored.mined]                  # training.mine: the model's mistakes, with gold from the generators
+paths = ["data/compiler-intents/mined.jsonl"]
+split = "train"
+relabel = true                  # made by code under the old rule for moves: relabel by the current one
+
+[stored.human]                  # training.human: messages people labelled (reviewed only)
+kind = "human"
+paths = ["data/human/*.jsonl"]
+
+[augment]                       # noisy twins of training rows, kept only if they mean the same
+fraction = 0.35
+levels = ["typo", "shorthand", "casual", "noisy"]
+seed = "v3"
+origins = ["base", "generators"]
+
+[suites]
+noisy_levels = ["typo", "noisy"]

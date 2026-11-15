@@ -9,7 +9,10 @@
 Who it is about comes from the offering document (faculty names, course
 codes and names, programmes and years); days and times from the words.
 "can't", "unavailable", "away", "must" make it a hard rule; anything else is
-a preference the solver weighs.
+a preference the solver weighs. "off", "bad for me", "travelling" and the like mean
+keep it free; "only after 11:30 on Mondays" keeps that day's earlier hours free and
+leaves the other days alone. Dates ("on leave 10-20 August") are not a weekly
+preference and are sent back with a question rather than misread as times.
 """
 
 from __future__ import annotations
@@ -22,12 +25,20 @@ from .solver import Preference, Room, Window, faculty_key
 
 DAYS = {"mon": "Mon", "tue": "Tue", "wed": "Wed", "thu": "Thu", "fri": "Fri", "sat": "Sat"}
 DAY_RE = re.compile(r"\b(mon|tue|tues|wed|thu|thur|thurs|fri|sat)(?:day|nesday|sday|urday|rsday|s)?s?\b", re.IGNORECASE)
-HARD = re.compile(r"\b(can'?t|cannot|unavailable|not available|away|must|on leave|closed|shut)\b", re.IGNORECASE)
+HARD = re.compile(r"\b(can'?t|cannot|unavailable|not available|away|must|on leave|closed|shut|travell?ing|"
+                  r"out of station|on duty)\b", re.IGNORECASE)
 AVOID = re.compile(r"\b(no|not|avoid|without|free|don'?t|never|rather not|can'?t|cannot|unavailable|away|"
-                   r"on leave|closed|shut)\b", re.IGNORECASE)
+                   r"on leave|closed|shut|off|bad|busy|clash(?:es)?|conflicts?|travell?ing|out of station|on duty|"
+                   r"meetings?|difficult|impossible|(?:does ?n[o']?t|won'?t) (?:suit|work))\b", re.IGNORECASE)
+MONTH = (r"(?:jan|feb|mar|apr|may|jun|jul|aug|sep|sept|oct|nov|dec)[a-z]*")
+DATES = re.compile(rf"\b\d{{1,2}}(?:st|nd|rd|th)?\s*(?:{MONTH}\s*)?(?:-|–|to|until|till)\s*\d{{1,2}}(?:st|nd|rd|th)?\s+{MONTH}\b"
+                   rf"|\b{MONTH}\s+\d{{1,2}}(?:st|nd|rd|th)?\b|\b\d{{1,2}}(?:st|nd|rd|th)?\s+(?:of\s+)?{MONTH}\b",
+                   re.IGNORECASE)
 YEAR = {"1": "I", "2": "II", "3": "III", "4": "IV", "5": "V", "first": "I", "second": "II", "third": "III",
         "fourth": "IV", "fifth": "V"}
 BRANCHES = ("CSE", "CSD", "ECE", "ECD", "CND", "CLD", "CHD", "CGD")
+GENERIC = {"TECH", "YEAR", "YEARS", "SEMESTER", "FIRST", "SECOND", "THIRD", "FOURTH", "FIFTH", "AND", "THE", "FOR",
+           "STUDENTS", "CLASSES", "CLASS", "SHOULD", "HAVE", "WOULD", "LIKE", "PLEASE", "NOT", "ON", "SECTION"}
 
 
 class Parsed:
@@ -52,9 +63,18 @@ _T = r"(\d{1,2})(?:[:.](\d{2}))?\s*(am|pm|a\.m\.|p\.m\.)?"
 
 def _window(text: str) -> tuple[str | None, str | None, str]:
     t = text.lower()
-    if m := re.search(r"between\s+" + _T + r"\s+(?:and|to|-)\s+" + _T, t):
+    if m := re.search(r"between\s+" + _T + r"\s+(?:and|to|-|–)\s+" + _T, t):
         a = _clock(m[1], m[2], m[3] or m[6])
         return a, _clock(m[4], m[5], m[6]), f"between {a} and {_clock(m[4], m[5], m[6])}"
+    # a range: "2-4 pm", "from 2 to 4", "10:30 am - 12:00"; needs am/pm or "from", so "slot 2-3" is not a time
+    if (m := re.search(r"(from\s+)?\b" + _T + r"\s*(?:-|–|to|until|till)\s*" + _T, t)) and (m[1] or m[4] or m[7]):
+        a, b = _clock(m[2], m[3], m[4] or m[7]), _clock(m[5], m[6], m[7])
+        if a < b:
+            return a, b, f"between {a} and {b}"
+    if re.search(r"\bbefore lunch\b", t):
+        return None, "13:05", "before lunch"
+    if re.search(r"\bafter lunch\b", t):
+        return "14:00", None, "after lunch"
     if m := re.search(r"\b(?:before|until|till|earlier than)\s+" + _T, t):
         return None, _clock(*m.groups()), f"before {_clock(*m.groups())}"
     if m := re.search(r"\b(?:after|from|later than)\s+" + _T, t):
@@ -86,8 +106,14 @@ def _days(text: str) -> list[str] | None:
 
 
 def _cohorts(text: str, doc: OfferingDoc) -> list[str]:
-    named = [c.id for c in doc.cohorts if re.search(rf"\b{re.escape(c.name)}\b", text, re.IGNORECASE)]
+    named, spans = [], []
+    for c in doc.cohorts:
+        if m := re.search(rf"\b{re.escape(c.name)}\b", text, re.IGNORECASE):
+            named.append(c.id)
+            spans.append(m.span())
     for m in re.finditer(r"\bsection\s+\w+\b", text, re.IGNORECASE):  # "Section 2" inside a programme heading
+        if any(a <= m.start() < b for a, b in spans):  # part of a cohort named in full: that cohort only
+            continue
         named += [c.id for c in doc.cohorts
                   if re.search(rf"\b{re.escape(m[0])}\b", c.name, re.IGNORECASE) and c.id not in named]
     if named:  # a cohort by its own name ("Section 2"), as in the demo department
@@ -111,16 +137,21 @@ def _cohorts(text: str, doc: OfferingDoc) -> list[str]:
             continue
         if branches and not any(b in name for b in branches):
             continue
-        out.append(c.id)
-    return out
+        out.append(c)
+    # words of a programme's own name in the text ("M.Tech CASE first years"): only those programmes
+    said = set(re.findall(r"[A-Z]{3,}", t)) - GENERIC
+    overlap = {c.id: len(said & (set(re.findall(r"[A-Z]{3,}", c.name.upper())) - GENERIC)) for c in out}
+    best = max(overlap.values(), default=0)
+    return [c.id for c in out if not best or overlap[c.id] == best]
 
 
 def _faculty(text: str, doc: OfferingDoc) -> list[str]:
     names = {faculty_key(f): f for c in doc.courses.values() for f in c.faculty if f}
     t = faculty_key(text)
-    hits = [full for key, full in names.items() if len(key) > 4 and key in t]
+    # whole words, so short names ("Rao", "Das") count and do not match inside other words
+    hits = [full for key, full in names.items() if len(key) >= 3 and re.search(rf"\b{re.escape(key)}\b", t)]
     if not hits:  # a surname alone, when it is unique
-        words = set(re.findall(r"[a-z]{4,}", t))
+        words = set(re.findall(r"[a-z]{3,}", t))
         by_last = {}
         for key, full in names.items():
             by_last.setdefault(key.split()[-1], []).append(full)
@@ -139,9 +170,14 @@ def _courses(text: str, doc: OfferingDoc) -> list[str]:
 
 def parse(text: str, doc: OfferingDoc, rooms: list[Room], source: str = "") -> Parsed:
     out = Parsed()
+    if DATES.search(text):
+        out.error = ("That names dates. A semester preference is about days and times each week (\"no classes on "
+                     "Fridays\", \"not before 10 am\"); an absence on dates goes in as a request on the weekly timetable "
+                     "once the semester has started.")
+        return out
     days = _days(text)
     start, end, when = _window(text)
-    hard = bool(HARD.search(text))
+    hard = bool(HARD.search(re.sub(r"\baway from\b", "", text, flags=re.IGNORECASE)))
     room_ids = {r.id.lower(): r.id for r in rooms}
     room = next((room_ids[w.lower()] for w in re.findall(r"[A-Za-z0-9-]+", text) if w.lower() in room_ids), None)
     if room and re.search(r"\b(closed|shut|unavailable|renovation|maintenance|out of service)\b", text, re.IGNORECASE):
@@ -156,12 +192,23 @@ def parse(text: str, doc: OfferingDoc, rooms: list[Room], source: str = "") -> P
         return out
     avoid = bool(AVOID.search(text))
     mode = "avoid" if avoid else "prefer"
+    windows = [(start, end, when)]
+    if mode == "prefer" and days and (start or end) and re.search(r"\bonly\b", text, re.IGNORECASE):
+        # "only after 11:30 on Mondays": on those days, keep the other hours free; other days are not touched
+        mode, windows = "avoid", []
+        if start:
+            windows.append((None, start, f"before {start}"))
+        if end:
+            windows.append((end, None, f"after {end}"))
     targets: list[tuple[str, str, str]] = []
-    for f in _faculty(text, doc):
-        targets.append(("faculty", f, f))
+    faculty, courses = _faculty(text, doc), _courses(text, doc)
+    courses = [c for c in courses if not faculty or faculty[0] in doc.courses[c].faculty] or \
+        ([] if faculty else courses)
+    for code in courses:  # a course named (with or without its teacher): only that course
+        targets.append(("course", code, f"{code} {doc.courses[code].name}"))
     if not targets:
-        for code in _courses(text, doc):
-            targets.append(("course", code, f"{code} {doc.courses[code].name}"))
+        for f in faculty:
+            targets.append(("faculty", f, f))
     if not targets:
         for cid in _cohorts(text, doc):
             name = next(c.name for c in doc.cohorts if c.id == cid)
@@ -170,10 +217,11 @@ def parse(text: str, doc: OfferingDoc, rooms: list[Room], source: str = "") -> P
         out.error = "Who is this about? Name a faculty member, a course (code or name) or a programme and year (\"UG1 CSE\")."
         return out
     for kind, who, label in targets:
-        p = Preference(id=uuid.uuid4().hex[:8], target=kind, who=who, mode=mode, days=days, start=start, end=end,
-                       hard=hard, weight=3, text=text.strip(), source=source)
-        out.preferences.append(p)
-        out.summary.append(f"{'must' if hard else 'prefer to'} {'avoid' if mode == 'avoid' else 'keep'} "
-                           f"{label}{' on ' + ', '.join(days) if days else ''}{' ' + when if when else ''}"
-                           f"{' (hard)' if hard else ''}")
+        for start, end, when in windows:
+            p = Preference(id=uuid.uuid4().hex[:8], target=kind, who=who, mode=mode, days=days, start=start, end=end,
+                           hard=hard, weight=3, text=text.strip(), source=source)
+            out.preferences.append(p)
+            out.summary.append(f"{'must' if hard else 'prefer to'} {'avoid' if mode == 'avoid' else 'keep'} "
+                               f"{label}{' on ' + ', '.join(days) if days else ''}{' ' + when if when else ''}"
+                               f"{' (hard)' if hard else ''}")
     return out

@@ -22,6 +22,8 @@
   --color-warn: var(--warn);
   --color-bad: var(--bad);
   --color-info: var(--info);
+  --color-violet: var(--violet);
+  --color-teal: var(--teal);
 }
 
 /* "Paper and ink": a printed timetable on warm paper, one blue accent. */
@@ -38,6 +40,9 @@
   --warn: #a8660f;
   --bad: #b3443a;
   --info: #56708f;
+  /* inbox message types beyond the status tones */
+  --violet: #6b4c9a;
+  --teal: #2f7a78;
   color-scheme: light;
 }
 
@@ -54,6 +59,8 @@
   --warn: #d9a54a;
   --bad: #e0857a;
   --info: #9aaecb;
+  --violet: #b9a3e0;
+  --teal: #7cc4c0;
   color-scheme: dark;
 }
 
@@ -106,6 +113,31 @@ select:focus-visible {
   );
 }
 
+/* A room closed in that hour (maintenance, exams): red stripes. */
+.hatch-bad {
+  background-color: color-mix(in oklab, var(--bad) 10%, transparent);
+  background-image: repeating-linear-gradient(
+    135deg,
+    color-mix(in oklab, var(--bad) 45%, transparent) 0 4px,
+    transparent 4px 8px
+  );
+}
+
+/* A free slot while picking a new time: green stripes, the other way from the lunch hatch. */
+.free-slot {
+  background-color: color-mix(in oklab, var(--ok) 12%, transparent);
+  background-image: repeating-linear-gradient(
+    45deg,
+    color-mix(in oklab, var(--ok) 28%, transparent) 0 6px,
+    transparent 6px 12px
+  );
+  box-shadow: inset 0 0 0 1px color-mix(in oklab, var(--ok) 45%, transparent);
+}
+.free-slot:hover {
+  background-color: color-mix(in oklab, var(--ok) 26%, transparent);
+  box-shadow: inset 0 0 0 2px var(--ok);
+}
+
 .skeleton {
   background: var(--panel-2);
   animation: fade 1.4s ease-in-out infinite;
@@ -125,3 +157,10 @@ select:focus-visible {
     transition-duration: 0.01ms !important;
   }
 }
+
+/* knowledge graph: clash edges flow, the selected node pulses */
+@keyframes kg-dash { to { stroke-dashoffset: -18; } }
+.kg-flow { animation: kg-dash 1.2s linear infinite; }
+@keyframes kg-pulse { 0%, 100% { opacity: 0.9; } 50% { opacity: 0.35; } }
+.kg-pulse { animation: kg-pulse 1.6s ease-in-out infinite; }
+@media (prefers-reduced-motion: reduce) { .kg-flow, .kg-pulse { animation: none; } }

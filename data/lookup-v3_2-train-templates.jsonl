@@ -1,0 +1,32 @@
+{"id": "V32-001", "group": "free_hours", "template": "I need a 2 hr slot with {section.any} {when}", "tool": "free_hours", "args": {"teachers": ["me"], "sections": ["{section}"], "length": 2}}
+{"id": "V32-002", "group": "free_hours", "template": "find a 3-hour window when {section.any} and I are both free", "tool": "free_hours", "args": {"teachers": ["me"], "sections": ["{section}"], "length": 3}}
+{"id": "V32-003", "group": "free_hours", "template": "a 2 hr block for me, {section.any} and a lab that has {equipment} {when}?", "tool": "free_hours", "args": {"teachers": ["me"], "sections": ["{section}"], "length": 2, "kind": "lab", "equipment": ["{equipment}"]}}
+{"id": "V32-004", "group": "free_hours", "template": "when do {teacher.any} and I have a 2-hour window on {day.any}", "tool": "free_hours", "args": {"teachers": ["me", "{teacher}"], "days": ["{day}"], "length": 2}}
+{"id": "V32-005", "group": "free_hours", "template": "need 3 hrs straight with {section.any} in a lab {when}", "tool": "free_hours", "args": {"teachers": ["me"], "sections": ["{section}"], "length": 3, "kind": "lab"}}
+{"id": "V32-006", "group": "changes", "template": "is {teacher.any} away {when}?", "tool": "changes", "args": {"teacher": "{teacher}"}}
+{"id": "V32-007", "group": "changes", "template": "will {teacher.any} be on leave {when}", "tool": "changes", "args": {"teacher": "{teacher}"}}
+{"id": "V32-008", "group": "changes", "template": "{teacher.surname} on leave {when}?", "tool": "changes", "args": {"teacher": "{teacher}"}}
+{"id": "V32-009", "group": "unclear", "template": "is the exam hall booked on {day.any}", "tool": "unclear", "choice": {"tool": "free_rooms", "kind": "lecture", "unknown": ["exam hall"], "days": ["{day}"]}}
+{"id": "V32-010", "group": "unclear", "template": "examination hall free {when}?", "tool": "unclear", "choice": {"tool": "free_rooms", "kind": "lecture", "unknown": ["examination hall"]}}
+{"id": "V32-011", "group": "unclear", "template": "can we use the main hall at {time.any} on {day.any}", "tool": "unclear", "choice": {"tool": "free_rooms", "kind": "lecture", "unknown": ["main hall"], "days": ["{day}"], "hours": ["{time}"]}}
+{"id": "V32-012", "group": "unclear", "template": "is the library seminar room free {day.any} {part}", "tool": "unclear", "choice": {"tool": "free_rooms", "kind": "lecture", "unknown": ["library seminar room"], "days": ["{day}"], "part": "{part}"}}
+{"id": "V32-013", "group": "who_is_free", "template": "which sections are free on {day.any} {part} for an expert talk", "tool": "who_is_free", "args": {"days": ["{day}"], "part": "{part}", "sections": true}}
+{"id": "V32-014", "group": "who_is_free", "template": "can any batch attend a guest session at {time.any} on {day.any}?", "tool": "who_is_free", "args": {"days": ["{day}"], "slots": ["{time}"], "sections": true}}
+{"id": "V32-015", "group": "who_is_free", "template": "any class group free on {day.any} {part} for a seminar talk?", "tool": "who_is_free", "args": {"days": ["{day}"], "part": "{part}", "sections": true}}
+{"id": "V32-016", "group": "describe", "template": "list all the teachers in the department", "tool": "describe", "args": {"what": "teachers"}}
+{"id": "V32-017", "group": "describe", "template": "who all teach here?", "tool": "describe", "args": {"what": "teachers"}}
+{"id": "V32-018", "group": "describe", "template": "give me the names of every faculty member", "tool": "describe", "args": {"what": "teachers"}}
+{"id": "V32-019", "group": "free_hours", "template": "when are we and {teacher.any} both free {when}", "asker": "rep", "tool": "free_hours", "args": {"sections": ["me"], "teachers": ["{teacher}"]}}
+{"id": "V32-020", "group": "free_hours", "template": "can {teacher.any} meet us at a time we're all free on {day.any}?", "asker": "rep", "tool": "free_hours", "args": {"sections": ["me"], "teachers": ["{teacher}"], "days": ["{day}"]}}
+{"id": "V32-021", "group": "rule", "template": "what's the maximum number of back-to-back hours a teacher can take?", "tool": null}
+{"id": "V32-022", "group": "rule", "template": "how many consecutive classes may a section have in a day", "tool": null}
+{"id": "V32-023", "group": "rule", "template": "is there a cap on online lectures for a course", "tool": null}
+{"id": "V32-024", "group": "rule", "template": "are classes on saturday permitted", "tool": null}
+{"id": "V32-025", "group": "rule", "template": "what notice is required before cancelling a lecture?", "tool": null}
+{"id": "V32-026", "group": "other", "template": "thanks, that helps", "tool": null}
+{"id": "V32-027", "group": "other", "template": "ok great", "tool": null}
+{"id": "V32-028", "group": "request", "template": "shift my {day.any} lecture to {day2.any} {part}", "tool": null}
+{"id": "V32-029", "group": "request", "template": "please cancel my {my_course} class {when}", "tool": null}
+{"id": "V32-030", "group": "request", "template": "I'd like an extra {my_course} lecture on {day.any}", "tool": null}
+{"id": "V32-031", "group": "request", "template": "swap my {day.any} slot with {teacher.any}'s", "tool": null}
+{"id": "V32-032", "group": "request", "template": "book {lab.any} for my practical on {day.any} at {time.any}", "tool": null}

@@ -1,0 +1,838 @@
+{
+  "train": {
+    "rows": 7482,
+    "aligned": "7390/7482 (99%)",
+    "by_tier": {
+      "single": "2922/3000 (97%)",
+      "nested": "877/881 (100%)",
+      "non_compile": "1125/1125 (100%)",
+      "multi": "1856/1861 (100%)",
+      "linked": "610/615 (99%)"
+    },
+    "worst_generators": {
+      "multi_firmness": "0/1 (0%)",
+      "move_at": "0/4 (0%)",
+      "move_other_day": "0/2 (0%)",
+      "needs_room_two": "0/1 (0%)",
+      "relation_same_day": "0/1 (0%)",
+      "relation_same_time": "0/1 (0%)",
+      "any_of": "1/4 (25%)",
+      "relation_spread": "1/2 (50%)",
+      "cancel_extra": "1/2 (50%)",
+      "relation_different_day": "1/2 (50%)",
+      "exception": "87/132 (66%)",
+      "paired_weeks": "3/4 (75%)"
+    },
+    "missing_by_role": {
+      "to.days": 143,
+      "time.days": 15,
+      "time.before": 12,
+      "which.course": 11,
+      "to.at": 10,
+      "max_consecutive": 7,
+      "n": 4,
+      "other.course": 2,
+      "time.after": 1,
+      "days": 1,
+      "which.kind": 1,
+      "period.weeks": 1
+    },
+    "spans_by_role": {
+      "time.days": 4701,
+      "which.kind": 2946,
+      "which.day": 2897,
+      "which.time": 2867,
+      "period.weeks": 2839,
+      "to.days": 2532,
+      "which.course": 2431,
+      "to.part": 1862,
+      "time.part": 1328,
+      "n": 728,
+      "theirs.owner": 708,
+      "mine.day": 692,
+      "mine.time": 692,
+      "theirs.day": 692,
+      "theirs.time": 692,
+      "max_consecutive": 656,
+      "courses": 579,
+      "time.at": 534,
+      "to.at": 349,
+      "time.before": 342,
+      "period.from_week": 339,
+      "other.kind": 314,
+      "other.course": 312,
+      "time.after": 307,
+      "club": 305,
+      "start": 298,
+      "end": 298,
+      "attendees": 298,
+      "day": 277,
+      "activity": 243,
+      "theirs.kind": 198,
+      "mine.course": 181,
+      "mine.kind": 171,
+      "room_kind": 162,
+      "equipment": 130,
+      "to.before": 111,
+      "to.after": 111,
+      "room": 110,
+      "period.except_weeks": 94,
+      "period.to_week": 79,
+      "cohorts": 74,
+      "days": 67,
+      "date": 47,
+      "who": 35,
+      "which.group": 2
+    }
+  },
+  "val": {
+    "rows": 749,
+    "aligned": "745/749 (99%)",
+    "by_tier": {
+      "single": "296/300 (99%)",
+      "linked": "61/61 (100%)",
+      "multi": "187/187 (100%)",
+      "non_compile": "112/112 (100%)",
+      "nested": "89/89 (100%)"
+    },
+    "worst_generators": {
+      "exception": "5/7 (71%)",
+      "room_issue": "26/28 (93%)",
+      "term_span": "8/8 (100%)",
+      "unavailability": "8/8 (100%)",
+      "limit_firmness": "20/20 (100%)",
+      "encval-composed_linked": "44/44 (100%)",
+      "only_times": "9/9 (100%)",
+      "multi": "9/9 (100%)",
+      "vague": "27/27 (100%)",
+      "encval-composed_multi": "165/165 (100%)",
+      "clash_report": "34/34 (100%)",
+      "encval-composed_nested": "82/82 (100%)"
+    },
+    "missing_by_role": {
+      "to.days": 6,
+      "which.kind": 2
+    },
+    "spans_by_role": {
+      "time.days": 501,
+      "which.day": 319,
+      "which.time": 318,
+      "period.weeks": 308,
+      "which.kind": 292,
+      "to.days": 277,
+      "which.course": 252,
+      "to.part": 192,
+      "time.part": 133,
+      "theirs.owner": 79,
+      "mine.day": 76,
+      "mine.time": 76,
+      "theirs.day": 76,
+      "theirs.time": 76,
+      "n": 70,
+      "courses": 70,
+      "time.at": 54,
+      "max_consecutive": 54,
+      "to.at": 42,
+      "time.before": 37,
+      "club": 34,
+      "time.after": 33,
+      "day": 33,
+      "other.course": 32,
+      "other.kind": 32,
+      "start": 30,
+      "end": 30,
+      "attendees": 30,
+      "activity": 28,
+      "period.from_week": 26,
+      "theirs.kind": 25,
+      "mine.kind": 23,
+      "to.before": 22,
+      "to.after": 22,
+      "mine.course": 20,
+      "room_kind": 18,
+      "room": 17,
+      "equipment": 12,
+      "period.to_week": 8,
+      "days": 6,
+      "period.except_weeks": 5,
+      "cohorts": 4,
+      "date": 3
+    }
+  },
+  "composed": {
+    "rows": 294,
+    "aligned": "294/294 (100%)",
+    "by_tier": {
+      "multi": "149/149 (100%)",
+      "nested": "95/95 (100%)",
+      "linked": "50/50 (100%)"
+    },
+    "worst_generators": {
+      "suite-composed_multi": "149/149 (100%)",
+      "suite-composed_nested": "95/95 (100%)",
+      "suite-composed_linked": "50/50 (100%)"
+    },
+    "missing_by_role": {},
+    "spans_by_role": {
+      "time.days": 285,
+      "period.weeks": 242,
+      "which.day": 215,
+      "which.time": 215,
+      "which.course": 207,
+      "which.kind": 199,
+      "to.days": 191,
+      "to.part": 120,
+      "time.part": 117,
+      "n": 88,
+      "mine.day": 61,
+      "mine.time": 61,
+      "theirs.owner": 61,
+      "theirs.day": 61,
+      "theirs.time": 61,
+      "mine.kind": 42,
+      "theirs.kind": 35,
+      "period.from_week": 34,
+      "time.at": 32,
+      "max_consecutive": 26,
+      "other.course": 24,
+      "other.kind": 24,
+      "time.before": 20,
+      "time.after": 20,
+      "to.at": 19,
+      "period.except_weeks": 6,
+      "to.before": 2,
+      "to.after": 2
+    }
+  },
+  "test": {
+    "rows": 417,
+    "aligned": "417/417 (100%)",
+    "by_tier": {
+      "non_compile": "98/98 (100%)",
+      "single": "319/319 (100%)"
+    },
+    "worst_generators": {
+      "preference": "89/89 (100%)",
+      "clash_report": "34/34 (100%)",
+      "cancel": "14/14 (100%)",
+      "unavailability": "92/92 (100%)",
+      "room_issue": "46/46 (100%)",
+      "extra_class": "14/14 (100%)",
+      "unavailable_relative": "14/14 (100%)",
+      "load_limit": "14/14 (100%)",
+      "avoid_between": "14/14 (100%)",
+      "club_booking": "18/18 (100%)",
+      "move": "14/14 (100%)",
+      "swap": "14/14 (100%)"
+    },
+    "missing_by_role": {},
+    "spans_by_role": {
+      "time.days": 329,
+      "period.weeks": 103,
+      "time.at": 71,
+      "courses": 68,
+      "which.course": 68,
+      "which.kind": 60,
+      "time.before": 45,
+      "time.part": 40,
+      "equipment": 34,
+      "which.day": 28,
+      "which.time": 28,
+      "to.days": 20,
+      "activity": 18,
+      "time.after": 17,
+      "day": 17,
+      "room": 16,
+      "max_consecutive": 14,
+      "theirs.owner": 14,
+      "club": 13,
+      "start": 13,
+      "end": 13,
+      "attendees": 13,
+      "mine.day": 13,
+      "mine.time": 13,
+      "theirs.day": 13,
+      "theirs.time": 13,
+      "to.at": 9,
+      "to.part": 9,
+      "mine.kind": 8,
+      "theirs.kind": 6,
+      "to.before": 2,
+      "to.after": 2,
+      "date": 1
+    }
+  },
+  "suite-answered": {
+    "rows": 40,
+    "aligned": "40/40 (100%)",
+    "by_tier": {
+      "single": "40/40 (100%)"
+    },
+    "worst_generators": {
+      "answered": "40/40 (100%)"
+    },
+    "missing_by_role": {},
+    "spans_by_role": {
+      "time.days": 20,
+      "period.weeks": 20,
+      "which.course": 20,
+      "which.day": 20,
+      "which.time": 20,
+      "to.days": 20,
+      "which.kind": 12,
+      "to.part": 11,
+      "to.at": 6,
+      "to.before": 3,
+      "to.after": 3
+    }
+  },
+  "suite-choices": {
+    "rows": 40,
+    "aligned": "40/40 (100%)",
+    "by_tier": {
+      "nested": "40/40 (100%)"
+    },
+    "worst_generators": {
+      "choices": "40/40 (100%)"
+    },
+    "missing_by_role": {},
+    "spans_by_role": {
+      "to.days": 60,
+      "which.day": 40,
+      "which.time": 40,
+      "to.part": 40,
+      "period.weeks": 40,
+      "which.kind": 18
+    }
+  },
+  "suite-clubs": {
+    "rows": 40,
+    "aligned": "40/40 (100%)",
+    "by_tier": {
+      "single": "40/40 (100%)"
+    },
+    "worst_generators": {
+      "club_more": "40/40 (100%)"
+    },
+    "missing_by_role": {},
+    "spans_by_role": {
+      "club": 40,
+      "activity": 40,
+      "day": 40,
+      "start": 40,
+      "end": 40,
+      "attendees": 40,
+      "room_kind": 40
+    }
+  },
+  "suite-compositional": {
+    "rows": 14,
+    "aligned": "14/14 (100%)",
+    "by_tier": {
+      "multi": "2/2 (100%)",
+      "single": "6/6 (100%)",
+      "nested": "3/3 (100%)",
+      "linked": "3/3 (100%)"
+    },
+    "worst_generators": {
+      "union_of_windows": "1/1 (100%)",
+      "except_weeks": "1/1 (100%)",
+      "or_over_days": "1/1 (100%)",
+      "or_over_windows": "1/1 (100%)",
+      "ranked": "1/1 (100%)",
+      "relation_after": "1/1 (100%)",
+      "relation_different_day": "1/1 (100%)",
+      "limit_per_day": "1/1 (100%)",
+      "limit_days_per_week": "1/1 (100%)",
+      "limit_gap": "1/1 (100%)",
+      "fallback": "1/1 (100%)",
+      "day_per_week": "1/1 (100%)"
+    },
+    "missing_by_role": {},
+    "spans_by_role": {
+      "which.kind": 7,
+      "to.days": 7,
+      "time.days": 6,
+      "to.part": 6,
+      "which.course": 5,
+      "period.weeks": 4,
+      "time.part": 3,
+      "which.day": 3,
+      "n": 3,
+      "which.time": 2,
+      "other.course": 2,
+      "other.kind": 2,
+      "period.except_weeks": 1
+    }
+  },
+  "suite-compound": {
+    "rows": 40,
+    "aligned": "40/40 (100%)",
+    "by_tier": {
+      "multi": "40/40 (100%)"
+    },
+    "worst_generators": {
+      "compound": "40/40 (100%)"
+    },
+    "missing_by_role": {},
+    "spans_by_role": {
+      "which.day": 60,
+      "which.time": 60,
+      "period.weeks": 37,
+      "which.kind": 26,
+      "time.days": 20,
+      "to.days": 20,
+      "which.course": 20,
+      "to.part": 14,
+      "time.part": 13,
+      "time.after": 4,
+      "to.before": 3,
+      "to.after": 3,
+      "to.at": 3,
+      "time.before": 2
+    }
+  },
+  "suite-dated": {
+    "rows": 40,
+    "aligned": "40/40 (100%)",
+    "by_tier": {
+      "single": "40/40 (100%)"
+    },
+    "worst_generators": {
+      "dated": "40/40 (100%)"
+    },
+    "missing_by_role": {},
+    "spans_by_role": {
+      "time.days": 40,
+      "time.part": 20,
+      "time.at": 20,
+      "period.weeks": 20
+    }
+  },
+  "suite-difficulty": {
+    "rows": 40,
+    "aligned": "40/40 (100%)",
+    "by_tier": {
+      "single": "40/40 (100%)"
+    },
+    "worst_generators": {
+      "difficulty": "40/40 (100%)"
+    },
+    "missing_by_role": {},
+    "spans_by_role": {
+      "time.days": 40,
+      "time.part": 22,
+      "time.before": 9,
+      "time.after": 9
+    }
+  },
+  "suite-exceptions": {
+    "rows": 40,
+    "aligned": "40/40 (100%)",
+    "by_tier": {
+      "multi": "20/20 (100%)",
+      "single": "20/20 (100%)"
+    },
+    "worst_generators": {
+      "exception": "40/40 (100%)"
+    },
+    "missing_by_role": {},
+    "spans_by_role": {
+      "time.days": 71,
+      "period.weeks": 40,
+      "who": 20
+    }
+  },
+  "suite-firmness": {
+    "rows": 80,
+    "aligned": "80/80 (100%)",
+    "by_tier": {
+      "single": "80/80 (100%)"
+    },
+    "worst_generators": {
+      "firmness": "40/40 (100%)",
+      "only_firmness": "40/40 (100%)"
+    },
+    "missing_by_role": {},
+    "spans_by_role": {
+      "time.days": 164,
+      "time.part": 20,
+      "time.after": 12,
+      "time.before": 9
+    }
+  },
+  "suite-limit_firmness": {
+    "rows": 40,
+    "aligned": "40/40 (100%)",
+    "by_tier": {
+      "single": "40/40 (100%)"
+    },
+    "worst_generators": {
+      "limit_firmness": "40/40 (100%)"
+    },
+    "missing_by_role": {},
+    "spans_by_role": {
+      "n": 40
+    }
+  },
+  "suite-limits": {
+    "rows": 40,
+    "aligned": "40/40 (100%)",
+    "by_tier": {
+      "single": "40/40 (100%)"
+    },
+    "worst_generators": {
+      "limits": "40/40 (100%)"
+    },
+    "missing_by_role": {},
+    "spans_by_role": {
+      "n": 40
+    }
+  },
+  "suite-move_pairs": {
+    "rows": 40,
+    "aligned": "40/40 (100%)",
+    "by_tier": {
+      "single": "40/40 (100%)"
+    },
+    "worst_generators": {
+      "move_pairs": "40/40 (100%)"
+    },
+    "missing_by_role": {},
+    "spans_by_role": {
+      "which.day": 40,
+      "which.time": 40,
+      "to.days": 40,
+      "to.part": 20,
+      "which.kind": 19,
+      "to.at": 16,
+      "to.before": 4,
+      "to.after": 4
+    }
+  },
+  "suite-moves": {
+    "rows": 40,
+    "aligned": "40/40 (100%)",
+    "by_tier": {
+      "single": "40/40 (100%)"
+    },
+    "worst_generators": {
+      "which_to": "40/40 (100%)"
+    },
+    "missing_by_role": {},
+    "spans_by_role": {
+      "to.days": 40,
+      "which.kind": 22,
+      "which.course": 20,
+      "which.day": 20,
+      "which.time": 20,
+      "to.part": 19,
+      "to.at": 17,
+      "to.before": 4,
+      "to.after": 4
+    }
+  },
+  "suite-multi": {
+    "rows": 40,
+    "aligned": "40/40 (100%)",
+    "by_tier": {
+      "multi": "40/40 (100%)"
+    },
+    "worst_generators": {
+      "multi": "40/40 (100%)"
+    },
+    "missing_by_role": {},
+    "spans_by_role": {
+      "time.days": 40,
+      "which.day": 20,
+      "which.time": 20,
+      "to.days": 20,
+      "period.weeks": 20,
+      "max_consecutive": 20,
+      "which.kind": 12,
+      "time.part": 12,
+      "to.part": 10,
+      "to.before": 5,
+      "to.after": 5,
+      "to.at": 5,
+      "time.after": 3,
+      "time.before": 3
+    }
+  },
+  "suite-only_times": {
+    "rows": 40,
+    "aligned": "40/40 (100%)",
+    "by_tier": {
+      "single": "40/40 (100%)"
+    },
+    "worst_generators": {
+      "only_times": "40/40 (100%)"
+    },
+    "missing_by_role": {},
+    "spans_by_role": {
+      "time.part": 40,
+      "period.from_week": 40
+    }
+  },
+  "suite-out_for_me": {
+    "rows": 40,
+    "aligned": "40/40 (100%)",
+    "by_tier": {
+      "single": "40/40 (100%)"
+    },
+    "worst_generators": {
+      "out_for_me": "40/40 (100%)"
+    },
+    "missing_by_role": {},
+    "spans_by_role": {
+      "time.days": 40,
+      "time.part": 20
+    }
+  },
+  "suite-periods": {
+    "rows": 40,
+    "aligned": "40/40 (100%)",
+    "by_tier": {
+      "single": "40/40 (100%)"
+    },
+    "worst_generators": {
+      "relative_span": "40/40 (100%)"
+    },
+    "missing_by_role": {},
+    "spans_by_role": {
+      "time.days": 40,
+      "time.part": 20
+    }
+  },
+  "suite-reasons": {
+    "rows": 40,
+    "aligned": "40/40 (100%)",
+    "by_tier": {
+      "single": "40/40 (100%)"
+    },
+    "worst_generators": {
+      "reason_firmness": "40/40 (100%)"
+    },
+    "missing_by_role": {},
+    "spans_by_role": {
+      "time.days": 123
+    }
+  },
+  "suite-relation_pairs": {
+    "rows": 40,
+    "aligned": "40/40 (100%)",
+    "by_tier": {
+      "linked": "40/40 (100%)"
+    },
+    "worst_generators": {
+      "relation_pairs": "40/40 (100%)"
+    },
+    "missing_by_role": {},
+    "spans_by_role": {
+      "which.course": 40,
+      "which.kind": 40,
+      "other.course": 20,
+      "other.kind": 20
+    }
+  },
+  "suite-relations": {
+    "rows": 40,
+    "aligned": "40/40 (100%)",
+    "by_tier": {
+      "linked": "40/40 (100%)"
+    },
+    "worst_generators": {
+      "relations": "40/40 (100%)"
+    },
+    "missing_by_role": {},
+    "spans_by_role": {
+      "which.course": 40,
+      "which.kind": 40,
+      "other.course": 20,
+      "other.kind": 20
+    }
+  },
+  "suite-same_day_part": {
+    "rows": 40,
+    "aligned": "40/40 (100%)",
+    "by_tier": {
+      "single": "40/40 (100%)"
+    },
+    "worst_generators": {
+      "same_day_part": "40/40 (100%)"
+    },
+    "missing_by_role": {},
+    "spans_by_role": {
+      "which.day": 40,
+      "which.time": 40,
+      "to.days": 40,
+      "to.part": 24,
+      "which.course": 20,
+      "which.kind": 19,
+      "to.at": 16
+    }
+  },
+  "suite-terms": {
+    "rows": 40,
+    "aligned": "40/40 (100%)",
+    "by_tier": {
+      "single": "40/40 (100%)"
+    },
+    "worst_generators": {
+      "term_span": "40/40 (100%)"
+    },
+    "missing_by_role": {},
+    "spans_by_role": {
+      "time.days": 40,
+      "time.part": 40
+    }
+  },
+  "suite-test-noisy": {
+    "rows": 417,
+    "aligned": "417/417 (100%)",
+    "by_tier": {
+      "single": "319/319 (100%)",
+      "non_compile": "98/98 (100%)"
+    },
+    "worst_generators": {
+      "preference": "89/89 (100%)",
+      "unavailability": "92/92 (100%)",
+      "room_issue": "46/46 (100%)",
+      "move": "14/14 (100%)",
+      "avoid_between": "14/14 (100%)",
+      "policy_question": "14/14 (100%)",
+      "unavailable_relative": "14/14 (100%)",
+      "swap": "14/14 (100%)",
+      "clash_report": "34/34 (100%)",
+      "withdraw": "14/14 (100%)",
+      "load_limit": "14/14 (100%)",
+      "extra_class": "14/14 (100%)"
+    },
+    "missing_by_role": {},
+    "spans_by_role": {
+      "time.days": 329,
+      "period.weeks": 103,
+      "time.at": 71,
+      "which.course": 68,
+      "courses": 68,
+      "which.kind": 60,
+      "time.before": 45,
+      "equipment": 34,
+      "which.day": 28,
+      "which.time": 28,
+      "time.part": 28,
+      "to.days": 20,
+      "activity": 18,
+      "time.after": 17,
+      "day": 17,
+      "room": 16,
+      "theirs.owner": 14,
+      "max_consecutive": 14,
+      "mine.day": 13,
+      "mine.time": 13,
+      "theirs.day": 13,
+      "theirs.time": 13,
+      "club": 13,
+      "start": 13,
+      "end": 13,
+      "attendees": 13,
+      "to.at": 9,
+      "mine.kind": 8,
+      "theirs.kind": 6,
+      "to.before": 2,
+      "to.after": 2,
+      "to.part": 2,
+      "date": 1
+    }
+  },
+  "suite-test-typo": {
+    "rows": 417,
+    "aligned": "414/417 (99%)",
+    "by_tier": {
+      "single": "316/319 (99%)",
+      "non_compile": "98/98 (100%)"
+    },
+    "worst_generators": {
+      "club_booking": "17/18 (94%)",
+      "preference": "88/89 (99%)",
+      "unavailability": "91/92 (99%)",
+      "move": "14/14 (100%)",
+      "cancel": "14/14 (100%)",
+      "extra_class": "14/14 (100%)",
+      "clash_report": "34/34 (100%)",
+      "room_issue": "46/46 (100%)",
+      "out_of_scope": "12/12 (100%)",
+      "load_limit": "14/14 (100%)",
+      "unavailable_relative": "14/14 (100%)",
+      "withdraw": "14/14 (100%)"
+    },
+    "missing_by_role": {
+      "time.days": 2,
+      "activity": 1
+    },
+    "spans_by_role": {
+      "time.days": 327,
+      "period.weeks": 103,
+      "time.at": 71,
+      "which.course": 68,
+      "courses": 68,
+      "which.kind": 60,
+      "time.before": 45,
+      "time.part": 37,
+      "equipment": 34,
+      "which.day": 28,
+      "which.time": 28,
+      "to.days": 20,
+      "activity": 17,
+      "time.after": 17,
+      "day": 17,
+      "room": 16,
+      "max_consecutive": 14,
+      "theirs.owner": 14,
+      "club": 13,
+      "start": 13,
+      "end": 13,
+      "attendees": 13,
+      "mine.day": 13,
+      "mine.time": 13,
+      "theirs.day": 13,
+      "theirs.time": 13,
+      "to.at": 9,
+      "mine.kind": 8,
+      "theirs.kind": 6,
+      "to.part": 3,
+      "to.before": 2,
+      "to.after": 2,
+      "date": 1
+    }
+  },
+  "suite-vague": {
+    "rows": 40,
+    "aligned": "40/40 (100%)",
+    "by_tier": {
+      "non_compile": "40/40 (100%)"
+    },
+    "worst_generators": {
+      "vague": "40/40 (100%)"
+    },
+    "missing_by_role": {},
+    "spans_by_role": {}
+  },
+  "suite-week_patterns": {
+    "rows": 40,
+    "aligned": "40/40 (100%)",
+    "by_tier": {
+      "single": "40/40 (100%)"
+    },
+    "worst_generators": {
+      "week_patterns": "40/40 (100%)"
+    },
+    "missing_by_role": {},
+    "spans_by_role": {
+      "time.days": 40,
+      "time.part": 20,
+      "period.except_weeks": 20,
+      "period.from_week": 20
+    }
+  }
+}

@@ -1,5 +1,5 @@
 import clsx from "clsx";
-import { colorFor } from "../lib/meta";
+import { classTile } from "./classTile";
 import type { SemCalendar, SemMeeting } from "../lib/types";
 
 const ROW = 92; // px per lecture slot
@@ -167,28 +167,23 @@ export function SemesterGrid({
                 </div>
               ))}
               {lanes(day).map(({ m, r0, r1, lane, of }) => {
-                const c = colorFor(m.course);
                 const top = rs[r0].top + 2;
                 const h = rs[r1].top + rs[r1].height - rs[r0].top - 4;
                 const opt = optional?.has(m.component);
+                const tile = classTile(m.course, { changed: changed?.has(m.component), dashed: opt, tint: m.kind === "lecture" ? 12 : 7 });
                 const exact = m.kind !== "lecture";
                 return (
                   <button
                     key={`${m.component}-${m.day}`}
                     onClick={() => onPick?.(m)}
                     title={`${m.course} ${m.name} · ${m.label} · ${m.start}-${m.end} · ${m.rooms.join(", ")}${m.half !== "full" ? ` · ${m.half}` : ""}`}
-                    className={clsx(
-                      "absolute flex flex-col justify-start overflow-hidden rounded px-1.5 py-1 text-left",
-                      opt ? "border border-dashed" : "border-l-[3px]",
-                      changed?.has(m.component) && "outline-2 outline-offset-1 outline-brand",
-                    )}
+                    className={clsx("absolute flex flex-col justify-start px-1.5 py-1", tile.className)}
                     style={{
                       top,
                       height: h,
                       left: `calc(${(lane / of) * 100}% + 2px)`,
                       width: `calc(${100 / of}% - 4px)`,
-                      borderColor: c,
-                      background: opt ? "var(--panel)" : `color-mix(in oklab, ${c} ${m.kind === "lecture" ? 12 : 7}%, var(--panel))`,
+                      ...tile.style,
                     }}
                   >
                     <p className="truncate text-[11px] font-semibold leading-tight">

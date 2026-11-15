@@ -155,7 +155,8 @@ class Registry:
                 folder = self.folder / spec["id"] / "semester"
                 # its semester plan starts from the same department (semester.demo derives the document)
                 world = World(parser_mode=self.parser_mode, instance=inst, world_id=spec["id"],
-                              semester_dir=folder, study=self.study, seed_history=self.seed_history)
+                              semester_dir=folder, study=self.study, seed_history=self.seed_history,
+                              campus=doc.source == campus_offerings().source)
                 entry.update(world=world, status="ready")
             except Exception as ex:  # noqa: BLE001 - shown on the world's card
                 entry.update(status="error", error=f"could not build this world: {type(ex).__name__}: {ex}")

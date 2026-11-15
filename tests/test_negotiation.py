@@ -1,8 +1,10 @@
 """Interpretation layer: ledger, priorities, explanations, the resolution
 ladder and the oracle. No API calls (template explanations, scripted replies)."""
 
+import json
 import random
 from collections import Counter
+from pathlib import Path
 
 import pytest
 
@@ -282,6 +284,159 @@ def test_family_scenarios_are_reproducible_and_cover_every_family():
     assert simulators(build("contention", 1, seed=11))[owner].rng is None  # legacy: deterministic
 
 
+# -- hard tier --------------------------------------------------------------------------
+
+
+def test_unusual_family_only_takes_another_time_of_day():
+    kw = {"stated_slots": [5, 6, 7], "all_slots": list(range(8)), "conceded_recently": False}
+    odd = apply_family(_profile(), "unusual", **kw)
+    assert [(w.days, w.slots) for w in odd.windows] == [(["Wed"], [0, 1, 2, 3, 4])] and not odd.reveal
+    assert not apply_family(Profile(owner="F-201"), "unusual", **kw).windows  # no flexibility is invented
+
+
+def test_hard_scenarios_are_reproducible_on_one_worker():
+    a = build("multi", 1, seed=5, family="unusual", prefix="H", workers=1)
+    b = build("multi", 1, seed=5, family="unusual", prefix="H", workers=1)
+    assert a.id == "H-001-multi" and a == b  # baseline and oracle included
+
+
+def test_multi_asks_one_of_three_stakeholders():
+    sc = build("multi", 1, seed=5, prefix="H", workers=1)
+    assert len(sc.profiles) == 3 and sc.oracle.status == "agree" and sc.oracle.concessions == 1
+    out = _resolve(sc)
+    assert out.status == "agreed" and len({e.stakeholder for e in out.concessions}) == 1
+
+
+def test_joint_correction_set_is_agreed_one_owner_at_a_time():
+    """Every minimal correction set has two owners: each is offered their own part of the same verified
+    repair (naming the other), and what the first agrees to is held while the second is asked."""
+    sc = build("joint", 1, seed=5, prefix="H", workers=1)
+    assert sc.oracle.status == "agree" and sc.oracle.concessions == 2
+    out = _resolve(sc)
+    assert out.status == "agreed" and out.valid
+    first = out.messages[0]
+    assert all(len(o.joint) == 1 and o.joint[0] != first.to for o in first.offers)
+    assert all({cons.owner for cons in sc.constraints if cons.id in o.drop} == {first.to} for o in first.offers)
+    assert len({e.stakeholder for e in out.concessions}) == 2
+
+
+def test_counter_proposal_in_a_joint_conflict_is_checked_as_part_of_the_repair():
+    """Alone, one owner's move cannot end a conflict two must give way in: their own proposal is verified
+    with the other part of the repair given up too, not rejected for leaving the rest of the conflict."""
+    sc = build("joint", 1, seed=5, prefix="H", workers=1)
+    sims = {p.owner: Simulator(sc.instance, p) for p in sc.profiles}
+
+    class Proposer:
+        def __init__(self, owner):
+            self.owner, self.done = owner, False
+
+        def respond(self, message):
+            if self.done:
+                return sims[self.owner].respond(message)
+            self.done = True
+            (_sid, p), = message.offers[0].placements.items()  # the same place, proposed in their own words
+            return Reply(decision="propose", proposal=p)
+
+    neg = Negotiator(sc.instance, priority=PriorityModel(sc.instance, baseline=sc.baseline),
+                     explainer=Explainer(sc.instance), time_limit=20, workers=1)
+    out = neg.resolve(sc.constraints, {o: Proposer(o) for o in sims}, baseline=sc.baseline, week=sc.week)
+    assert out.proposals >= 1 and out.proposals_verified == out.proposals
+
+
+def test_a_neighbourhood_too_small_falls_back_to_the_whole_timetable(monkeypatch):
+    """A conflict that only the classes held in place create is not negotiated: the negotiation moves to the
+    whole timetable and ends as it would there."""
+    from pathlib import Path
+
+    import agents.negotiation as N
+    from evaluation.benchmark import load
+
+    path = Path(__file__).resolve().parents[1] / "data" / "scenarios.jsonl"
+    sc = next(s for s in load(path) if s.id == "S-017-contention")  # an equivalent lab: nobody gives way
+    whole = _resolve(sc, local=False)
+    monkeypatch.setattr(N, "neighbourhood", lambda *a, **k: set())  # every class held where it is
+    out = _resolve(sc)
+    assert out.status == whole.status == "feasible" and any("whole timetable" in t for t in out.trace)
+
+
+def test_declined_options_move_the_search_to_other_parts_of_the_week():
+    """Each option is in its own (day, part of day); a declined one rules its part out for the next round,
+    which offers the rest of the asked time of day first and then the other part of the day."""
+    inst, cons = uc3_lab_contention()
+
+    class No:
+        def __init__(self):
+            self.seen = []
+
+        def respond(self, message):
+            self.seen.append(message.offers)
+            return Reply(decision="reject")
+
+    a, b = No(), No()
+    neg = Negotiator(inst, priority=PriorityModel(inst), explainer=Explainer(inst), workers=1)
+    neg.resolve(cons, {"F-201": a, "F-202": b})
+    asked = a if a.seen else b
+    band = neg._band
+    rounds = [[(sid, p.day, band(p.slot)) for o in offers for sid, p in o.placements.items()] for offers in asked.seen]
+    assert all(len(set(r)) == len(r) for r in rounds)  # distinct parts within a round
+    assert not set(rounds[0]) & set(rounds[1])  # declined parts are not offered again
+
+
+@pytest.mark.slow
+def test_scale_plants_contention_in_a_generated_department():
+    sc = build("scale", 1, seed=5, prefix="H", workers=1)
+    assert len(sc.instance.sessions) > 60 and sc.oracle.status in ("agree", "escalate")
+    assert {c.room.equipment[0] for c in sc.planted if c.room} == {"routers"}
+
+
+@pytest.mark.slow
+def test_contention_is_negotiated_in_the_full_department(monkeypatch):
+    """The brief's department (about 210 sessions): the whole timetable does not answer within the solver's
+    time limit, the conflict's neighbourhood does, and the conflict is proved on its own classes."""
+    import evaluation.benchmark as B
+    from core.generator import generate_department
+    from core.instance import policy_constraints
+    from core.solver import TimetableSolver
+
+    monkeypatch.setattr(B, "generate_department", lambda seed, **kw: generate_department(seed))
+    parts = B.scale(random.Random(5), "FULL")
+    inst = parts["inst"]
+    base = policy_constraints(inst)
+    baseline = TimetableSolver(inst, base, time_limit=300, workers=1).solve()
+    assert len(inst.sessions) > 200 and baseline.ok
+    neg = Negotiator(inst, priority=PriorityModel(inst, baseline=baseline.assignment), explainer=Explainer(inst),
+                     time_limit=20, workers=1, presolve=False)
+    out = neg.resolve([*base, *parts["planted"]], {p.owner: Simulator(inst, p) for p in parts["profiles"]},
+                      baseline=baseline.assignment)
+    assert out.status in ("agreed", "escalated") and not any("not checked" in t for t in out.trace)
+    if out.status == "agreed":
+        assert out.valid
+
+
+def test_pipeline_scores_what_the_negotiator_scores():
+    """The scenario through the request pipeline (submit one request after another, approve) ends where the
+    negotiator alone does: a pending change is not cheaper to keep than a later request is to move."""
+    from pathlib import Path
+
+    from evaluation.benchmark import load
+    from evaluation.negotiation import run_negotiation, run_pipeline
+
+    # S-007: the two requests cost the same to move; counted against R-A's waiting change, R-B looked cheaper
+    path = Path(__file__).resolve().parents[1] / "data" / "scenarios.jsonl"
+    sc = next(s for s in load(path) if s.id == "S-007-contention")
+    direct = run_negotiation(sc, "ours", ConcessionLedger(), None, None)
+    piped = run_pipeline(sc, "ours", ConcessionLedger(), None, None)
+    assert piped["status"] == direct["status"] and piped["conceders"] == direct["conceders"]
+    assert piped["valid"] == direct["valid"] and set(piped["pipeline"]) == {"R-A", "R-B"}
+
+
+def _resolve(sc, local=True):
+    neg = Negotiator(sc.instance, priority=PriorityModel(sc.instance, baseline=sc.baseline),
+                     explainer=Explainer(sc.instance), time_limit=20, workers=1, local=local)
+    return neg.resolve(sc.constraints, {p.owner: Simulator(sc.instance, p) for p in sc.profiles},
+                       baseline=sc.baseline, week=sc.week)
+
+
 def test_invented_offers_are_checked_but_still_shown():
     """A1/B3: the solver check measures the invalid-candidate rate (H1a)
     without filtering what the LLM proposed."""
@@ -485,3 +640,123 @@ def test_sentences_do_not_end_at_a_title():
     text = "Hi Dr. Kumar, your lab clashes with Dr. Verma's. Option A is Monday at 2 pm. Does it work, e.g. for week 3?"
     assert sentences(text) == ["Hi Dr. Kumar, your lab clashes with Dr. Verma's.", "Option A is Monday at 2 pm.",
                                "Does it work, e.g. for week 3?"]
+
+
+def test_a_run_stopped_by_the_daily_quota_resumes_where_it_stopped(monkeypatch, tmp_path):
+    """Each finished row is logged as it finishes; the daily quota stops the run with a partial report, and
+    --resume runs only the rest, with the semester's concessions so far, ending as a run never stopped."""
+    import sys
+
+    import evaluation.negotiation as E
+    from language.llm import DailyQuotaReached
+
+    path = Path(__file__).resolve().parents[1] / "data" / "scenarios.jsonl"
+    argv = ["negotiation", "--configs", "ours", "--limit", "4", "--scenarios", str(path)]
+    monkeypatch.setattr(sys, "argv", [*argv, "--out", str(tmp_path / "full.json")])
+    E.main()
+    real, calls = E._run_one, []
+
+    def flaky(*a, **k):
+        calls.append(1)
+        if len(calls) == 3:
+            raise DailyQuotaReached("quota")
+        return real(*a, **k)
+
+    monkeypatch.setattr(E, "_run_one", flaky)
+    monkeypatch.setattr(sys, "argv", [*argv, "--out", str(tmp_path / "part.json")])
+    with pytest.raises(SystemExit):
+        E.main()
+    assert len((tmp_path / "part.rows.jsonl").read_text(encoding="utf-8").splitlines()) == 2
+    monkeypatch.setattr(E, "_run_one", real)
+    monkeypatch.setattr(sys, "argv", [*argv, "--out", str(tmp_path / "part.json"), "--resume"])
+    E.main()
+
+    def rows(name):
+        return [{k: v for k, v in r.items() if k != "wall_s"}
+                for r in json.loads((tmp_path / name).read_text(encoding="utf-8"))["configs"]["ours"]["rows"]]
+
+    assert rows("part.json") == rows("full.json")
+
+
+@pytest.mark.parametrize(("heads", "to"), [({"F-201": "F-200", "F-202": "F-200"}, "F-200"),  # their head decides
+                                           ({"F-202": "F-201"}, "coordinator")])  # not a head who is in the conflict
+def test_deadlock_goes_to_a_head_outside_the_conflict(heads, to):
+    inst, cons = uc3_lab_contention()
+    for f in inst.faculty:
+        f.reports_to = heads.get(f.id)
+    neg = Negotiator(inst, priority=PriorityModel(inst), explainer=Explainer(inst), time_limit=10)
+    out = neg.resolve(cons, {p: Simulator(inst, Profile(owner=p)) for p in ("F-201", "F-202")})
+    assert out.status == "escalated" and out.escalation.to == to
+
+
+# ---------------------------------------------------------------------------
+# What the human study's raters asked of a message (docs/human-study-feedback-2026-11-15.md)
+# ---------------------------------------------------------------------------
+
+
+def test_message_greets_says_why_you_and_when_to_reply():
+    past = ConcessionLedger([ConcessionEntry(stakeholder="F-202", constraint_id="old", semester="2025-2")])
+    inst, cons = uc3_lab_contention()
+    neg = Negotiator(inst, priority=PriorityModel(inst, ledger=past, semester="2026-1"),
+                     explainer=Explainer(inst), semester="2026-1", time_limit=10, workers=1)
+    neg.reply_window = "within 30 minutes"
+    sims = {p.owner: Simulator(inst, p) for p in (Profile(owner="F-201"), Profile(owner="F-202"))}
+    out = neg.resolve(cons, sims)
+    first, khan = out.messages[0].text, inst.faculty_by_id["F-201"].name
+    das = inst.faculty_by_id["F-202"].name
+    assert first.startswith(f"Dear {khan},\n\n")
+    assert f"We're asking you rather than {das} because" in first
+    # both counts, not only the other person's
+    assert f"{das} has given way once before." in first and "You haven't given way before." in first
+    assert "\n\nOptions:\n" in first and "within 30 minutes" in first and "timetable coordinator" in first
+    # the second ask says who comes next; the other owner, once asked, hears that the first said no
+    assert f"we'll ask {das} instead" in out.messages[1].text
+    to_das = next(m.text for m in out.messages if m.to == "F-202")
+    assert f"We asked {khan} first" in to_das
+
+
+def test_a_person_free_only_once_is_said_as_when_they_can_teach():
+    from agents.explainer import plain_group
+    from core.schemas import Constraint, ConstraintType, Scope, When
+
+    inst, _ = uc3_lab_contention()
+    fac = "F-202"
+    cs = [Constraint(id="U1", type=ConstraintType.UNAVAILABLE, owner=fac, hard=True, tier=Tier.VERIFIED_UNAVAILABILITY,
+                     scope=Scope(faculty=fac), when=When(days=["Mon", "Tue", "Wed", "Thu"])),
+          Constraint(id="U2", type=ConstraintType.UNAVAILABLE, owner=fac, hard=True, tier=Tier.VERIFIED_UNAVAILABILITY,
+                     scope=Scope(faculty=fac), when=When(days=["Fri"], slots=[0, 1, 2, 3]))]
+    text = plain_group(inst, cs, "F-201")
+    assert text.startswith(f"{inst.faculty_by_id[fac].name} can only teach on Friday in the afternoon")
+
+
+def test_several_lectures_are_one_short_list_and_swaps_are_not_new_options():
+    from agents.explainer import plain_option
+    from core.schemas import Placement
+    from evaluation.benchmark import load
+
+    inst = next(s for s in load(Path("data/scenarios.jsonl")) if s.kind == "policy").instance
+    by_course: dict = {}
+    for s in inst.sessions:
+        by_course.setdefault((s.course, s.kind), []).append(s)
+    pair = next(v for v in by_course.values() if len(v) >= 2)[:2]
+    room = inst.rooms[0].id
+    o = OptionView("A", {pair[0].id: Placement(day="Mon", slot=0, room=room),
+                         pair[1].id: Placement(day="Mon", slot=2, room=room)}, (), moved=0)
+    text = plain_option(inst, o, [], pair[0].faculty)
+    assert text.startswith(f"your {inst.course_title(pair[0].course)} {pair[0].kind.value}s on Monday at 9 am and 11 am")
+    assert f"all in {inst.rooms[0].name}" in text and "(nothing else moves)" in text
+    neg = Negotiator(inst, priority=PriorityModel(inst), explainer=Explainer(inst))
+    swapped = {pair[0].id: o.placements[pair[1].id], pair[1].id: o.placements[pair[0].id]}
+    assert neg._same_times(o.placements) == neg._same_times(swapped)
+
+
+def test_a_grounded_claim_that_keeps_a_class_on_a_day_never_asked_for_is_dropped():
+    from agents.explainer import declutter, wrong_keep
+
+    inst, _ = uc3_lab_contention()
+    check = ClaimChecker(inst)
+    assert wrong_keep("Option A keeps your practical on Monday at 9 am in Lab 1.", {"tue"}, check)
+    assert not wrong_keep("Option A keeps your practical on Tuesday, at 9 am.", {"tue"}, check)
+    assert not wrong_keep("Option B moves it to Monday at 9 am.", {"tue"}, check)
+    assert declutter("the Algorithms practical (C3-P) and the lunch break [P-LUNCH] rule") == \
+        "the Algorithms practical and the lunch break rule"

@@ -52,20 +52,25 @@ class Fixed:
 
 
 @pytest.fixture(scope="module")
-def world():
+def world(tmp_path_factory):
     os.environ.setdefault("NTS_RETRIEVER", "bm25")
     from web.world import World
 
-    w = World(parser_mode="offline", seed_history=False, deadline=2)
+    # its own semester folder: not the one the app keeps in runs/ (which a test must neither read nor write);
+    # the demo department's semester timetable is built in the background at start-up, quickly here
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setenv("NTS_SEMESTER_TIME", "20")
+        w = World(parser_mode="offline", seed_history=False, deadline=2,
+                  semester_dir=tmp_path_factory.mktemp("semester"))
     w.orch.system_one = None  # every request goes to the parser under test
     w.orch.parser = IntentStub(w.instance, w.orch.parser)
     w.orch.current_week = lambda: 5
     return w
 
 
-def submit(world, sender, text, out):
+def submit(world, sender, text, out, makeup=False):
     world.orch.parser.known[text] = out
-    return world.orch.submit(world.intake.from_portal(sender, text))
+    return world.orch.submit(world.intake.from_portal(sender, text, makeup=makeup))
 
 
 def where(s, tt):
@@ -117,12 +122,32 @@ def test_an_extra_class_without_a_week_asks_for_it(world):
     assert case.status.value == "clarification_requested" and "Which week" in case.reply
 
 
-def test_a_cancellation_goes_to_the_coordinator_with_the_class_resolved(world):
+def test_a_declined_swap_offers_hours_the_class_could_move_to_alone(world):
+    """"Dr. Sharma did not agree" was the end of it; the sender is now shown free hours that need nobody."""
+    a, b, tt = _pair(world)
+    world.orch.responders[b.faculty] = Fixed("reject")
+    case = submit(world, a.faculty, "Could we swap our classes in week 11?", IntentOutput(action="compile", intents=[
+        Swap(mine=ClassRef(**where(a, tt)), theirs=ClassRef(owner=b.faculty, **where(b, tt)), period=Period(weeks=[11]))]))
+    assert case.status.value == "denied" and "did not agree" in case.reply
+    assert "could move on its own in week 11" in case.reply, case.reply
+
+
+def test_a_cancellation_without_make_up_is_made_in_that_week(world):
+    """Done like an absence without make-up classes: the class is left out of week 9, for approval."""
     a, _, tt = _pair(world)
     case = submit(world, a.faculty, "Please call off that class in week 9.", IntentOutput(action="compile", intents=[
         Cancel(which=ClassRef(**where(a, tt)), period=Period(weeks=[9]))]))
-    assert case.status.value == "forwarded" and "+cancel" in case.route
+    assert "+cancel" in case.route and case.status.value in ("awaiting_approval", "published"), case.reply
+    assert a.id in (case.proposal.cancelled or []) and case.proposal.week == 9
     assert world.instance.course_title(a.course) in case.reply and "week 9" in case.reply
+
+
+def test_a_cancellation_with_make_up_goes_to_the_coordinator_with_the_class_resolved(world):
+    a, _, tt = _pair(world)
+    case = submit(world, a.faculty, "Please call off that class in week 10 and hold a make-up.", IntentOutput(
+        action="compile", intents=[Cancel(which=ClassRef(**where(a, tt)), period=Period(weeks=[10]))]), makeup=True)
+    assert case.status.value == "forwarded" and "+cancel" in case.route
+    assert world.instance.course_title(a.course) in case.reply and "week 10" in case.reply
     assert FULL_DAY[tt[a.id].day] in case.reply and hour(tt[a.id].slot) in case.reply
 
 
@@ -138,6 +163,26 @@ def test_withdrawing_by_message_takes_back_the_one_open_request(world):
         assert open_[0].status.value == "withdrawn" and open_[0].id in case.reply
     else:  # several open: nothing is withdrawn on a guess
         assert "open requests" in case.reply and first.status.value != "withdrawn"
+
+
+@pytest.mark.parametrize("text", ["x", "ok", "Please move my lecture."])
+def test_a_message_read_as_withdraw_that_does_not_say_so_withdraws_nothing(world, text):
+    """"x" once read as "withdraw": with one request open, that would have taken it back unasked. (The
+    requests earlier tests left open are the sender's open ones; none may change.)"""
+    a, _, _ = _pair(world)
+    before = {c.id: c.status for c in world.orch.cases.values()}
+    case = submit(world, a.faculty, text, IntentOutput(action="withdraw"))
+    assert case.status.value == "answered" and "nothing was done" in case.reply
+    assert all(world.orch.cases[i].status == s for i, s in before.items())
+
+
+@pytest.mark.parametrize("text", ["Please withdraw my last request.", "Never mind, forget it.",
+                                  "Ignore my earlier message.", "I no longer need that change.",
+                                  "Cancel my previous request please."])
+def test_ways_of_taking_a_request_back_are_recognised(text):
+    from pipeline.orchestrator import SAYS_WITHDRAW
+
+    assert SAYS_WITHDRAW.search(text)
 
 
 def test_messages_the_parser_has_no_intents_for_are_parsed_as_before(world):
@@ -174,7 +219,23 @@ def _future(weekday: int) -> str:
     return (d + timedelta(days=(weekday - d.weekday()) % 7)).isoformat()
 
 
+def published_semester(world, wait: float = 180):
+    """The semester timetable the club desk checks against, once the start-up build has published it."""
+    import time
+
+    world.semester.bootstrap_demo()  # what a World with its start-up history does; this one has none
+    end = time.time() + wait
+    while world.semester.published() is None and time.time() < end:
+        if world.semester.status().get("error"):  # the build ends just before it publishes: wait for either
+            break
+        time.sleep(0.5)
+    v = world.semester.published()
+    assert v is not None, f"no semester timetable published: {world.semester.status()}"
+    return v
+
+
 def test_a_student_books_a_room_for_a_club_through_the_desk(world):
+    published_semester(world)
     case = submit(world, "ST-G-01", "Room for the Quiz Club, Thursday 7 to 9 pm, 30 of us?", IntentOutput(
         action="compile", intents=[ClubBooking(club="Quiz Club", activity="quiz night", date=_future(3),
                                                start="19:00", end="21:00", attendees=30)]))
@@ -246,3 +307,52 @@ def test_the_office_acts_on_a_forwarded_message(world):
         world.orch.act_on(report.id, "C-TT", r)
     case = world.orch.submit(r)
     assert case.request.role.value == "coordinator" and case.status.value != "refused", case.reply
+
+
+def test_cancellations_in_one_message_stay_one_request(world):
+    """"Cancel my classes on Tuesdays and Thursdays in weeks 11-12": two cancellations read, one request (one change
+    for the office to approve), not one request a day."""
+    tt = world.store.current_version().assignment
+    by_day: dict[str, list] = {}
+    for s in world.instance.sessions:
+        if s.id in tt:
+            by_day.setdefault((s.faculty, tt[s.id].day), []).append(s)
+    who, day1, day2 = next((f, d1, d2) for (f, d1) in by_day for (g, d2) in by_day if g == f and d2 != d1)
+    first, second = by_day[(who, day1)][0], by_day[(who, day2)][0]
+    text = "i want you cancel the classes from week 11-12 for two days"
+    case = submit(world, who, text, IntentOutput(action="compile", intents=[
+        Cancel(which=ClassRef(**where(first, tt)), period=Period(weeks=[11, 12])),
+        Cancel(which=ClassRef(**where(second, tt)), period=Period(weeks=[11, 12]))]))
+    assert not case.parts and "+split" not in case.route, (case.route, case.reply)
+    assert case.status.value == "awaiting_approval", case.reply
+    assert {first.id, second.id} <= set(case.proposal.cancelled)
+
+
+@pytest.mark.parametrize("slip", ["empty clash", "one-course clash", "swap with nobody"])
+def test_an_intent_naming_nothing_beside_a_request_is_dropped_and_alone_it_stays(world, slip):
+    """The reader sometimes tacks on an intent that names nothing: "move my DS lecture on Monday to Thursday
+    afternoon" read as the move and a clash report (which became a request of its own, "clash report.", waiting for
+    approval with no change), or the move and a swap with nobody."""
+    a, _, tt = _pair(world)
+    extra = {"empty clash": ClashReport(), "one-course clash": ClashReport(courses=[a.course]),
+             "swap with nobody": Swap(mine=ClassRef(**where(a, tt)), theirs=ClassRef())}[slip]
+    case = submit(world, a.faculty, f"I'd rather keep Friday at 3 pm free ({slip}).", IntentOutput(
+        action="compile", intents=[Avoid(time=TimeSpec(days=["Fri"], at=["15:00"])), extra]))
+    assert not case.parts and "+split" not in case.route, (case.route, case.reply)
+    assert len(case.understood) == 1, case.understood
+    alone = compile_intents(world.instance, world.intake.from_portal(f"ST-{a.groups[0]}", f"We have a clash ({slip})."),
+                            IntentOutput(action="investigate", intents=[ClashReport()]))
+    assert len(alone.output.intents) == 1 and len(alone.clashes) == 1
+
+
+def test_a_clash_report_split_from_a_request_is_looked_into_not_approved(world):
+    a, b, tt = _overlap(world)
+    p = tt[a.id]
+    text = "Keep my Friday 3 pm free please; also two of my classes clash on that day."
+    case = submit(world, a.faculty, text, IntentOutput(action="compile", intents=[
+        Avoid(time=TimeSpec(days=["Fri"], at=["15:00"])),
+        ClashReport(time=TimeSpec(days=[p.day], at=[clock(p.slot)]), courses=[a.course, b.course])]))
+    assert "+split" in case.route and len(case.parts) == 2, (case.route, case.reply)
+    clash = world.orch.cases[case.parts[1]]
+    assert "+clash" in clash.route and clash.status.value == "forwarded", (clash.route, clash.reply)
+    assert clash.proposal is None

@@ -14,7 +14,10 @@ exploiting a deterministic reply rule:
 * ``flexible``: any time on the days that work, and volunteers one;
 * ``cost_sensitive``: only small changes (the same time of day);
 * ``history_sensitive``: refuses acceptable offers more often after having
-  conceded recently, independent of the negotiator's ledger.
+  conceded recently, independent of the negotiator's ledger;
+* ``unusual`` (hard tier only): only a time of day other than the one asked
+  for works, on one day, and it is never volunteered: the "unusual slot" an
+  option list that starts from the time asked for is least likely to reach.
 
 With ``refuse_p`` an acceptable offer is refused anyway, and with
 ``silence_p`` a message goes unanswered; both draw from the simulator's own
@@ -54,8 +57,9 @@ class Window(BaseModel):
         return f"{days} from {hour(min(self.slots))} to {hour(max(self.slots) + 1)}"
 
 
-Family = Literal["strict", "flexible", "cost_sensitive", "history_sensitive"]
+Family = Literal["strict", "flexible", "cost_sensitive", "history_sensitive", "unusual"]
 FAMILIES: tuple[Family, ...] = ("strict", "flexible", "cost_sensitive", "history_sensitive")
+HARD_FAMILIES: tuple[Family, ...] = (*FAMILIES, "unusual")
 REFUSE_P = 0.1  # chance of refusing an acceptable offer anyway
 SILENCE_P = 0.05  # chance of not answering a message
 RELUCTANT_P = 0.5  # refusal chance for a history-sensitive stakeholder who conceded recently
@@ -69,6 +73,9 @@ class Profile(BaseModel):
     needs: list[str] = Field(default_factory=list)  # equipment they really need
     room_flexible: bool = False  # would accept a room without that equipment
     reveal: bool = True  # volunteers a window when no offer fits
+    # turns down the first message it gets whatever it offers (a demo's two-round negotiation); without
+    # ``reveal`` it suggests nothing and then takes the next fitting option, whatever the time
+    holds_out: bool = False
     responsive: bool = True
     family: Family | None = None
     refuse_p: float = 0.0
@@ -93,6 +100,10 @@ def apply_family(profile: Profile, family: Family, *, stated_slots: list[int] | 
         p.windows = [w for w in near if w.slots]
     elif family == "history_sensitive" and conceded_recently:
         p.refuse_p = RELUCTANT_P
+    elif family == "unusual":
+        other = [s for s in all_slots if s not in (stated_slots or [])]
+        p.windows = [Window(days=w.days[:1] if w.days else None, slots=other) for w in p.windows[:1]]
+        p.reveal = False
     return p
 
 
@@ -113,6 +124,7 @@ class Simulator:
     structured: bool = True  # hand the negotiator the decision, not just text
     rng: random.Random | None = None  # draws refusals and silences; None means no noise
     revealed: bool = False
+    held_out: bool = False  # has turned down a first message already (``Profile.holds_out``)
     log: list[Reply] = field(default_factory=list)
 
     def _chance(self, p: float) -> bool:
@@ -136,6 +148,10 @@ class Simulator:
             self.acceptable(s, p) for s, p in o.placements.items())]
         if fits and self._chance(self.profile.refuse_p):
             fits = []
+        if self.profile.holds_out and not self.held_out:
+            self.held_out, fits = True, []
+            if not (self.profile.reveal and self.profile.windows and not self.revealed):
+                self.profile.windows = [Window()]  # said no, suggested nothing: takes what comes next
         if fits:
             reply = Reply(decision="accept", choice=fits[0].key)
             say = f"You accept option {fits[0].key}."

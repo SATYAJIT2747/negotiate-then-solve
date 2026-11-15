@@ -1,0 +1,378 @@
+\documentclass[11pt,a4paper]{article}
+
+% ------------------------------------------------------------------
+% Packages (as in the proposal brief)
+% ------------------------------------------------------------------
+\usepackage[T1]{fontenc}
+\usepackage[utf8]{inputenc}
+\usepackage{lmodern}
+\usepackage[a4paper,margin=2.0cm,headheight=14pt]{geometry}
+\usepackage{microtype}
+\usepackage{amsmath,amssymb}
+\usepackage{booktabs}
+\usepackage{tabularx}
+\usepackage{array}
+\usepackage{multirow}
+\usepackage{enumitem}
+\usepackage{xcolor}
+\usepackage{fancyhdr}
+\usepackage{titlesec}
+\usepackage{caption}
+\usepackage{float}
+\usepackage[most]{tcolorbox}
+\usepackage{tikz}
+\usetikzlibrary{arrows.meta,positioning,fit,backgrounds,calc}
+\usepackage{pgfplots}
+\pgfplotsset{compat=1.18}
+\usepackage{needspace}
+\usepackage{etoolbox}
+\usepackage[colorlinks=true,linkcolor=navy,urlcolor=navy,citecolor=navy]{hyperref}
+
+% ------------------------------------------------------------------
+% Colours and layout
+% ------------------------------------------------------------------
+\definecolor{secblue}{HTML}{2B5B8A}
+\definecolor{navy}{HTML}{1A1A80}
+\definecolor{lightblue}{HTML}{EAF1F8}
+\definecolor{boxblue}{HTML}{2E5C8A}
+\definecolor{gaporange}{HTML}{C0661A}
+\definecolor{gapfill}{HTML}{FCEFE3}
+\definecolor{goodgreen}{HTML}{2E8B57}
+\definecolor{goodfill}{HTML}{E9F7EE}
+\definecolor{badred}{HTML}{C0392B}
+\definecolor{badfill}{HTML}{FDECEC}
+\definecolor{greyline}{HTML}{8A8A8A}
+
+\titleformat{\section}{\color{secblue}\large\bfseries}{\thesection}{0.6em}{}
+\titleformat{\subsection}{\color{secblue}\normalsize\bfseries}{\thesubsection}{0.6em}{}
+\titleformat{\subsubsection}[runin]{\color{secblue}\normalsize\bfseries}{}{0em}{}[.]
+\titlespacing*{\section}{0pt}{10pt}{4pt}
+\titlespacing*{\subsection}{0pt}{7pt}{3pt}
+
+\pagestyle{fancy}
+\fancyhf{}
+\fancyhead[L]{\small LMA Group Project 2026 --- Mid-Submission Report}
+\fancyhead[R]{\small Negotiate, Then Solve}
+\fancyfoot[C]{\small\thepage}
+\renewcommand{\headrulewidth}{0.4pt}
+
+\captionsetup{font=small,skip=3pt}
+\setlist[itemize]{itemsep=2pt,topsep=3pt,leftmargin=1.4em}
+\setlist[enumerate]{itemsep=1pt,topsep=2pt}
+\setlength{\parskip}{3pt}
+\setlength{\textfloatsep}{8pt}
+\setlength{\floatsep}{6pt}
+\setlength{\intextsep}{8pt}
+\pretocmd{\section}{\needspace{8\baselineskip}}{}{}
+\pretocmd{\subsection}{\needspace{6\baselineskip}}{}{}
+\newcolumntype{L}[1]{>{\raggedright\arraybackslash}p{#1}}
+\newcolumntype{Y}{>{\raggedright\arraybackslash}X}
+\newcolumntype{C}{>{\centering\arraybackslash}X}
+
+\newtcolorbox{keybox}{enhanced,colback=gapfill,colframe=gaporange,
+  boxrule=1pt,arc=3pt,left=6pt,right=6pt,top=3pt,bottom=3pt}
+\newtcolorbox{bluebox}[1]{enhanced,colback=lightblue,colframe=boxblue,
+  coltitle=white,fonttitle=\small\bfseries,title={#1},boxrule=0.8pt,arc=3pt,
+  left=6pt,right=6pt,top=3pt,bottom=3pt}
+
+\newcommand{\yes}{{\color{goodgreen}\textbf{supported}}}
+\newcommand{\partly}{{\color{gaporange}\textbf{partly}}}
+\newcommand{\no}{{\color{badred}\textbf{not yet}}}
+\newcommand{\best}[1]{\textbf{#1}}
+
+\begin{document}
+
+% ------------------------------------------------------------------
+% Title
+% ------------------------------------------------------------------
+\begin{center}
+{\color{secblue}\rule{\textwidth}{0.8pt}}\par\vspace{2pt}
+{\Large\bfseries Negotiate, Then Solve\par}
+\vspace{2pt}
+{\large Solver-Grounded Negotiation for Conflict-Aware University Timetabling\par}
+\vspace{1pt}
+{\normalsize\itshape Mid-Submission Report\par}
+\vspace{2pt}
+{\color{secblue}\rule{\textwidth}{0.8pt}}\par
+\vspace{3pt}
+{\small\textbf{Team Farali Chevdo}\\[2pt]
+\begin{tabular}{@{}l@{\;\;}l@{\qquad}l@{\;\;}l@{}}
+Achyutananda Sahoo & 2025202028 & Rakesh C & 2026901015\\
+Satyajit Priyadarshi & 2025201055 & Shubhadeep Mandal & 2025201056\\
+\end{tabular}\\[3pt]
+\textbf{Code:} \url{https://github.com/Seronic2001/negotiate-then-solve}\par}
+\end{center}
+
+\begin{keybox}
+\small\textbf{Summary.} The full system in the proposal is built and runs end to end,
+from a plain-language request to a human-approved timetable, in a web application.
+The \textbf{main experiment is complete}: solver-grounded negotiation reaches the
+oracle's outcome in \textbf{89.4\%} of runs against \textbf{75.6\%} for generate-and-filter
+B4 ($p{=}4.6{\times}10^{-6}$) and \textbf{83.3\%} for unverified B3 ($p{=}0.013$), with an
+oracle gap of 0.04 against 0.63 and 0.44. Every capability has a component benchmark
+with a baseline, and a fine-tuned \textbf{tool-calling coordinator agent} reaches 100\%
+on our 19-family suite (Gemini Flash-Lite: 85\%). Remaining: a same-model control,
+judge validation, a test of the fairness ledger (H4 not yet supported) and the human pilot.
+\end{keybox}
+
+% ==================================================================
+\section{Recap: Problem, Research Question and Hypotheses}
+% ==================================================================
+University timetables change weekly after publication; change requests arrive
+as free text, and when two requests cannot both be met there is no principled
+way to decide who concedes. We study \emph{solver-grounded negotiation}: when a
+request is infeasible, minimal unsatisfiable subsets (MUS) locate the conflict,
+minimal correction sets (MCS) define the possible concessions, CP-SAT re-solves
+each into a concrete timetable, and an LLM negotiator may offer \emph{only} these
+verified options, ranked by priority tiers and a concession ledger. A coordinator
+approves every change.
+
+\begin{keybox}
+\textbf{RQ.} Can solver-derived conflict sets constrain an LLM negotiator so
+that it resolves infeasible timetable requests with fewer negotiation rounds and
+lower disruption than LLM-invented options, even when those options are filtered
+by the same solver before they are offered?
+\end{keybox}
+\noindent\textbf{H1} invented options cost rounds or regeneration calls;
+\textbf{H2} ours resolves at least as often as B4 with fewer rounds, less disruption and a smaller
+oracle gap; \textbf{H3} grounded explanations are more faithful and leak no private
+reasons; \textbf{H4} the ledger spreads concession burden more evenly than flat weights.
+
+% ==================================================================
+\section{Progress Since the Proposal}
+% ==================================================================
+\begin{table}[H]
+\centering\small
+\begin{tabularx}{\textwidth}{@{}L{3.2cm} Y L{2.6cm}@{}}
+\toprule
+\textbf{Component} & \textbf{What is built} & \textbf{Status}\\
+\midrule
+Pipeline L1--L6 & Receive (portal, email, messaging), parse, policy check (RAG), CP-SAT repair, negotiate (MUS, MCS, re-solve, ranked grounded options), approve and publish; role-scoped web app & done\\
+Request reader & Fine-tuned reader into a typed \emph{intent language} (17 kinds incl.\ limits, relations, choices); deterministic checks repair or question a reading & done; v12 in evaluation\\
+Coordinator agent & Tool-calling agent (30 tools) that handles a whole request over many turns; SFT + DPO & v4 evaluated; v6 trained\\
+Evaluation & Negotiation runner with simulators and oracle; benchmarks per capability; LLM cache for exact replay; about 600 tests & done\\
+Human study & Participant codes, two raters per item, rating UI & pending ethics\\
+\bottomrule
+\end{tabularx}
+\caption{Implementation status.}
+\end{table}
+
+\noindent\textbf{Deviations from the proposal.} (i)~The local model is
+\textbf{Qwen3.5-4B} + LoRA, not 2B: the 4B adapter had higher action accuracy
+(99.3\% vs 96.5\%, Table~\ref{tab:parse}). (ii)~Requests are read into
+\textbf{intents} that a deterministic compiler resolves into constraints, so each
+reading can be checked against the message and timetable. (iii)~A tool-calling
+\textbf{coordinator agent} (Section~\ref{sec:agent}) handles what the fixed pipeline
+could not express (swaps, make-up classes, multi-part requests).
+
+% ==================================================================
+\section{Datasets}
+% ==================================================================
+All data is synthetic or team-authored, with ground truth known by construction.
+\begin{table}[H]
+\centering\small
+\begin{tabularx}{\textwidth}{@{}L{3.4cm} Y L{3.0cm}@{}}
+\toprule
+\textbf{Dataset} & \textbf{Construction} & \textbf{Size}\\
+\midrule
+Department instance & Synthetic CSE department: 30 faculty, 10 groups, 20 rooms, 5 days $\times$ 8 slots & 202 sessions\\
+A.\ Negotiation & Planted conflicts of 7 kinds; hidden stakeholder flexibility; solver oracle & 60 scenarios\\
+B.\ Requests / intents & Requests from known targets, paraphrased, ambiguous, adversarial; intent data (v12) with 24 held-out suites & 600; v12 4{,}363 train\\
+C.\ Policy (RAG) & Handbook (32 rules) + 4 circulars; queries with gold rule IDs & 106 + 40 paraphrased\\
+D.\ Replies, safety & Stakeholder replies with the correct tool call; injections, authority violations & 100; 48\\
+Agent & 19 request families; verified trajectories for training & 38 per seed\\
+\bottomrule
+\end{tabularx}
+\caption{Datasets.}
+\end{table}
+
+% ==================================================================
+\section{Main Experiment: Solver-Grounded Negotiation (H1--H4)}
+% ==================================================================
+\textbf{Setup.} Ours, B3 and B4 ran 60 scenarios $\times$ 3 seeds (180 paired runs).
+Ours uses the fine-tuned Qwen3.5-4B (local); the baselines use the much larger
+\textbf{Gemini 3.5 Flash-Lite}, so they are not handicapped on language. Four simulator
+families play the stakeholders. A run is \emph{correct} when its final status matches
+the oracle's.
+
+\begin{table}[H]
+\centering\small
+\begin{tabularx}{\textwidth}{@{}l c C C C C C@{}}
+\toprule
+\textbf{System} & \textbf{$n$} & \textbf{Correct outcome} & \textbf{Agreement} & \textbf{Rounds} & \textbf{Oracle gap} & \textbf{Invalid options}\\
+\midrule
+B1 LLM-only & 20 & 0.0\% & 0.0\% & -- & -- & 80\% of TTs\\
+B2 Solver-only & 60 & 31.7\% & 0.0\% & -- & 0.131 & --\\
+B3 Unverified & 180 & 83.3\% & 66.7\% & 1.47 & 0.443 & 51.0\%\\
+B4 Filtered & 180 & 75.6\% & 51.1\% & 1.48 & 0.628 & 5.7 filtered/sc.\\
+\textbf{Ours} & 180 & \best{89.4\%} & \best{78.9\%} & \best{1.38} & \best{0.041} & \best{0}\\
+\bottomrule
+\end{tabularx}
+\caption{Main results (oracle gap: objective difference to the oracle's repair, lower is
+better). McNemar on correct outcome: Ours vs B4 $p{=}4.6{\times}10^{-6}$, vs B3 $p{=}0.013$;
+differences in rounds are not significant.}
+\label{tab:main}
+\end{table}
+
+\begin{table}[H]
+\centering\small
+\begin{tabularx}{\textwidth}{@{}l Y l@{}}
+\toprule
+\textbf{Hyp.} & \textbf{Evidence so far} & \textbf{Verdict}\\
+\midrule
+H1 & 51\% of B3's options are infeasible; B4 needs 3.97 generation calls per scenario yet has the lowest agreement. Rounds not significantly higher. & \yes{} (rounds n.s.)\\
+H2 & Correct 89.4\% vs 75.6\%, oracle gap 0.04 vs 0.63; rounds equal within CI. & \yes{} (except rounds)\\
+H3 & Grounded vs free-text (A2): 0 vs 12 private-reason leaks; claim faithfulness 0.98, not yet human-validated. & \partly{}\\
+H4 & Ledger vs flat weights: Gini 0.241 vs 0.224; one conflict per scenario gives the ledger little to act on. & \no{} (M6)\\
+\bottomrule
+\end{tabularx}
+\caption{Hypotheses: status at mid-submission.}
+\end{table}
+
+\noindent\textbf{Ablations.} Flat weights (A1), free-text explanations (A2) and a regex reply
+handler (A3) leave resolution unchanged (90.0\%); they differ in what the stakeholder sees
+and in burden spread. Imposing the best repair without asking (B2) is correct in only
+31.7\% of scenarios: negotiation is needed, not only a solver.
+
+% ==================================================================
+\section{Component Results}
+% ==================================================================
+\subsection{Fine-tuning: reading requests}
+\begin{table}[H]
+\centering\small
+\begin{tabularx}{\textwidth}{@{}l C C C@{}}
+\toprule
+\textbf{Reader (151 test requests)} & \textbf{Compile exact match} & \textbf{Atom F1} & \textbf{Action accuracy}\\
+\midrule
+Gemini 3.5 Flash-Lite (prompted) & 92.4\% & 0.977 & 99.3\%\\
+Qwen3.5-2B + LoRA & \best{97.8\%} & \best{0.996} & 96.5\%\\
+Qwen3.5-4B + LoRA & \best{97.8\%} & \best{0.996} & \best{99.3\%}\\
+\bottomrule
+\end{tabularx}
+\caption{Constraint compilation: both adapters beat the prompted large model.}
+\label{tab:parse}
+\end{table}
+
+\noindent The newer \textbf{intent reader} also handles compositional requests: limits
+(``at most two days a week''), relations (``the practical after the lectures'') and
+choices (``Tuesday, failing that Thursday''). Scores are outcome match / silent wrong (\%).
+\begin{table}[H]
+\centering\small
+\begin{tabular*}{\textwidth}{@{\extracolsep{\fill}}lcccc@{}}
+\toprule
+\textbf{Reader} & \textbf{test} & \textbf{test-typo} & \textbf{compositional} & \textbf{relations}\\
+\midrule
+Rule parser (baseline) & 51.6\,/\,21.1 & 38.6\,/\,24.9 & 50.0\,/\,28.6 & 0.0\,/\,5.0\\
+v11 & 95.4\,/\,2.4 & 94.2\,/\,3.1 & 78.6\,/\,14.3 & 45.0\,/\,0\\
+v12 & \best{98.1\,/\,1.9} & \best{97.6\,/\,1.9} & \best{85.7\,/\,0.0} & \best{77.5\,/\,0}\\
+\bottomrule
+\end{tabular*}
+\caption{Intent readers on the frozen test split and held-out suites.}
+\end{table}
+
+\subsection{RAG: policy check with citations}
+Retrieval over the handbook and circulars reaches recall@5 of 0.93 (hybrid); lexical
+retrieval is best on raw queries and dense on paraphrases.
+\begin{table}[H]
+\centering\small
+\begin{tabularx}{\textwidth}{@{}l C C C@{}}
+\toprule
+\textbf{Policy verdict} & \textbf{Allow/deny accuracy} & \textbf{Deny recall (cited)} & \textbf{Make-up obligation recall}\\
+\midrule
+Gemini 3.5 Flash-Lite & 98\% & 0.80 & 0.21\\
+Qwen3.5-4B + LoRA & 99\% & 0.90 & \best{1.00}\\
+\bottomrule
+\end{tabularx}
+\caption{The fine-tuned reader learns the make-up-class rule the prompted model misses.}
+\end{table}
+
+\subsection{Tool calling and safety: stakeholder replies}
+\begin{table}[H]
+\centering\small
+\begin{tabularx}{\textwidth}{@{}l C C C@{}}
+\toprule
+\textbf{Reply handler (100 replies)} & \textbf{Tool accuracy} & \textbf{Argument accuracy} & \textbf{Unsafe actions}\\
+\midrule
+Qwen3.5-4B base (prompted) & 65\% & 100\% & 0\\
+Gemini 3.5 Flash-Lite & \best{100\%} & 85.5\% & 0\\
+Qwen3.5-4B + LoRA & \best{100\%} & \best{100\%} & 0\\
+\bottomrule
+\end{tabularx}
+\caption{Reply-to-tool-call accuracy. On the 48-case safety set every case is handled
+safely; no case changed the published timetable.}
+\label{tab:reply}
+\end{table}
+
+\subsection{Agentic: the tool-calling coordinator}
+\label{sec:agent}
+The agent works a whole request through tools (look up, move, swap, cancel, make-up
+class, check policy, ask, hand off).
+\begin{table}[H]
+\centering\small
+\begin{tabularx}{\textwidth}{@{}l C C C C@{}}
+\toprule
+\textbf{Agent} & \textbf{Default (19 families)} & \textbf{Held-out} & \textbf{Stress} & \textbf{Compositional}\\
+\midrule
+Qwen3.5-4B base (prompted) & 66.7\% & -- & -- & --\\
+Gemini 3.5 Flash-Lite & 85.1\% & -- & 90.0\% & --\\
+nts-agent-v3 (SFT + DPO) & 98.2\% & 95.0\% & 59.4\% & --\\
+nts-agent-v4 (SFT) & \best{100\%} & \best{100\%} & \best{100\%} & 42.9\%\\
+\bottomrule
+\end{tabularx}
+\caption{Agent pass rate. v6, trained on compositional requests, is evaluated next (M1).}
+\end{table}
+
+% ==================================================================
+\section{Failure Analysis}
+% ==================================================================
+\begin{itemize}
+\item \textbf{Where Ours fails (19 of 180 runs).} Every miss is a safe escalation where
+the oracle reached agreement: the stakeholder did not reply in time (11) or the acceptable
+option was not among those offered (8). No run offered an infeasible timetable.
+\item \textbf{B4.} The solver rejects most invented options; the survivors are fewer and
+worse, which explains why B4 is \emph{less} correct than unverified B3.
+\item \textbf{Reader (v12).} Most held-out misses come from two patterns: a course name
+lost in ``any day apart from Friday works for my Networks classes'', and the second
+course copied into the first in two-request messages.
+\end{itemize}
+
+% ==================================================================
+\section{Challenges and Mitigation}
+% ==================================================================
+\begin{table}[H]
+\centering\small
+\begin{tabularx}{\textwidth}{@{}L{5.6cm} Y@{}}
+\toprule
+\textbf{Challenge} & \textbf{Mitigation}\\
+\midrule
+One shared GPU laptop; outages; Gemini free-tier limits & One adapter per run, all answers cached so re-scoring is free, paced API keys\\
+\textbf{Firmness label drift}: ``hard'' vs ``soft'' labelled inconsistently across data versions & One labelling rule in code with checks (agreement 86.6\%$\to$96.7\%)\\
+Kaggle 12\,h limit cut agent-v6 DPO short & Second DPO-only session (launched)\\
+Main comparison mixes models (4B vs Gemini) & Swap models on a 20-scenario subset (M2)\\
+Faculty pilot needs ethics clearance & Peer study with the same protocol if late\\
+\bottomrule
+\end{tabularx}
+\caption{Challenges and mitigations.}
+\end{table}
+
+% ==================================================================
+\section{Plan to the Final Submission (15 days)}
+% ==================================================================
+\begin{table}[H]
+\centering\small
+\begin{tabularx}{\textwidth}{@{}L{1.4cm} Y L{3.6cm}@{}}
+\toprule
+\textbf{Days} & \textbf{Work} & \textbf{Deliverable}\\
+\midrule
+1--2 & \textbf{M1} Finish reader scoring; evaluate agent-v6 & Final reader, agent tables\\
+2--5 & \textbf{M2} Same-model control. \textbf{M3} v13 reader fixes & Model-bias check\\
+4--7 & \textbf{M4} Judge validation against human labels (Cohen's $\kappa$) & Validated H3\\
+5--9 & \textbf{M5} Human pilot or peer study & Pilot results\\
+6--10 & \textbf{M6} Sequential-request scenarios to test the ledger & H4 result\\
+9--15 & \textbf{M7} Failure analysis, final report, cleaned repository, demo & Final submission\\
+\bottomrule
+\end{tabularx}
+\caption{Timeline. If short of time we drop v13 first, then the pilot; never M2.}
+\end{table}
+
+\end{document}

@@ -22,6 +22,27 @@ Each scenario is assigned one stakeholder policy family (strict, flexible,
 cost-sensitive, history-sensitive; balanced within each kind) that reshapes
 the hidden profiles and makes replies stochastic (``agents.simulators``).
 
+Hard tier (``--hard``, ``data/scenarios-hard.jsonl``, 30 scenarios, reported
+separately from the 60): cases the standard kinds leave out: more than two
+stakeholders, repairs that need several of them to give way, a hidden time
+outside what was asked, and a department-size timetable.
+
+* ``multi``: three stakeholders, two GPU labs: two new requests and a third
+  colleague's earlier agreement want the same afternoon; one must give way,
+  so whom to ask (cost, ledger) matters;
+* ``joint``: three practicals want the one GPU lab on the same afternoon, so
+  no single concession ends the conflict: two of the three must give way.
+  Every minimal correction set has two owners;
+* ``contention`` as in the standard tier, to meet the ``unusual`` family;
+* ``scale``: the UC3 conflict planted into a generated department of
+  about 80 sessions (12 faculty, 24 course sections, 11 rooms), where the
+  solver also moves third parties' classes and enumeration is capped. The
+  full 30-faculty department (about 210 sessions) does not fit: the MUS
+  cores and the oracle's repairs exceed the 20 s solver limit.
+
+Hard scenarios cycle through five families: the four above and ``unusual``
+(only a time of day other than the one asked for works, never volunteered).
+
 The oracle (the upper bound) knows every profile and tries all combinations of
 the flexibility they hide. It optimises the same published policy and
 objective as the negotiator (proposal Section 13.2): lexicographically, the
@@ -47,8 +68,16 @@ from pydantic import BaseModel, Field
 
 from agents.ledger import ConcessionLedger
 from agents.priority import PriorityModel
-from agents.simulators import FAMILIES, Family, Profile, Simulator, Window, apply_family
-from core.generator import SURNAMES
+from agents.simulators import (
+    FAMILIES,
+    HARD_FAMILIES,
+    Family,
+    Profile,
+    Simulator,
+    Window,
+    apply_family,
+)
+from core.generator import SURNAMES, generate_department
 from core.instance import (
     Faculty,
     Group,
@@ -317,6 +346,106 @@ def policy(rng: random.Random, sid: str) -> dict:
 
 
 # ---------------------------------------------------------------------------
+# Hard-tier kinds
+# ---------------------------------------------------------------------------
+
+FULL_DAY = {"Mon": "Monday", "Tue": "Tuesday", "Wed": "Wednesday", "Thu": "Thursday", "Fri": "Friday"}
+
+
+def _demand(tag: str, owner: str, session: str, day: str, equipment: list[str]) -> list[Constraint]:
+    """A request for a room with ``equipment`` on ``day`` afternoon."""
+    return [
+        _c(f"C-{tag}-ROOM", owner, Tier.OPERATIONAL, ConstraintType.REQUIRE_ROOM, scope=Scope(session=session),
+           room=RoomRequirement(equipment=equipment), request=f"R-{tag}"),
+        _c(f"C-{tag}-TIME", owner, Tier.OPERATIONAL, ConstraintType.PREFER, scope=Scope(session=session),
+           when=When(days=[day], slots=AFTERNOON), request=f"R-{tag}"),
+    ]
+
+
+def _past(rng: random.Random, owners: Iterable[str], p: float) -> list[ConcessionEntry]:
+    """Concessions some of ``owners`` made last semester, each with chance ``p``."""
+    return [ConcessionEntry(stakeholder=o, constraint_id="PAST", semester="2025-2") for o in owners
+            if rng.random() < p]
+
+
+def _window(rng: random.Random, other: list[str], slots: list[int] | None = None) -> Window:
+    return Window(days=rng.sample(other, rng.randint(1, 2)), slots=slots or rng.choice([AFTERNOON, MORNING]))
+
+
+def multi(rng: random.Random, sid: str) -> dict:
+    """Three stakeholders, two GPU labs: two new requests and a colleague's
+    earlier agreement want the same afternoon. Faculty 1-3 teach different
+    sections, so only the labs clash."""
+    inst = _department(rng, sid, [_lab("L-1", 1, ["gpu", "routers"]), _lab("L-2", 2, []), _lab("L-4", 4, ["gpu"])])
+    owners = [f"F-30{i}" for i in rng.sample([1, 2, 3], 3)]
+    sessions = [_practical(inst, int(o[-1])) for o in owners]
+    day = rng.choice(DAYS)
+    planted = [x for tag, o, s in zip("ABC", owners, sessions, strict=True)
+               for x in _demand(tag, o, s, day, ["gpu"])]
+    other = [d for d in DAYS if d != day]
+    profiles = [Profile(owner=o, needs=["gpu"], windows=[_window(rng, other)] if rng.random() < 0.7 else [],
+                        reveal=rng.random() < 0.5) for o in owners]
+    if not any(p.windows for p in profiles):
+        profiles[rng.randrange(3)].windows = [Window(days=[rng.choice(other)], slots=AFTERNOON)]
+    names, full = _names(inst), FULL_DAY[day]
+    (fa, fb, fc), (pa, pb, pc) = owners, sessions
+    raw = {"R-A": f"My {_title(inst, pa)} practical needs the GPU machines on {full} afternoon. {names[fa]}",
+           "R-B": f"Please put the {_title(inst, pb)} lab in a GPU room, {full} afternoon. {names[fb]}",
+           "R-C": f"As agreed at the start of term, my {_title(inst, pc)} practical stays in a GPU lab on "
+                  f"{full} afternoons. {names[fc]}"}
+    return {"inst": inst, "planted": planted, "profiles": profiles, "ledger": _past(rng, owners, 0.4), "raw": raw}
+
+
+def joint(rng: random.Random, sid: str) -> dict:
+    """Three practicals want the one GPU lab on the same afternoon, which holds
+    one two-hour practical: whoever gives way first does not end the conflict,
+    two of the three must. Two of them would, on other days."""
+    inst = _department(rng, sid, [_lab("L-1", 1, ["gpu", "routers"]), _lab("L-2", 2, []),
+                                  _lab("L-3", 3, ["electronics"])])
+    owners = [f"F-30{i}" for i in rng.sample([1, 2, 3], 3)]
+    sessions = [_practical(inst, int(o[-1])) for o in owners]
+    day = rng.choice(DAYS)
+    planted = [x for tag, o, s in zip("ABC", owners, sessions, strict=True)
+               for x in _demand(tag, o, s, day, ["gpu"])]
+    other = [d for d in DAYS if d != day]
+    stuck = rng.randrange(3)
+    profiles = [Profile(owner=o, needs=["gpu"], windows=[] if i == stuck else [_window(rng, other, AFTERNOON)],
+                        reveal=rng.random() < 0.5) for i, o in enumerate(owners)]
+    names, full = _names(inst), FULL_DAY[day]
+    raw = {f"R-{tag}": f"My {_title(inst, s)} practical needs the GPU lab on {full} afternoon. {names[o]}"
+           for tag, o, s in zip("ABC", owners, sessions, strict=True)}
+    return {"inst": inst, "planted": planted, "profiles": profiles, "ledger": _past(rng, owners, 0.3), "raw": raw}
+
+
+def scale(rng: random.Random, sid: str) -> dict:
+    """UC3 in a generated department of about 80 sessions: two practicals of
+    different faculty and sections both demand the only lab with routers
+    (L-2, which also has GPUs) on the same afternoon; other classes there
+    have to move too."""
+    inst = generate_department(rng.randrange(10**6), n_faculty=12, n_groups=4, n_lecture_rooms=6)
+    inst.name = sid
+    practicals = [s for s in inst.sessions if s.kind == SessionKind.PRACTICAL and set(s.equipment) <= {"gpu"}]
+    while True:
+        sa, sb = rng.sample(practicals, 2)
+        if sa.faculty != sb.faculty and not set(sa.groups) & set(sb.groups):
+            break
+    day = rng.choice(DAYS)
+    planted = [*_demand("A", sa.faculty, sa.id, day, ["routers"]), *_demand("B", sb.faculty, sb.id, day, ["routers"])]
+    other = [d for d in DAYS if d != day]
+    profiles = [Profile(owner=s.faculty, needs=["routers", *s.equipment],
+                        windows=[_window(rng, other)] if rng.random() < 0.75 else [], reveal=rng.random() < 0.6)
+                for s in (sa, sb)]
+    if not any(p.windows for p in profiles):
+        profiles[rng.randrange(2)].windows = [Window(days=[rng.choice(other)], slots=AFTERNOON)]
+    names, full = _names(inst), FULL_DAY[day]
+    raw = {"R-A": f"My {_title(inst, sa.id)} practical needs the routers, {full} afternoon. {names[sa.faculty]}",
+           "R-B": f"The {_title(inst, sb.id)} lab needs routers; {full} afternoon is the only time I can do. "
+                  f"{names[sb.faculty]}"}
+    return {"inst": inst, "planted": planted, "profiles": profiles,
+            "ledger": _past(rng, (sa.faculty, sb.faculty), 0.5), "raw": raw}
+
+
+# ---------------------------------------------------------------------------
 # Assembly and the oracle
 # ---------------------------------------------------------------------------
 
@@ -324,7 +453,9 @@ MIX = ([("contention", {})] * 16 + [("contention", {"substitute": True})] * 4
        + [("deadlock", {})] * 6 + [("squeeze", {})] * 10 + [("capacity", {})] * 8
        + [("tradeoff", {})] * 8 + [("policy", {})] * 8)
 BUILDERS = {"contention": contention, "deadlock": lambda r, s: contention(r, s, deadlock=True),
-            "squeeze": squeeze, "capacity": capacity, "tradeoff": tradeoff, "policy": policy}
+            "squeeze": squeeze, "capacity": capacity, "tradeoff": tradeoff, "policy": policy,
+            "multi": multi, "joint": joint, "scale": scale}
+HARD_MIX = [("multi", {})] * 10 + [("joint", {})] * 10 + [("contention", {})] * 5 + [("scale", {})] * 5
 
 
 def _flex_options(sc: Scenario) -> dict[str, list[tuple[str, list[Constraint], list[str]]]]:
@@ -378,9 +509,10 @@ def objective(sc: Scenario, relaxed: Iterable[str], moved: int) -> tuple[list[in
     return tiers, pm.option_cost(given, moved, stakeholders(sc))
 
 
-def compute_oracle(sc: Scenario, time_limit: float = 20.0) -> OracleOutcome:
+def compute_oracle(sc: Scenario, time_limit: float = 20.0, workers: int = 8) -> OracleOutcome:
     base = {c.id: c for c in sc.constraints}
-    solver = TimetableSolver(sc.instance, base.values(), week=sc.week, baseline=sc.baseline, time_limit=time_limit)
+    solver = TimetableSolver(sc.instance, base.values(), week=sc.week, baseline=sc.baseline, time_limit=time_limit,
+                             workers=workers)
     if solver.is_feasible(solver.hard_ids):
         r = solver.solve()
         return OracleOutcome(status="feasible", moved=r.moved or 0)
@@ -401,7 +533,7 @@ def compute_oracle(sc: Scenario, time_limit: float = 20.0) -> OracleOutcome:
             for c in add:
                 cons[c.id] = c
         r = TimetableSolver(sc.instance, cons.values(), week=sc.week, baseline=sc.baseline,
-                            time_limit=time_limit).solve()
+                            time_limit=time_limit, workers=workers).solve()
         if not r.ok:
             continue
         moved = r.moved or 0
@@ -437,14 +569,18 @@ def _with_family(parts: dict, family: Family) -> list[Profile]:
     return out
 
 
-def build(kind: str, index: int, seed: int, family: Family | None = None, **kw) -> Scenario:
+def build(kind: str, index: int, seed: int, family: Family | None = None, prefix: str = "S", workers: int = 8,
+          **kw) -> Scenario:
+    """One scenario. ``workers=1`` makes CP-SAT's choice among tied baselines
+    and repairs reproducible (the hard tier); the 60 were built with 8."""
     rng = random.Random(seed)
-    sid = f"S-{index:03d}-{kind}"
+    sid = f"{prefix}-{index:03d}-{kind}"
     parts = contention(rng, sid, **kw) if kind == "contention" else BUILDERS[kind](rng, sid)
     inst: Instance = parts["inst"]
     base = policy_constraints(inst)
     week = parts.get("week")
-    baseline = TimetableSolver(inst, base, time_limit=20).solve()
+    # a generated department needs up to about 30 s to an optimal baseline on one worker
+    baseline = TimetableSolver(inst, base, time_limit=180 if kind == "scale" else 20, workers=workers).solve()
     if not baseline.ok:
         raise RuntimeError(f"{sid}: base instance infeasible")
     profiles = _with_family(parts, family) if family else parts["profiles"]
@@ -452,7 +588,7 @@ def build(kind: str, index: int, seed: int, family: Family | None = None, **kw) 
                   base=base, planted=parts["planted"], baseline=baseline.assignment, week=week,
                   profiles=profiles, ledger=parts.get("ledger", []), raw_requests=parts["raw"],
                   private=parts.get("private", []), family=family)
-    sc.oracle = compute_oracle(sc)
+    sc.oracle = compute_oracle(sc, workers=workers)
     return sc
 
 
@@ -470,6 +606,19 @@ def generate(seed: int = 0, families: bool = True) -> list[Scenario]:
     return out
 
 
+def generate_hard(seed: int = 1) -> list[Scenario]:
+    """The 30 hard-tier scenarios (IDs ``H-...``), cycling through the five
+    hard families within each kind."""
+    rng = random.Random(seed)
+    seen: Counter[str] = Counter()
+    out = []
+    for i, (kind, kw) in enumerate(HARD_MIX, 1):
+        family = HARD_FAMILIES[seen[kind] % len(HARD_FAMILIES)]
+        seen[kind] += 1
+        out.append(build(kind, i, rng.randrange(10**9), family=family, prefix="H", workers=1, **kw))
+    return out
+
+
 def save(scenarios: list[Scenario], path: Path) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("w", encoding="utf-8") as f:
@@ -483,12 +632,19 @@ def load(path: Path) -> list[Scenario]:
 
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--seed", type=int, default=0)
-    ap.add_argument("--out", type=Path, default=Path("data/scenarios.jsonl"))
+    ap.add_argument("--seed", type=int, default=None, help="default 0, or 1 with --hard")
+    ap.add_argument("--out", type=Path, default=None,
+                    help="default data/scenarios.jsonl, or data/scenarios-hard.jsonl with --hard")
     ap.add_argument("--no-families", action="store_true",
                     help="deterministic legacy stakeholders instead of the four policy families")
+    ap.add_argument("--hard", action="store_true", help="the 30 hard-tier scenarios instead of the 60")
     args = ap.parse_args()
-    scenarios = generate(args.seed, families=not args.no_families)
+    if args.hard:
+        scenarios = generate_hard(1 if args.seed is None else args.seed)
+        args.out = args.out or Path("data/scenarios-hard.jsonl")
+    else:
+        scenarios = generate(args.seed or 0, families=not args.no_families)
+        args.out = args.out or Path("data/scenarios.jsonl")
     save(scenarios, args.out)
 
     print(f"wrote {len(scenarios)} scenarios to {args.out}")

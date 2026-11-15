@@ -1,0 +1,52 @@
+# The intent reader's training data (python -m training.dataset build --recipe data/recipes/intents-v4.toml):
+# intents-v3 and two generators for what the v3 model missed on the suites (reason_firmness: a reason that
+# rules the other days out; term_span: "until the end of the term"), held out to the reasons and terms suites.
+# Everything from v3 is kept as it was, so the same seeds make the same rows and an adapter updated from the
+# v3 one with INIT_FROM reads only the new ones.
+name = "intents-v4"
+instance = "data/synthetic-cse-s0.json"
+
+[output]
+dir = "data/compiler-intents"   # train, val, test and manifest.json
+suites = "data/suites"          # held-out wordings and the noisy test split, for evaluation only
+
+[frozen]
+# the test split every model has been scored on since evaluation.intents began (messages, gold and what it
+# resolves against; not the system prompt). The build refuses to change it without --refreeze.
+# Superseded: intents-v5 refroze the test split (lunch-slot rows relabelled by placement_is_hard), so this
+# recipe now builds only with --refreeze; its models were rescored on the new split (runs/*refrozen*).
+test = "6efe890a35a784b2"
+
+[base]                          # intent_compiler.base_rows: the corpus and intent_corpus's generators
+corpus = ["data/requests.jsonl", "data/requests-para.jsonl"]
+extra_denials = 150
+min_per_action = 50
+per_generator = 70
+max_per_kind = 78
+train_only = 30
+
+[generators]                    # intent_generators.REGISTRY; held-out wordings go to their suites
+per_generator = 90
+held_per_generator = 40
+seed = 200
+# the generators this recipe was built with; later ones in REGISTRY belong to later recipes
+names = ["firmness", "only_firmness", "which_to", "relative_span", "multi", "club_more", "vague",
+         "reason_firmness", "term_span"]
+
+[stored.mined]                  # training.mine: the model's mistakes, with gold from the generators
+paths = ["data/compiler-intents/mined.jsonl"]
+split = "train"
+relabel = true                  # made by code under the old rule for moves: relabel by the current one
+
+[stored.human]                  # training.human: messages people labelled (reviewed only)
+kind = "human"
+paths = ["data/human/*.jsonl"]
+
+[augment]                       # noisy twins of training rows, kept only if they mean the same
+fraction = 0.35
+levels = ["typo", "shorthand", "casual", "noisy"]
+seed = "v3"
+origins = ["base", "generators"]
+
+[suites]
+noisy_levels = ["typo", "noisy"]

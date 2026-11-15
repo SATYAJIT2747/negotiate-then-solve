@@ -65,11 +65,11 @@ class ModelLink:
         self._set(False, f"{type(e).__name__}: {e}"[:300])
 
     def _set(self, up: bool, error: str | None) -> None:
-        changed = self.up is not up
+        changed, first = self.up is not up, self.up is None
         self.up, self.error = up, error
         if changed:
             self.since = time.time()
-            print(f"[model] {'reachable again' if up else 'unreachable, using the rule-based stand-ins'}"
+            print(f"[model] {('reachable' if first else 'reachable again') if up else 'unreachable, using the rule-based stand-ins'}"
                   + (f": {error}" if error else ""), flush=True)
             if self.on_change is not None:
                 self.on_change(up, error)
@@ -87,6 +87,29 @@ def _outage(e: BaseException) -> bool:
                                             " 502", " 503", " 504"))
 
 
+def _reset(e: BaseException) -> bool:
+    """A connection the server closed mid-call (``ConnectionResetError``, WinError 10054): usually momentary,
+    unlike a server that is not there at all."""
+    seen: BaseException | None = e
+    while seen is not None:
+        if isinstance(seen, (ConnectionResetError, ConnectionAbortedError)) or isinstance(
+                getattr(seen, "reason", None), (ConnectionResetError, ConnectionAbortedError)):
+            return True
+        if any(w in str(seen).lower() for w in ("connection reset", "forcibly closed", "10054", "connectionreset")):
+            return True
+        seen = seen.__cause__ or seen.__context__
+    return False
+
+
+# set on a thread reading a request that may wait for the model (``web.world.World._hold``): an outage of the
+# request reader then raises ``ModelAway`` instead of handing the request to the stand-in
+WAIT_FOR_MODEL = threading.local()
+
+
+class ModelAway(Exception):
+    """The request reader's model went away during the call, and the request may wait for it."""
+
+
 class Fallback:
     """One component: ``build(client)`` while the model is reachable, ``backup`` otherwise. A call
     that fails falls back for that call; an outage also marks the link down."""
@@ -95,6 +118,7 @@ class Fallback:
         self.link, self.build, self.backup, self.name = link, build, backup, name
         self._primary: Any = None
         self._for: Any = None  # the client the primary was built on
+        self._used = threading.local()  # who answered this thread's last call: "model" or "rules"
 
     def primary(self) -> Any | None:
         if not self.link.usable():
@@ -105,15 +129,26 @@ class Fallback:
 
     def _call(self, method: str, *args, **kwargs):
         p = self.primary()
+        if p is None and self._waits():
+            raise ModelAway(self.link.error or "the model is not reachable")
         if p is not None:
             try:
-                return getattr(p, method)(*args, **kwargs)
+                out = getattr(p, method)(*args, **kwargs)
+                self._used.who = "model"
+                return out
             except Exception as e:  # noqa: BLE001 - the stand-in answers instead
                 if _outage(e):
                     self.link.failed(e)
+                    if self._waits():
+                        raise ModelAway(f"{type(e).__name__}: {e}") from e
                 print(f"[model] {self.name}: {type(e).__name__}: {str(e)[:160]}; rule-based stand-in used",
                       flush=True)
+        self._used.who = "rules"
         return getattr(self.backup, method)(*args, **kwargs)
+
+    def reader(self) -> str | None:
+        """Who answered this thread's last call: "model", or "rules" (the stand-in)."""
+        return getattr(self._used, "who", None)
 
     # the methods the pipeline calls
     def parse(self, *args, **kwargs):
@@ -126,12 +161,21 @@ class Fallback:
         if p is None or not hasattr(p, "compile"):
             return None
         try:
-            return p.compile(*args, **kwargs)
+            out = p.compile(*args, **kwargs)
+            if out is not None:
+                self._used.who = "model"
+            return out
         except Exception as e:  # noqa: BLE001 - the plain parse (and its stand-in) answers instead
             if _outage(e):
                 self.link.failed(e)
+                if self._waits():
+                    raise ModelAway(f"{type(e).__name__}: {e}") from e
             print(f"[model] {self.name}: {type(e).__name__}: {str(e)[:160]}; parsed without intents", flush=True)
             return None
+
+    def _waits(self) -> bool:
+        """Whether this call reads a request that may wait for the model, rather than go to the stand-in."""
+        return self.name == "parser" and getattr(WAIT_FOR_MODEL, "on", False)
 
     def review(self, *args, **kwargs):
         return self._call("review", *args, **kwargs)
