@@ -9,15 +9,14 @@ equipped lab on the same afternoon. F-301 and F-304 teach the smallest
 section, so moving their practical always disturbs the fewest students: on
 paper they are the cheaper ones to ask, every time.
 
-Three configurations meet identical sequences (same conflicts, same hidden
+Four configurations meet identical sequences (same conflicts, same hidden
 flexibility, scripted replies, no API):
 
-* ``ours``       tiers, weights, ledger credit and the fairness (dGini) term
+* ``ours``       tiers, weights, ledger credit (1 - 0.5^credit) and the fairness (dGini) term
 * ``no-ledger``  the same weights with the credit and dGini terms off: isolates the ledger
 * ``flat``       ablation A1: every constraint scores the same, no ledger
-* ``ours-smooth`` experimental: ours with credit 1 - 0.5^credit instead of min(1, credit),
-               so the credit term keeps growing after the first concession (the live
-               priority model is unchanged)
+* ``ours-capped`` the earlier live credit, min(1, credit): flat after about one
+               concession, so the ledger cannot tell one concession from three
 
 Reported per configuration, over run seeds: final burden per teacher, Gini,
 maximum burden and CV of weighted burden, resolution rate, rounds per
@@ -53,7 +52,7 @@ from .benchmark import (AFTERNOON, DAYS, FULL_DAY, MORNING, SEMESTER, Scenario, 
 from .negotiation import STAKEHOLDERS, WORKERS, _row
 from .stats import bootstrap_ci, mean, wilcoxon
 
-CONFIGS = ["ours", "no-ledger", "flat", "ours-smooth"]
+CONFIGS = ["ours", "no-ledger", "flat", "ours-capped"]
 SECTION_SIZES = {"G-A": 35, "G-B": 55, "G-C": 60}  # F-301 and F-304 teach G-A
 
 
@@ -106,22 +105,21 @@ def semester(seed: int, n: int, flex_p: float = 0.85) -> list[Scenario]:
     return out
 
 
-class SmoothCredit(PriorityModel):
-    """Credit 1 - 0.5^c: 0.5 after one unit of weighted burden, 0.75 after two,
-    so a third concession still costs more than a second (``min(1, c)`` is
-    flat after the first)."""
+class CappedCredit(PriorityModel):
+    """The earlier live credit, min(1, c): it stops growing after about one
+    concession (the live model uses 1 - 0.5^c)."""
 
     def credit(self, c) -> float:
-        return 1.0 - 0.5 ** self.ledger.credit(c.owner, self.semester) if c.owner else 0.0
+        return min(1.0, self.ledger.credit(c.owner, self.semester)) if c.owner else 0.0
 
 
 def negotiator(sc: Scenario, config: str, ledger: ConcessionLedger) -> Negotiator:
     flat = config == "flat"
     weights = Weights(credit=0.0, fairness=0.0) if config == "no-ledger" else Weights()
-    model = SmoothCredit if config == "ours-smooth" else PriorityModel
+    model = CappedCredit if config == "ours-capped" else PriorityModel
     pm = model(sc.instance, weights=weights, ledger=ledger, semester=SEMESTER, baseline=sc.baseline, flat=flat)
     return Negotiator(sc.instance, priority=pm, explainer=Explainer(sc.instance), ledger=ledger, semester=SEMESTER,
-                      use_ledger=config in ("ours", "ours-smooth"), time_limit=20, workers=WORKERS)
+                      use_ledger=config in ("ours", "ours-capped"), time_limit=20, workers=WORKERS)
 
 
 def disturbed(sc: Scenario, conceders: list[str]) -> int:
@@ -204,7 +202,7 @@ def main() -> None:
                   f"resolved={r['resolved']}/{args.conflicts} students={r['students_per_conflict']:.1f} times={r['times']}", flush=True)
     summary = {c: summarise(per[c], args.conflicts) for c in CONFIGS}
     paired = {}
-    for ref, c in (("ours", "no-ledger"), ("ours", "flat"), ("ours-smooth", "ours"), ("ours-smooth", "no-ledger")):
+    for ref, c in (("ours", "no-ledger"), ("ours", "flat"), ("ours", "ours-capped"), ("ours-capped", "no-ledger")):
         paired[f"{ref} vs {c}"] = {
             m: wilcoxon([r[m] for r in per[ref]], [r[m] for r in per[c]])
             for m in ("gini", "max", "students_per_conflict")

@@ -320,7 +320,7 @@ FAIRNESS_NAMES = {
     "ours": ("Our system", "with the concession ledger", True),
     "no-ledger": ("Same policy, no ledger", "isolates the ledger", False),
     "flat": ("Flat weights", "every option costs the same", False),
-    "ours-smooth": ("Smooth credit", "experimental, not in the live system", False),
+    "ours-capped": ("Capped credit", "the earlier credit, min(1, c)", False),
 }
 TEACHERS = {"F-301": "Teacher 1 (small section)", "F-302": "Teacher 2", "F-303": "Teacher 3",
             "F-304": "Teacher 4 (small section)"}
@@ -371,9 +371,9 @@ def fairness(runs: Path) -> list[dict]:
         [f"Flat weights look about as even (p = {p('ours vs flat', 'gini'):.2f}), but only because they ignore who is "
          f"affected: they move bigger sections ({s['flat']['students_per_conflict']:.1f} students per conflict against "
          f"{s['ours']['students_per_conflict']:.1f}, {_p(p('ours vs flat', 'students_per_conflict'))}).",
-         f"A smoother credit would spread it further (Gini {s['ours-smooth']['gini']:.2f}, "
-         f"{_p(p('ours-smooth vs ours', 'gini'))}): the live ledger's credit stops growing after about one concession."
-         if "ours-smooth" in s else "",
+         f"The earlier capped credit spread it less (Gini {s['ours-capped']['gini']:.2f}, "
+         f"{_p(p('ours vs ours-capped', 'gini'))}): it stopped growing after about one concession, so the live "
+         f"ledger now uses 1 - 0.5^c." if "ours-capped" in s else "",
          "The 60-scenario benchmark cannot show this: its conflicts rarely meet the same person twice."],
         {"columns": [_col("gini", "Unevenness (Gini)", "num", "low"),
                      _col("most", "Most times one teacher gave way", "num", "low"),

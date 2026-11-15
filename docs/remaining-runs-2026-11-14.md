@@ -80,8 +80,13 @@ Paired Wilcoxon over the 10 semesters:
 - **Smooth credit vs ours:** Gini -0.045 (p = 0.012), max -1.3 (p = 0.03),
   +1.0 student per conflict. `PriorityModel.credit` caps credit at 1.0, which
   one concession nearly reaches, so after that the ledger cannot tell one
-  concession from three. `1 - 0.5^credit` keeps growing. Not applied to the
-  live system; it would change the deployed behaviour and the headline runs.
+  concession from three. `1 - 0.5^credit` keeps growing.
+- **Update 2026-11-15: the smooth credit is now live.** `PriorityModel.credit`
+  returns `1 - 0.5^credit`; the stress test's `ours` is the live credit and
+  `ours-capped` the earlier `min(1, credit)`. A rerun reproduced the rows
+  above exactly (old `ours-smooth` = new `ours`; old `ours` = new
+  `ours-capped`). The 60-scenario main runs (Sections 1-2) used the capped
+  credit and were not rerun; their one-off conflicts rarely reach the ledger.
 
 ## 4. Fine-tuning: prompted base 4B on parsing (Benchmark B, 151 test)
 
