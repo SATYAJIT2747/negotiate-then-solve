@@ -377,10 +377,12 @@ class Study:
     def label(self, code: str, task: str, item: str, value: dict) -> dict:
         return self._append("labels.jsonl", {"code": code, "task": task, "item": item, "value": value})
 
-    def labels(self) -> dict[tuple[str, str], dict[str, dict]]:
-        """{(task, code): {item: value}}, the latest label of each item."""
+    def labels(self, human_only: bool = False) -> dict[tuple[str, str], dict[str, dict]]:
+        """{(task, code): {item: value}}, the latest label of each item. ``human_only``: only labels a person
+        could have given (``paced``); the latest of those for each item."""
+        rows = self._read("labels.jsonl")
         out: dict[tuple[str, str], dict[str, dict]] = defaultdict(dict)
-        for r in self._read("labels.jsonl"):
+        for r in paced(rows) if human_only else rows:
             out[(r["task"], r["code"])][r["item"]] = r["value"]
         return out
 
@@ -448,10 +450,44 @@ def _vs_machine(by_rater: dict[str, dict[str, object]], machine: dict[str, objec
     return out
 
 
-def analyse(study: Study, judge_ratings: dict[str, dict] | None = None) -> dict:
+MIN_GAP_S = 3.0  # no one reads an item and answers it in less
+
+
+def paced(rows: list[dict], min_gap: float = MIN_GAP_S) -> list[dict]:
+    """The labels a person could have given: within one code and task, a label saved less than ``min_gap``
+    seconds after the one before it or before the one after it is left out. On 2026-11-15 the remaining
+    items of every team code (and a pilot's ratings) were filled in bursts, 67 labels in 12 seconds; the
+    first label of a burst goes too, so a person's last label before one may be lost, never a burst's."""
+    by: dict[tuple[str, str], list[dict]] = defaultdict(list)
+    for r in rows:
+        by[(r["code"], r["task"])].append(r)
+    kept = []
+    for rs in by.values():
+        rs = sorted(rs, key=lambda r: r["at"])
+        ts = [datetime.fromisoformat(r["at"]).timestamp() for r in rs]
+        for k, r in enumerate(rs):
+            before = ts[k] - ts[k - 1] if k else None
+            after = ts[k + 1] - ts[k] if k + 1 < len(ts) else None
+            if all(g is None or g >= min_gap for g in (before, after)):
+                kept.append(r)
+    return sorted(kept, key=lambda r: r["at"])
+
+
+def human_share(study: Study) -> dict[str, dict[str, dict[str, int]]]:
+    """{code: {task: {"kept": n, "left_out": m}}} items, for the report: what ``paced`` keeps."""
+    every, human = study.labels(), study.labels(human_only=True)
+    out: dict[str, dict[str, dict[str, int]]] = defaultdict(dict)
+    for (task, code), vals in every.items():
+        kept = len(human.get((task, code), {}))
+        out[code][task] = {"kept": kept, "left_out": len(vals) - kept}
+    return dict(out)
+
+
+def analyse(study: Study, judge_ratings: dict[str, dict] | None = None, human_only: bool = True) -> dict:
+    """Results from the human labels only (``paced``), unless ``human_only`` is False."""
     items = {t: [] for t in TASKS} | (study.items() or {})
     ps = study.active()  # a revoked participant's answers count nowhere
-    labels = study.labels()
+    labels = study.labels(human_only=human_only)
     team = {c for c, p in ps.items() if p["kind"] == "team"}
     pilot = {c for c, p in ps.items() if p["kind"] == "pilot"}
 
@@ -497,9 +533,9 @@ def analyse(study: Study, judge_ratings: dict[str, dict] | None = None) -> dict:
                          "h3_team": _h3(rating_rows, meta, "team")}
 
     live = [r for r in study.live_rows() if r["code"] in ps]
-    understood = Counter(r["value"] for r in live if r["kind"] == "understood")
+    understood = Counter(r["value"] for r in live if r["kind"] == "understood" and "value" in r)
     reply_checks = [r for r in live if r["kind"] == "reply"]
-    live_ratings = [r for r in live if r["kind"] == "rating"]
+    live_ratings = [r for r in live if r["kind"] == "rating" and isinstance(r.get("value"), dict)]
     report["live"] = {
         "requests_checked": sum(understood.values()), "understood": dict(understood),
         "replies": len(reply_checks),
@@ -509,7 +545,7 @@ def analyse(study: Study, judge_ratings: dict[str, dict] | None = None) -> dict:
         "acceptability": mean([r["value"]["acceptability"] for r in live_ratings]),
     }
     for topic in ("timetable", "rules"):  # "was this answer right?" on the assistant's answers
-        got = Counter(r["value"] for r in live if r["kind"] == "answer" and r.get("step") == topic)
+        got = Counter(r["value"] for r in live if r["kind"] == "answer" and r.get("step") == topic and "value" in r)
         report["live"][f"{topic}_answers"] = dict(got)
     surveys = [r["value"] for r in live if r["kind"] == "survey" and isinstance(r.get("value"), dict)]
     report["live"]["survey"] = {"n": len(surveys), **{k: mean([v[k] for v in surveys if isinstance(v.get(k), int)])
@@ -544,10 +580,10 @@ def _h3(rows: list[tuple], meta: dict[str, dict], kind: str) -> dict:
     return out
 
 
-def write_ratings_csv(study: Study, path: Path) -> int:
-    """Team ratings in the ``evaluation.judge --kappa`` format."""
+def write_ratings_csv(study: Study, path: Path, human_only: bool = True) -> int:
+    """Team ratings in the ``evaluation.judge --kappa`` format (the human ones, ``paced``)."""
     ps = study.active()
-    rows = [(i, code, v["clarity"], v["acceptability"]) for (task, code), vals in study.labels().items()
+    rows = [(i, code, v["clarity"], v["acceptability"]) for (task, code), vals in study.labels(human_only).items()
             if task == "ratings" and ps.get(code, {}).get("kind") == "team" for i, v in vals.items()]
     with path.open("w", newline="", encoding="utf-8") as f:
         w = csv.writer(f)
@@ -568,6 +604,8 @@ def main() -> None:
     ar.add_argument("--force", action="store_true", help="replace rule items that already have labels")
     r = sub.add_parser("report", help="kappas, H3 and the live checks")
     r.add_argument("--judge", type=Path, default=Path("runs/judge-ratings.json"))
+    r.add_argument("--all-labels", action="store_true",
+                   help="count every label, the bursts no person could have given too (default: only paced ones)")
     for p in (b, ar, r):
         p.add_argument("--dir", type=Path, default=Path("runs/study"))
     args = ap.parse_args()
@@ -600,8 +638,10 @@ def main() -> None:
               "| replies by label:", dict(Counter(i["machine"] for i in items["replies"])))
     else:
         judge = json.loads(args.judge.read_text(encoding="utf-8")) if args.judge.exists() else None
-        print(json.dumps(analyse(study, judge), indent=1))
-        n = write_ratings_csv(study, study.root / "human_ratings.csv")
+        report = analyse(study, judge, human_only=not args.all_labels)
+        report["human_labels"] = human_share(study)
+        print(json.dumps(report, indent=1))
+        n = write_ratings_csv(study, study.root / "human_ratings.csv", human_only=not args.all_labels)
         print(f"{n} team ratings -> {study.root / 'human_ratings.csv'} (evaluation.judge --kappa)")
 
 

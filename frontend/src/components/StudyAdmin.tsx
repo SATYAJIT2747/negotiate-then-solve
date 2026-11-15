@@ -71,8 +71,8 @@ export function StudyAdmin() {
                 Each item goes to two team raters, rotating through every pair, so with {data.analysis.participants.team || "N"} raters each does about{" "}
                 {data.analysis.participants.team > 2 ? `${Math.round(200 / data.analysis.participants.team)}%` : "all"} of a task. Agreement needs both labels.
               </p>
-              <div className="mt-2.5 grid gap-3 sm:grid-cols-3">
-                {(["ratings", "claims", "replies"] as const).map((t) => {
+              <div className="mt-2.5 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+                {(["ratings", "claims", "replies", "rules"] as const).map((t) => {
                   const c = data.analysis!.coverage[t];
                   return (
                     <div key={t}>
@@ -103,6 +103,7 @@ export function StudyAdmin() {
                       <th className="py-2 font-medium">Ratings</th>
                       <th className="py-2 font-medium">Claims</th>
                       <th className="py-2 font-medium">Replies</th>
+                      <th className="py-2 font-medium">Rule answers</th>
                       <th className="py-2" />
                     </tr>
                   </thead>
@@ -114,7 +115,7 @@ export function StudyAdmin() {
                         <td className="py-2">
                           {p.answers_deleted ? <Badge tone="bad">withdrawn</Badge> : p.revoked ? <Badge tone="warn">revoked</Badge> : p.consented ? <Badge tone="ok">given</Badge> : <Badge>not yet</Badge>}
                         </td>
-                        {(["ratings", "claims", "replies"] as const).map((t) => (
+                        {(["ratings", "claims", "replies", "rules"] as const).map((t) => (
                           <td key={t} className="py-2 font-mono text-ink-2">{p.progress[t] && !p.answers_deleted ? `${p.progress[t]!.done}/${p.progress[t]!.total}` : "—"}</td>
                         ))}
                         <td className="py-2 text-right">

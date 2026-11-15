@@ -515,6 +515,8 @@ def main() -> None:
                     help="comma-separated run seeds for the stakeholders' stochastic replies; only "
                          f"{','.join(PRIMARY)} (and offline ours) repeat over them, the rest use the first "
                          f"(default: {','.join(map(str, SEEDS))} with --plan, else 0)")
+    ap.add_argument("--ablation-all-seeds", action="store_true",
+                    help="repeat A1-A3 (and A1-offline) over every seed too, so each pairs with ours seed by seed")
     ap.add_argument("--pipeline", action="store_true",
                     help="run the negotiating configurations through the request pipeline the app runs "
                          "(Orchestrator: submit, solve and negotiate, approve) instead of the negotiator alone")
@@ -570,7 +572,8 @@ def main() -> None:
         elif config == "B1" and args.b1_subset:
             runs = stratified(scenarios, args.b1_subset)
         rows, ledgers = [], []
-        for seed in seeds if config in [*PRIMARY, "ours"] else seeds[:1]:
+        repeat = [*PRIMARY, "ours"] + (["A1", "A2", "A3", "A1-offline"] if args.ablation_all_seeds else [])
+        for seed in seeds if config in repeat else seeds[:1]:
             shared = ConcessionLedger()  # one semester of conflicts per seed
             ledgers.append(shared)
             for sc in runs:

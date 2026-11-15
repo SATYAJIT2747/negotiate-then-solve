@@ -602,7 +602,7 @@ Oracle & Solver that knows everyone's hidden flexibility & Best possible\\
 % ==================================================================
 \section{Evaluations}
 % ==================================================================
-\subsection{Main result: grounding beats generate-and-filter (H1, H2)}
+\subsection{Main result: grounding beats generate-and-filter (H1, H2)}\label{sec:main}
 \begin{figure}[H]
 \centering
 \begin{minipage}{0.49\textwidth}
@@ -797,7 +797,7 @@ F-304) teach the smallest section, so moving them is always ``cheapest'' on pape
 \end{minipage}\hfill
 \begin{minipage}{0.57\textwidth}
 \begin{tikzpicture}
-\begin{axis}[ybar, bar width=11pt, ymin=0, ymax=12, height=4.1cm, width=\linewidth,
+\begin{axis}[ybar, bar width=11pt, ymin=0, ymax=13, height=4.1cm, width=\linewidth,
   axis x line*=bottom, axis y line*=left, ymajorgrids, major tick length=0pt,
   grid style={densely dashed,draw=black!15}, axis line style={draw=black!45},
   symbolic x coords={F-301,F-302,F-303,F-304}, xtick=data,
@@ -806,7 +806,7 @@ F-304) teach the smallest section, so moving them is always ``cheapest'' on pape
   title style={font=\small\bfseries,yshift=-4pt},
   nodes near coords, every node near coord/.append style={font=\scriptsize\bfseries,text=black!80},
   area legend,
-  legend style={font=\tiny,at={(0.5,1.0)},anchor=south,legend columns=2,draw=none,yshift=6pt},
+  legend style={font=\tiny,at={(0.5,1.0)},anchor=north,legend columns=2,draw=none,fill=none},
   enlarge x limits=0.15]
 \addplot[fill=greyb,draw=greyb!70!black] coordinates {(F-301,9.0) (F-302,2.9) (F-303,2.8) (F-304,9.3)};
 \addplot[fill=ours,draw=ours!70!black] coordinates {(F-301,6.8) (F-302,5.2) (F-303,4.7) (F-304,7.3)};
@@ -828,7 +828,7 @@ The earlier capped credit was less fair (0.18, $p{=}0.012$), so the live system 
 
 \subsection{Explanations and the human study (H3)}
 Grounded explanations name the \emph{constraint}, never the private reason: \textbf{0}
-leaks vs \textbf{12} for free text (A2), with first-offer acceptance not lower (4/19 vs 2/19).
+leaks vs \textbf{12} for free text (A2; in 4 of 30 scenarios, so not significant), with first-offer acceptance not lower (4/19 vs 2/19).
 Team members, blind to the system, then rated messages and labelled claims. Free text was rated
 \emph{more} acceptable (3.77 vs 3.41, 22 paired items, 3 raters, Wilcoxon $p{=}0.019$), with equal
 clarity (3.73 vs 3.64, $p{=}0.71$). Humans agreed on claim support only at $\kappa{=}0.39$
@@ -841,9 +841,13 @@ tool call in all 40 labelled cases.
 \begin{tikzpicture}
   \node[gblk,text width=8.2cm,align=left,font=\small,inner sep=7pt,anchor=north] (g) at (0,0) {\textbf{Grounded (ours).}
     ``Your request for Lab~2 on Tuesday afternoon could not be met. \textbf{Why:} Dr.\ Das's networking
-    lab also needs Lab~2 then$^{[a_D]}$, and Lab~2 is the only room with routers$^{[R]}$.
-    \textbf{Options:} (a) Thursday afternoon in Lab~2, GPUs free$^{[x_1]}$; (b) Tuesday afternoon in
-    Lab~4, without GPUs$^{[x_2]}$.''\\[4pt]{\scriptsize\itshape every tagged claim is checked against solver facts}};
+    lab also needs Lab~2 then$^{[1]}$, and Lab~2 is the only room with routers$^{[2]}$.
+    \textbf{Options:} (a) Thursday afternoon in Lab~2, GPUs free$^{[3]}$; (b) Tuesday afternoon in
+    Lab~4, without GPUs$^{[4]}$.''\\[4pt]{\scriptsize Cited facts:
+    \textsf{[1]} the clash constraint in the solver's conflict core;
+    \textsf{[2]} \texttt{RES-routers} (rooms with routers);
+    \textsf{[3]}, \textsf{[4]} \texttt{OPT-a}, \texttt{OPT-b} (options the solver re-solved).
+    \itshape A claim citing no fact, or naming a day, room or number missing from its fact, is dropped.}};
   \node[rblk,text width=8.2cm,align=left,font=\small,inner sep=7pt,anchor=north west] (f) at ([xshift=3mm]g.north east) {\textbf{Free text (A2), illustrative.}
     ``Hi Dr.\ Khan! Unfortunately Dr.\ Das needs the lab \textcolor{badred}{\textbf{because of a medical appointment
     later in the week}}, so we would love it if you could move to another day. Thursday should work fine for
@@ -878,15 +882,34 @@ only the left one is safe to send.}
 % ==================================================================
 \section{Ablations}
 % ==================================================================
-An ablation changes exactly one thing. Table~\ref{tab:abl} pairs A1--A3 with ours on the same
-30 scenarios and seed; Table~\ref{tab:ablall} covers the rest of the system.
+An ablation changes exactly one thing. Table~\ref{tab:ablsetup} shows what each one swaps out;
+Table~\ref{tab:abl} pairs A1--A3 with ours on the same 30 scenarios and seed; Table~\ref{tab:ablall}
+covers the rest of the system.
+
+\begin{table}[H]
+\centering\footnotesize
+\setlength{\tabcolsep}{4pt}
+\rowcolors{2}{white}{greyfill}\begin{tabular}{l l l}
+\arrayrulecolor{secblue}\toprule\arrayrulecolor{black}
+\hdr & \hd{Ablation uses} & \hd{Ours uses}\\
+\arrayrulecolor{secblue}\midrule\arrayrulecolor{black}
+A1 & flat priorities: every request equal, no ledger & tiers + weights + ledger\\
+A2 & free text written from the raw requests (private reasons included) & grounded claims that must cite facts\\
+A3 & regex keyword rules to read replies & 4B LoRA tool call\\
+\arrayrulecolor{secblue}\bottomrule\arrayrulecolor{black}
+\end{tabular}
+\caption{The one thing each ablation swaps. Held fixed: solver options, 4B LoRA agent, Gemini
+Flash-Lite simulated people, the same 30 scenarios, seed 0. Ablated elsewhere: option source (B3/B4),
+ledger credit (Figure~\ref{fig:fair}), retrieval, safety and readers (Table~\ref{tab:ablall}).}
+\label{tab:ablsetup}
+\end{table}
 
 \begin{table}[H]
 \centering\footnotesize
 \setlength{\tabcolsep}{4pt}
 \rowcolors{2}{white}{greyfill}\begin{tabularx}{\textwidth}{l C C C C C C C C}
 \arrayrulecolor{secblue}\toprule\arrayrulecolor{black}
-\hdr \hd{30 paired scenarios} & \hd{Resolved} & \hd{Correct} & \hd{New conceder} & \hd{Classes moved} & \hd{Options omitted} & \hd{Private leaks} & \hd{1st offer OK} & \hd{Gini}\\
+\hdr \hd{30 paired scenarios} & \hd{Resolved} & \hd{Correct} & \hd{Other person gives way} & \hd{Classes moved} & \hd{Options omitted} & \hd{Private leaks} & \hd{1st offer OK} & \hd{Gini}\\
 \arrayrulecolor{secblue}\midrule\arrayrulecolor{black}
 \oursrow\textbf{Ours} & 10/13 & 27/30 & -- & 2.00 & \textbf{0} & \textbf{0} & \textbf{4/19} & \textbf{0.25}\\
 A1 Flat weights & 10/13 & 27/30 & 0/10 & 2.00 & 0 & 0 & 4/19 & 0.25\\
@@ -894,15 +917,18 @@ A2 Free-text explanations & 10/13 & 27/30 & 1/10 & 2.06 & 10 & 12 & 2/19 & 0.30\
 A3 Regex reply handler & 10/13 & 27/30 & 1/10 & 2.06 & 0 & 0 & 2/19 & 0.30\\
 \arrayrulecolor{secblue}\midrule\arrayrulecolor{black}
 \hiderowcolors
-\multicolumn{9}{l}{\emph{All 60 scenarios, scripted replies (no LLM):}}\\
+\multicolumn{9}{l}{\emph{Current code, all 60 scenarios $\times$ 3 seeds, scripted replies (no LLM):}}\\
 \showrowcolors
-\oursrow\textbf{Ours} & 23/30 & 53/60 & -- & 1.77 & 0 & 0 & 32\% & \textbf{0.185}\\
-A1 Flat weights & 22/30 & 52/60 & 1/22 & 1.76 & 0 & 0 & 29\% & 0.227\\
+\oursrow\textbf{Ours} & 85/90 & 175/180 & -- & 1.81 & 0 & 0 & \textbf{29\%} & \textbf{0.149}\\
+A1 Flat weights & 84/90 & 174/180 & 2/84 & 1.80 & 0 & 0 & 21\% & 0.154\\
 \arrayrulecolor{secblue}\bottomrule\arrayrulecolor{black}
 \end{tabularx}
-\caption{Paired ablations (same scenario and seed). Outcomes match \emph{by design}: simulated people
-decide from the offered options alone, and one-off conflicts rarely let A1's ledger re-rank anyone. Only
-the leaks are significant. \emph{Options left out}: offered but never mentioned in the message.}
+\caption{Each ablation vs ours on the same scenarios. Resolved and Correct match because the simulated
+people can only pick from the options offered. \textbf{Top:} no difference is significant; the small changes
+are noise. With 3 seeds on the current code, free text (A2) leaks private reasons significantly more
+(35 vs 0, $p{=}0.026$). \textbf{Bottom:} without tiers and the ledger (A1), fewer first offers are accepted
+(21\% vs 29\%, $p{=}0.002$). \emph{Other person gives way}: a different person conceded than in ours.
+\emph{Options omitted}: offered but not mentioned in the message.}
 \label{tab:abl}
 \end{table}
 

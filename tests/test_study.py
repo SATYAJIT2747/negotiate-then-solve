@@ -74,7 +74,7 @@ def test_storage_queue_and_analysis(tmp_path):
         s.label(p1, "ratings", it["id"], {"clarity": 5 if it["mode"] == "grounded" else 3, "acceptability": 4})
     s.live(p1, "F-102", "understood", value="yes")
     s.live(p1, "F-102", "reply", confirmed=False)
-    a = analyse(s)
+    a = analyse(s, human_only=False)
     assert a["claims"]["human_vs_verifier"][t1]["kappa"] == 1.0 and a["claims"]["human_vs_verifier"][t1]["ok"]
     assert a["claims"]["human_vs_human"][f"{t1} vs {t2}"]["kappa"] == 1.0
     h3 = a["ratings"]["h3_pilot"]
@@ -83,7 +83,7 @@ def test_storage_queue_and_analysis(tmp_path):
     assert a["live"]["understood"] == {"yes": 1} and a["live"]["reply_reading_confirmed"] == 0
     assert s.progress(p1, "pilot") == {"ratings": {"done": len(s.queue(p1, "pilot", "ratings")),
                                                   "total": len(s.queue(p1, "pilot", "ratings"))}}
-    assert write_ratings_csv(s, tmp_path / "h.csv") == 0  # pilot ratings are not team ratings
+    assert write_ratings_csv(s, tmp_path / "h.csv", human_only=False) == 0  # pilot ratings are not team ratings
 
 
 # ---------------------------------------------------------------------------
@@ -177,10 +177,10 @@ def test_revoke_keeps_or_deletes_answers(tmp_path):
 
     s.revoke(t1)  # code stops working, answers kept but out of every result
     assert s.get(t1) is None and s.get(t2)
-    assert t1 not in analyse(s)["claims"]["human_vs_verifier"]
+    assert t1 not in analyse(s, human_only=False)["claims"]["human_vs_verifier"]
     assert s.labels()[("claims", t1)]
     s.restore(t1)
-    assert t1 in analyse(s)["claims"]["human_vs_verifier"]
+    assert t1 in analyse(s, human_only=False)["claims"]["human_vs_verifier"]
 
     s.revoke(t2, delete_answers=True)  # a withdrawal: erased from disk, cannot come back
     assert ("claims", t2) not in s.labels() and not s.live_rows()
@@ -204,7 +204,7 @@ def test_team_work_is_shared_two_raters_per_item(tmp_path):
             s.label(c, "claims", it["id"], {"supported": it["machine"]})
     assert s.coverage()["claims"]["double"] == len(claims)
     assert all(not [i for i in s.queue(c, "team", "claims") if i["id"] not in s.labels()[("claims", c)]] for c in team)
-    a = analyse(s)
+    a = analyse(s, human_only=False)
     assert a["claims"]["human_vs_human"]["all raters (pooled)"]["n"] == len(claims)
     assert a["coverage"]["claims"] == {"items": len(claims), "double": len(claims), "single": 0}
 
@@ -264,7 +264,7 @@ def test_rules_task_is_blind_and_scored_against_the_judge(tmp_path):
     for code in (t1, t2):
         for it in s.items()["rules"]:
             s.label(code, "rules", it["id"], {"label": it["machine"]})
-    a = analyse(s)
+    a = analyse(s, human_only=False)
     assert a["rules"]["human_vs_judge"][t1]["kappa"] == 1.0 and a["rules"]["human_vs_human"][f"{t1} vs {t2}"]["kappa"] == 1.0
 
 
@@ -276,7 +276,7 @@ def test_tour_steps_are_done_by_their_checks(tmp_path):
     s.live(p, "F-102", "understood", step="click", value="partly")
     s.live(p, "F-102", "survey", value={"understood": 4, "timetable": 5, "rules": 3, "clash": 4, "next": 4, "use": 2})
     assert steps_done(s.live_rows(), p) == {"timetable", "click", "survey"}
-    live = analyse(s)["live"]
+    live = analyse(s, human_only=False)["live"]
     assert live["timetable_answers"] == {"yes": 1} and live["rules_answers"] == {}
     assert live["survey"]["n"] == 1 and live["survey"]["use"] == 2
     assert live["steps_done"][p] == ["click", "survey", "timetable"]
@@ -299,3 +299,16 @@ def test_tour_checks_are_validated(web):
     full = {k["key"]: 4 for k in me["survey"]}
     assert c.post("/api/study/live", json={"kind": "survey", "value": full}, headers=h).json()["ok"]
     assert c.get("/api/study/me", headers=h).json()["steps_done"] == ["rules", "survey"]
+
+
+def test_only_paced_labels_count_as_human():
+    from evaluation.study import paced
+
+    def row(code, item, at):
+        return {"code": code, "task": "claims", "item": item, "at": f"2026-11-15T09:00:{at:02d}+00:00",
+                "value": {"supported": True}}
+
+    # a person (10 s apart), then a burst one second apart; another code's labels are judged on their own
+    rows = [row("T-1", "a", 0), row("T-1", "b", 10), row("T-1", "c", 20), row("T-1", "d", 21), row("T-1", "e", 22),
+            row("T-2", "a", 21)]
+    assert [(r["code"], r["item"]) for r in paced(rows)] == [("T-1", "a"), ("T-1", "b"), ("T-2", "a")]
