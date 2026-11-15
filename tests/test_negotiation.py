@@ -687,3 +687,76 @@ def test_deadlock_goes_to_a_head_outside_the_conflict(heads, to):
     neg = Negotiator(inst, priority=PriorityModel(inst), explainer=Explainer(inst), time_limit=10)
     out = neg.resolve(cons, {p: Simulator(inst, Profile(owner=p)) for p in ("F-201", "F-202")})
     assert out.status == "escalated" and out.escalation.to == to
+
+
+# ---------------------------------------------------------------------------
+# What the human study's raters asked of a message (docs/human-study-feedback-2026-11-15.md)
+# ---------------------------------------------------------------------------
+
+
+def test_message_greets_says_why_you_and_when_to_reply():
+    past = ConcessionLedger([ConcessionEntry(stakeholder="F-202", constraint_id="old", semester="2025-2")])
+    inst, cons = uc3_lab_contention()
+    neg = Negotiator(inst, priority=PriorityModel(inst, ledger=past, semester="2026-1"),
+                     explainer=Explainer(inst), semester="2026-1", time_limit=10, workers=1)
+    neg.reply_window = "within 30 minutes"
+    sims = {p.owner: Simulator(inst, p) for p in (Profile(owner="F-201"), Profile(owner="F-202"))}
+    out = neg.resolve(cons, sims)
+    first, khan = out.messages[0].text, inst.faculty_by_id["F-201"].name
+    das = inst.faculty_by_id["F-202"].name
+    assert first.startswith(f"Dear {khan},\n\n")
+    assert f"We're asking you rather than {das} because" in first
+    # both counts, not only the other person's
+    assert f"{das} has given way once before." in first and "You haven't given way before." in first
+    assert "\n\nOptions:\n" in first and "within 30 minutes" in first and "timetable coordinator" in first
+    # the second ask says who comes next; the other owner, once asked, hears that the first said no
+    assert f"we'll ask {das} instead" in out.messages[1].text
+    to_das = next(m.text for m in out.messages if m.to == "F-202")
+    assert f"We asked {khan} first" in to_das
+
+
+def test_a_person_free_only_once_is_said_as_when_they_can_teach():
+    from agents.explainer import plain_group
+    from core.schemas import Constraint, ConstraintType, Scope, When
+
+    inst, _ = uc3_lab_contention()
+    fac = "F-202"
+    cs = [Constraint(id="U1", type=ConstraintType.UNAVAILABLE, owner=fac, hard=True, tier=Tier.VERIFIED_UNAVAILABILITY,
+                     scope=Scope(faculty=fac), when=When(days=["Mon", "Tue", "Wed", "Thu"])),
+          Constraint(id="U2", type=ConstraintType.UNAVAILABLE, owner=fac, hard=True, tier=Tier.VERIFIED_UNAVAILABILITY,
+                     scope=Scope(faculty=fac), when=When(days=["Fri"], slots=[0, 1, 2, 3]))]
+    text = plain_group(inst, cs, "F-201")
+    assert text.startswith(f"{inst.faculty_by_id[fac].name} can only teach on Friday in the afternoon")
+
+
+def test_several_lectures_are_one_short_list_and_swaps_are_not_new_options():
+    from agents.explainer import plain_option
+    from core.schemas import Placement
+    from evaluation.benchmark import load
+
+    inst = next(s for s in load(Path("data/scenarios.jsonl")) if s.kind == "policy").instance
+    by_course: dict = {}
+    for s in inst.sessions:
+        by_course.setdefault((s.course, s.kind), []).append(s)
+    pair = next(v for v in by_course.values() if len(v) >= 2)[:2]
+    room = inst.rooms[0].id
+    o = OptionView("A", {pair[0].id: Placement(day="Mon", slot=0, room=room),
+                         pair[1].id: Placement(day="Mon", slot=2, room=room)}, (), moved=0)
+    text = plain_option(inst, o, [], pair[0].faculty)
+    assert text.startswith(f"your {inst.course_title(pair[0].course)} {pair[0].kind.value}s on Monday at 9 am and 11 am")
+    assert f"all in {inst.rooms[0].name}" in text and "(nothing else moves)" in text
+    neg = Negotiator(inst, priority=PriorityModel(inst), explainer=Explainer(inst))
+    swapped = {pair[0].id: o.placements[pair[1].id], pair[1].id: o.placements[pair[0].id]}
+    assert neg._same_times(o.placements) == neg._same_times(swapped)
+
+
+def test_a_grounded_claim_that_keeps_a_class_on_a_day_never_asked_for_is_dropped():
+    from agents.explainer import declutter, wrong_keep
+
+    inst, _ = uc3_lab_contention()
+    check = ClaimChecker(inst)
+    assert wrong_keep("Option A keeps your practical on Monday at 9 am in Lab 1.", {"tue"}, check)
+    assert not wrong_keep("Option A keeps your practical on Tuesday, at 9 am.", {"tue"}, check)
+    assert not wrong_keep("Option B moves it to Monday at 9 am.", {"tue"}, check)
+    assert declutter("the Algorithms practical (C3-P) and the lunch break [P-LUNCH] rule") == \
+        "the Algorithms practical and the lunch break rule"

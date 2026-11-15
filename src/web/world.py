@@ -517,9 +517,13 @@ class World:
 
         # a big department (the benchmark's 202 sessions, a campus) needs presolve and a longer limit; the demo is faster without
         big = bool(self.test_data) or len(self.instance.sessions) > 100
-        return Negotiator(self.instance, priority=PriorityModel(self.instance, semester=SEMESTER),
-                          explainer=Explainer(self.instance), semester=SEMESTER, time_limit=60 if big else 10,
-                          mcs_limit=3, presolve=big)
+        neg = Negotiator(self.instance, priority=PriorityModel(self.instance, semester=SEMESTER),
+                         explainer=Explainer(self.instance), semester=SEMESTER, time_limit=60 if big else 10,
+                         mcs_limit=3, presolve=big)
+        minutes = round(self.deadline / 60)  # each message says by when a reply is due
+        neg.reply_window = (f"within {minutes} minute{'s' * (minutes != 1)}" if minutes < 120 else
+                            f"within {round(minutes / 60)} hours")
+        return neg
 
     def _train_system_one(self):
         from language.system_one import SystemOne, intent_examples, tune_tau

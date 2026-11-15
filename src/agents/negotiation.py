@@ -59,15 +59,17 @@ from language.llm import InvalidOutput
 
 from .explainer import (
     Explainer,
+    TIER_NAME,
     OptionView,
     conflict_facts,
+    declutter,
     describe,
     option_mismatches,
     placement_text,
     session_name,
 )
 from .ledger import FULL, PARTIAL, ConcessionLedger, importance
-from .priority import PriorityModel
+from .priority import JUSTIFICATION, ROLE_AUTHORITY, PriorityModel
 
 # ---------------------------------------------------------------------------
 # Messages and replies
@@ -444,6 +446,8 @@ class Negotiator:
         # same options
         self.workers, self.seed = workers, seed
         self.local = local
+        self.reply_window: str | None = None  # "within 30 minutes": by when a reply is due, said in each message
+        self.why = ""  # why the person asked is the one asked (per round, ``_why_ranked``)
         self.free: frozenset[str] | None = None  # the sessions this problem's repairs may move (per problem)
         self.stakeholders = sorted({s.faculty for s in instance.sessions})  # people who teach
         self.skip: frozenset[str] = frozenset()  # sessions cancelled in the week being solved (per problem)
@@ -599,15 +603,103 @@ class Negotiator:
         self._emit("options", correction_sets=len(options), target=target,
                    costs=[round(o.cost, 3) for _, _, o in ranked])
         offers: list[Offer] = []
+        seen: set[tuple] = set()
         for owner, whole, base in ranked:
             if owner != target:
                 continue
             for alt, alt_moved in self._alternatives(cons, whole, base.placements, base.moved, week, baseline,
                                                      exclude, want=self.k - len(offers)):
+                key = self._same_times(alt)
+                if key in seen:  # the same times with interchangeable classes swapped: not another choice
+                    continue
+                seen.add(key)
                 offers.append(base.model_copy(update={"placements": alt, "moved": alt_moved}))
             if len(offers) >= self.k:
                 break
+        self.why = self._why_ranked(target, ranked, cons)
         return (target, offers[: self.k]) if offers else None
+
+    def _same_times(self, placements: Mapping[str, Placement]) -> tuple:
+        """What an option looks like to its reader: which kind of class goes where. Two lectures of one
+        course swapped between two times are the same option."""
+        sessions = self.instance.session_by_id
+        return tuple(sorted((sessions[s].course, sessions[s].kind.value, p.day, p.slot, p.room)
+                            if s in sessions else (s, "", p.day, p.slot, p.room) for s, p in placements.items()))
+
+    def _name(self, owner: str) -> str:
+        fac = self.instance.faculty_by_id.get(owner)
+        return fac.name if fac else owner
+
+    def _why_ranked(self, target: str, ranked: list, cons) -> str:
+        """Why this person is asked and not the other owner in the clash, from what decided the ranking: the
+        cheapest option of each, compared term by term (what the requests given up are worth, the classes
+        it moves, the rise in unfairness), then the fairness credit that breaks a tie. Empty when no one
+        else owns a part of the clash. Never a reason for anyone's constraint, only its tier."""
+        mine = next((x for x in ranked if x[0] == target), None)
+        others = [x for x in ranked if x[0] != target and x[0] in self.instance.faculty_by_id]
+        if mine is None or not others:
+            return ""
+        theirs = others[0]
+        other = self._name(theirs[0])
+
+        mt, mo = self._terms(mine, cons), self._terms(theirs, cons)
+        if round(mine[2].cost, 6) < round(theirs[2].cost, 6):
+            decided = min(mt, key=lambda k: mt[k] - mo.get(k, 0.0))  # the term that most favours moving yours
+            because = {
+                "auth": f"{other}'s role gives their request more weight",
+                "impact": f"{other}'s class has more students, so moving it would affect more people",
+                "just": f"{other}'s request has a stronger reason on record with the office",
+                "lead": f"{other} asked earlier",
+                "credit": f"{other} has given way more than you this semester, so it's fairer for you to move this time",
+                "disrupt": "moving your class disturbs less of the timetable as it stands",
+                "count": "moving your class gives up fewer requests",
+                "moved": f"moving your class moves fewer other classes ({mine[2].moved} instead of {theirs[2].moved})",
+                "fair": f"{other} has given way more than you this semester, so it's fairer for you to move this time",
+            }[decided]
+            return f"We're asking you rather than {other} because {because}."
+        if self._credit(target) < self._credit(theirs[0]):
+            return (f"Moving either class costs the timetable the same, and you have given way less than {other} "
+                    f"this semester, so we're asking you first.")
+        if self._credit(target) == self._credit(theirs[0]):
+            return (f"Moving either class costs the timetable the same, and you and {other} have given way equally "
+                    f"often, so there is no reason to prefer either of you: we're asking you first, and if none "
+                    f"of the times work for you, we'll ask {other}.")
+        return ""
+
+    def _terms(self, entry, cons) -> dict[str, float]:
+        """An option's cost (``PriorityModel.option_cost``) term by term: the score of what it gives up, split
+        into its parts, the classes it moves, and the rise in unfairness."""
+        pm, w = self.priority, self.priority.w
+        drop = [cons[i] for i in entry[1]]
+        t = {"moved": w.moved * (entry[2].moved or 0)}
+        if pm.flat:
+            t["count"] = float(len(drop))
+        else:
+            t |= {"auth": sum(w.auth * ROLE_AUTHORITY[pm.role(c.owner)] for c in drop),
+                  "impact": sum(w.impact * pm.impact(c) for c in drop),
+                  "just": sum(w.just * JUSTIFICATION[c.justification] for c in drop),
+                  "lead": sum(w.lead * pm.lead(c) for c in drop),
+                  "credit": sum(w.credit * pm.credit(c) for c in drop),
+                  "disrupt": -sum(w.disrupt * pm.disrupt(c) for c in drop)}
+        t["fair"] = entry[2].cost - sum(t.values())
+        return t
+
+    def _why(self, target: str, cons, mus, asked: Mapping[str, int], last: bool) -> str:
+        """What the message says about why the reader is the one asked. Another owner in the clash who has
+        already turned down the times offered comes first; else the ranking's reason (``self.why``). On
+        the reader's last ask, who will be asked next."""
+        others = sorted({cons[i].owner for i in mus if cons[i].owner and cons[i].owner != target
+                         and cons[i].owner in self.instance.faculty_by_id})
+        refused = [o for o in others if asked.get(o)]
+        if refused:
+            names = [self._name(o) for o in refused]
+            joined = names[0] if len(names) == 1 else ", ".join(names[:-1]) + " and " + names[-1]
+            return (f"We asked {joined} first, and none of the times we found worked for "
+                    f"{'them' if len(names) == 1 else 'any of them'}, so we're asking you.")
+        why = self.why
+        if last and others and "we'll ask" not in why:
+            why = f"{why} If none of these work for you either, we'll ask {self._name(others[0])} instead.".strip()
+        return why
 
     def _conflict_is_real(self, out: Outcome, cons, mus: list[str], week, baseline) -> bool:
         """Is a conflict found within the neighbourhood one in the whole timetable too? First among the
@@ -842,6 +934,7 @@ class Negotiator:
                 if not owners:
                     return self._escalate(out, cons, mus, "no owner left to ask")
                 target = owners[0]
+                self.why = ""
                 offers = self._invented(out, cons, mus, target, week, baseline, declined)
                 if not offers:
                     keep |= {i for i in mus if cons[i].owner == target}
@@ -849,8 +942,9 @@ class Negotiator:
                     continue
             for key, o in zip("ABCDEFG", offers, strict=False):
                 o.key = key
+            why = self._why(target, cons, mus, asked, last=asked.get(target, 0) == self.asks_per_owner - 1)
             message = self._message(out.rounds + 1, target, cons, mus, offers, private, raw_requests or {},
-                                    before=turned_down.pop(target, None))
+                                    before=turned_down.pop(target, None), why=why)
             self._emit("message", message=message.model_dump())
             reply = self._ask(responders[target], message)
             if reply.decision == "no_reply" and target not in reminded:
@@ -1006,26 +1100,39 @@ class Negotiator:
             self.ledger.record(entry)
 
     def _message(self, rnd: int, target: str, cons, mus, offers: list[Offer], private, raw_requests,
-                 before: list[Offer] | None = None) -> Message:
-        """``before``: the options this person turned down last round; the message says these are new ones."""
+                 before: list[Offer] | None = None, why: str = "") -> Message:
+        """A greeting; ``before`` (the options this person turned down last round: these are new ones); the
+        explanation and ``why`` this person is asked; the options; how to reply, by when, and what silence
+        leads to. The human study's raters asked for each of these."""
         views = [OptionView(key=o.key, placements=o.placements, drop=tuple(o.drop), moved=o.moved) for o in offers]
         counts = self.ledger.times() if self.use_ledger else {}
-        facts = conflict_facts(self.instance, cons, mus, views, counts, recipient=target)
+        facts = conflict_facts(self.instance, cons, mus, views, counts, recipient=target, placed=self.reference)
         raw = [raw_requests[cons[i].source.request] for i in mus if cons[i].source.request in raw_requests]
         exp = self.explainer.explain(facts, target, raw_requests=raw, private=private)
         invented, omitted = option_mismatches(exp.text, [o.placements for o in offers], facts, raw)
         options = {f.id: f.reader for f in facts if f.id.startswith("OPT-")}
         lead = exp.lead if exp.lead is not None else exp.text
+        if exp.mode.startswith("grounded"):
+            lead = declutter(lead)
+        lines = [f"Dear {self._name(target)},", ""] if target in self.instance.faculty_by_id else []
         if before:  # a second message to the same person: not the same options again
-            lead = f"{_declined(self.instance, before)} {lead}"
-        lines = [lead, "", "Options:"]
+            lines += [_declined(self.instance, before), ""]
+        lines += [f"{lead} {why}".strip(), "", "Options:"]
         lines += [f"{o.key}) {options[f'OPT-{o.key}']}" for o in offers]
-        lines.append("Reply with a letter, or tell us which days and times would work for you.")
+        lines.append("We have checked every option: the room is free, and neither you nor your students have "
+                     "another class then.")
+        by = f" {self.reply_window}" if self.reply_window else ""
+        lines.append(f"Please reply with a letter{by}, or tell us which days and times would work for you. "
+                     "If we don't hear back, we'll send one reminder, then pass this to the timetable coordinator.")
         return Message(round=rnd, to=target, mus=list(mus), offers=offers, text="\n".join(lines),
                        facts=[{"id": f.id, "text": f.text, "plain": f.plain} for f in facts],
                        claims=[{"text": t, "facts": ids, "supported": ok} for t, ids, ok in exp.claims],
                        explanation_mode=exp.mode, faithfulness=exp.faithfulness, leaks=exp.leaks,
                        rejected_claims=exp.rejected, invented_times=invented, omitted_options=omitted)
+
+
+def _a(noun: str) -> str:
+    return f"{'an' if noun[0] in 'aeiou' else 'a'} {noun}"
 
 
 def _declined(instance: Instance, offers: list[Offer]) -> str:
@@ -1034,6 +1141,9 @@ def _declined(instance: Instance, offers: list[Offer]) -> str:
     from language.corpus import hour
 
     days = {"Mon": "Monday", "Tue": "Tuesday", "Wed": "Wednesday", "Thu": "Thursday", "Fri": "Friday", "Sat": "Saturday"}
+    if any(len(o.placements) > 1 for o in offers) or len(offers) > 3:
+        return "Thank you for your reply. None of the options we sent worked for you, so here are new ones."
     times = list(dict.fromkeys(f"{days.get(p.day, p.day)} at {hour(p.slot)}" for o in offers for p in o.placements.values()))
     said = times[0] if len(times) == 1 else f"{', '.join(times[:-1])} and {times[-1]}"
-    return f"{said} {'does' if len(times) == 1 else 'do'}n't work for you, so here are other times the solver has checked."
+    return (f"Thank you for your reply. {said} {'does' if len(times) == 1 else 'do'}n't work for you, so here are "
+            "other times.")
